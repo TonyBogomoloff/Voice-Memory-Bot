@@ -7,16 +7,19 @@ name = "voice-memory-bot"
 version = "0.1.0"
 description = "Private Telegram voice notebook with projects, Groq ASR and Codex routing"
 requires-python = ">=3.11"
-dependencies = ["httpx==0.28.1"]
+dependencies = ["httpx==0.28.1", "reportlab==4.4.9"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
+dev = ["pytest>=8,<10", "ruff>=0.9,<1", "pypdf==6.10.0"]
 
 [project.scripts]
 voice-memory-bot = "voice_memory_bot.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+voice_memory_bot = ["fonts/*.ttf", "fonts/LICENSE-DejaVu.txt"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

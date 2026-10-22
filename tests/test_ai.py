@@ -1,0 +1,355 @@
+import asyncio
+import json
+import zipfile
+from dataclasses import replace
+
+import pytest
+from test_mvp import FakeGroq, FakeTelegram
+
+from voice_memory_bot.ai_store import AIStore
+from voice_memory_bot.assistant import AssistantEngine, CodexAssistant, edge_candidate
+from voice_memory_bot.bot import Bot
+from voice_memory_bot.config import Config, Limits, LLMConfig
+from voice_memory_bot.providers import ProviderError
+from voice_memory_bot.store import Store
+
+
+def step(action="reply", **kwargs):
+    return {"action": action, "message": "Ответ", "query": "", "note_id": "", "folder_id": "",
+            "title": "", "content": "", "revision": -1, **kwargs}
+
+
+class Assistant:
+    def __init__(self):
+        self.calls, self.address_calls = [], []
+        self.responses = []
+
+    async def respond(self, payload, model):
+        self.calls.append((payload, model))
+        result = self.responses.pop(0) if self.responses else step()
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    async def addressed(self, text, names, model):
+        self.address_calls.append(text)
+        return text.startswith("Луна,") or text.endswith(", Луна?")
+
+
+class Router:
+    calls = 0
+
+    async def classify(self, transcript, folders):
+        self.calls += 1
+        return {"title": "Заметка", "explicit": False, "ambiguous": False,
+                "folder_id": None, "requested_folder": None, "evidence": None}
+
+
+@pytest.fixture
+def bot(tmp_path):
+    store = Store(tmp_path / "db", Limits())
+    store.ensure_user(1)
+    store.ensure_user(2)
+    config = Config("1:token", frozenset({1, 2}), "key", tmp_path, assistant_models=("another-model",))
+    app = Bot(config, store, FakeTelegram(), FakeGroq(), Router(), Assistant())
+    yield app
+    store.close()
+
+
+async def receive(bot, text="Привет", message_id=101, thread=None, reply=None, voice=False):
+    message = {"message_id": message_id, "from": {"id": 1}, "chat": {"id": 1, "type": "private"}}
+    if thread:
+        message["message_thread_id"] = thread
+    if reply:
+        message["reply_to_message"] = {"message_id": reply}
+    if voice:
+        message["voice"] = {"file_id": "voice", "file_size": 32044, "duration": 1}
+    else:
+        message["text"] = text
+    await bot.handle({"message": message})
+    note = bot.store.one("SELECT * FROM notes WHERE owner=1 AND message_id=?", (message_id,))
+    await bot.process(bot.store.claim_note())
+    return bot.store.note(1, note["id"])
+
+
+def ready_note(bot, text="Старая мысль", owner=1, message_id=1):
+    folder = bot.store.ensure_user(owner)
+    note, _ = bot.store.add_note(owner, folder, {"message_id": message_id}, "text", transcript=text)
+    bot.store.update_note(owner, note["id"], state="ready", title="План", routing="manual", delivery="sent")
+    return bot.store.note(owner, note["id"])
+
+
+def tool(bot, request_id, command):
+    index = len(bot.ai_state.steps(1, request_id))
+    bot.ai_state.save_command(1, request_id, index, command)
+    return bot.ai_state.execute(1, request_id, index)
+
+
+def test_chat_voice_history_reply_new_conversation_and_model_change(bot):
+    async def run():
+        folder = bot.store.create_folder(1, "Разговор", 100)
+        bot.ai_state.mode(1, folder["id"], "chat")
+        first = await receive(bot, thread=100, voice=True)
+        assert first["entry_type"] == "ai" and bot.router.calls == 0 and bot.groq.calls == 1
+        await bot.process_ai(bot.ai_state.claim())
+        old = bot.ai_state.request(1, first["id"])["conversation_id"]
+        response_id = bot.telegram.sent[-1][1]
+        assert response_id["thread"] == 100 and response_id["reply_to"] == 101
+        reply_id = bot.store.one("SELECT message_id FROM ai_links ORDER BY rowid DESC LIMIT 1")["message_id"]
+        bot.ai_state.set_settings(1, model="another-model")
+        second = await receive(bot, "Продолжи", 102, thread=100, reply=reply_id)
+        await bot.process_ai(bot.ai_state.claim())
+        assert bot.assistant.calls[-1][1] == "another-model"
+        assert bot.assistant.calls[-1][0]["history"][0]["user"] == first["transcript"]
+        assert bot.ai_state.request(1, second["id"])["conversation_id"] == old
+        await bot.new_ai_conversation(1, 100, folder["id"])
+        third = await receive(bot, "Другая тема", 103, thread=100)
+        await bot.process_ai(bot.ai_state.claim())
+        assert bot.ai_state.request(1, third["id"])["conversation_id"] != old
+        assert bot.assistant.calls[-1][0]["history"] == []
+        assert bot.store.notes(1) == []
+        assert len(bot.ai_state.history(1, old)) == 2
+    asyncio.run(run())
+
+
+def test_name_toggle_edges_false_mention_and_nonsticky_reply(bot):
+    async def run():
+        note = await receive(bot, "Луна, помоги", 101)
+        assert note["entry_type"] == "note" and not bot.assistant.address_calls
+        bot.ai_state.set_settings(1, wake_enabled=True)
+        for mid, text, expected in [(102, "Луна, помоги", "ai"), (103, "Что думаешь, Луна?", "ai"),
+                                    (104, "Сегодня красивая луна", "note"), (105, "Обычная запись", "note")]:
+            assert (await receive(bot, text, mid))["entry_type"] == expected
+        assert "Обычная запись" not in bot.assistant.address_calls
+        await bot.process_ai(bot.ai_state.claim())
+        reply_id = bot.store.one("SELECT message_id FROM ai_links ORDER BY rowid DESC LIMIT 1")["message_id"]
+        bot.ai_state.set_settings(1, wake_enabled=False)
+        reply = await receive(bot, "Спасибо, продолжи", 106, reply=reply_id)
+        plain = await receive(bot, "Заметка отдельно", 107)
+        assert reply["entry_type"] == "ai" and plain["entry_type"] == "note"
+    asyncio.run(run())
+
+
+def test_button_converts_existing_voice_without_repeating_asr_or_request(bot):
+    async def run():
+        note = await receive(bot, voice=True)
+        await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
+        await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
+        assert bot.store.notes(1) == []
+        assert bot.store.one("SELECT count(*) AS n FROM ai_requests")["n"] == 1
+        await bot.process_ai(bot.ai_state.claim())
+        await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
+        assert bot.ai_state.claim() is None and bot.groq.calls == 1 and len(bot.assistant.calls) == 1
+    asyncio.run(run())
+
+
+def test_button_during_routing_wins_over_folder_classifier(bot):
+    async def run():
+        entered, finish = asyncio.Event(), asyncio.Event()
+        async def classify(*args):
+            entered.set()
+            await finish.wait()
+            return None
+        bot.router.classify = classify
+        task = asyncio.create_task(receive(bot, "Объясни это"))
+        await asyncio.wait_for(entered.wait(), 2)
+        note = bot.store.notes(1)[0]
+        await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
+        finish.set()
+        processed = await task
+        assert processed["routing"] == "ai" and processed["state"] == "ready"
+        assert bot.ai_state.claim()["note_id"] == note["id"]
+    asyncio.run(run())
+
+
+def test_archive_tools_preserve_original_support_search_undo_and_isolate_users(bot, tmp_path):
+    request = ready_note(bot, "Измени план", message_id=10)
+    bot.ai_state.enqueue(1, request["id"], "button")
+    note = ready_note(bot)
+    foreign = ready_note(bot, "Секрет другого пользователя", owner=2)
+    assert tool(bot, request["id"], step("read_note", note_id=foreign["id"]))["error"]
+    assert tool(bot, request["id"], step("update_note", note_id=note["id"], title="Новый план",
+                                       content="Попытка без чтения", revision=note["revision"]))["error"]
+    current = tool(bot, request["id"], step("read_note", note_id=note["id"]))
+    # Changing the folder's default input mode must not make its existing notes uneditable.
+    bot.ai_state.mode(1, note["folder_id"], "chat")
+    result = tool(bot, request["id"], step("update_note", note_id=note["id"], revision=current["revision"],
+                                         title="План встречи", content="ВСТРЕЧА С ЁЖИКОМ"))
+    assert result["ok"]
+    edited = bot.store.note(1, note["id"])
+    assert edited["transcript"] == "Старая мысль" and edited["content"] == "ВСТРЕЧА С ЁЖИКОМ"
+    assert bot.store.notes(1, query="встреча ежик")[0]["id"] == note["id"]
+    bot.flush_ai_archive()
+    bot.ai_state.update_request(1, request["id"], response="План обновлён", state="ready", model=bot.config.llm.model)
+    paths = bot.archive.export(bot.store.export_notes(1), bot.store.folders(1), tmp_path / "export", False,
+                               45000000, text_format="markdown", settings=bot.store.export_preferences(1))
+    with zipfile.ZipFile(paths[0]) as zipped:
+        manifest = json.loads(zipped.read("manifest-001.json"))
+        exported = [n for f in manifest["files"] if f["kind"] == "history" for n in f["notes"]]
+        original = next(n for n in exported if n["id"] == note["id"])
+        markdown = zipped.read(next(n for n in zipped.namelist() if n.endswith("history.md"))).decode()
+        assert original["transcript"] == "Старая мысль" and "ВСТРЕЧА С ЁЖИКОМ" in markdown
+        assert original["revisions"][0]["title"] == "План" and "План обновлён" in markdown
+        assert "Секрет другого пользователя" not in markdown
+        assert manifest["settings"]["ai"]["notes_access"] == "write"
+    restored = bot.ai_state.undo(1, note["id"], result["revision"])
+    assert restored["content"] is None and restored["title"] == "План"
+    with pytest.raises(ValueError):
+        bot.ai_state.undo(1, note["id"], result["revision"])
+    with pytest.raises(ValueError):
+        bot.ai_state.undo(2, note["id"], restored["revision"])
+
+
+def test_access_revocation_conflict_and_creation_limits(bot):
+    request = ready_note(bot, "Создай заметку", message_id=10)
+    bot.ai_state.enqueue(1, request["id"], "button")
+    note = ready_note(bot)
+    current = tool(bot, request["id"], step("read_note", note_id=note["id"]))
+    other_folder = bot.store.create_folder(1, "Работа")
+    bot.store.update_note(1, note["id"], folder_id=other_folder["id"])
+    assert tool(bot, request["id"], step("update_note", note_id=note["id"], revision=current["revision"],
+                                        title="План", content="Замена"))["error"]
+    bot.ai_state.set_settings(1, notes_access="read")
+    create = step("create_note", folder_id=other_folder["id"], title="Новый", content="Текст")
+    assert tool(bot, request["id"], create)["error"]
+    bot.ai_state.set_settings(1, notes_access="none")
+    assert tool(bot, request["id"], step("search_notes"))["error"]
+    bot.ai_state.set_settings(1, notes_access="write")
+    foreign_create = {**create, "folder_id": bot.store.ensure_user(2)}
+    assert tool(bot, request["id"], foreign_create)["error"]
+    created = tool(bot, request["id"], create)
+    assert created["ok"] and bot.store.note(1, created["id"])["folder_id"] == other_folder["id"]
+    bot.store.limits = replace(bot.store.limits, max_notes_per_user=1)
+    assert tool(bot, request["id"], create)["error"]
+
+
+def test_restart_replays_receipts_without_duplicate_mutation_or_unknown_send(bot, tmp_path):
+    async def run():
+        request = ready_note(bot, "Создай", message_id=10)
+        bot.ai_state.enqueue(1, request["id"], "button")
+        command = step("create_note", folder_id=bot.store.ensure_user(1), title="Созданная", content="Текст")
+        bot.ai_state.save_command(1, request["id"], 0, command)
+        result = bot.ai_state.execute(1, request["id"], 0)
+        bot.ai_state.update_request(1, request["id"], state="running")
+        reopened = Store(tmp_path / "db", Limits())
+        try:
+            state = AIStore(reopened)
+            provider = Assistant()
+            engine = AssistantEngine(state, provider, bot.config.llm.model, bot.ai_models)
+            await engine.run(state.claim())
+            assert len(reopened.notes(1)) == 1
+            assert reopened.notes(1)[0]["id"] == result["id"]
+            assert provider.calls[0][0]["steps"][0]["result"]["id"] == result["id"]
+        finally:
+            reopened.close()
+        bot.telegram.fail_delivery = True
+        await bot.deliver_ai(bot.ai_state.request(1, request["id"]))
+        calls = len(bot.telegram.sent)
+        bot.telegram.fail_delivery = False
+        await bot.deliver_ai(bot.ai_state.request(1, request["id"]))
+        assert len(bot.telegram.sent) == calls
+        assert bot.ai_state.request(1, request["id"])["delivery"] == "unknown"
+        await bot.deliver_ai(bot.ai_state.request(1, request["id"]), force=True)
+        assert bot.ai_state.request(1, request["id"])["delivery"] == "sent"
+    asyncio.run(run())
+
+
+def test_provider_failure_after_write_reports_receipt_and_retry_does_not_write_twice(bot):
+    async def run():
+        note = await receive(bot, "Создай план")
+        bot.ai_state.enqueue(1, note["id"], "button")
+        bot.assistant.responses = [step("create_note", folder_id=bot.store.ensure_user(1), title="План", content="План"),
+                                   ProviderError("ai_generation_failed")]
+        await bot.process_ai(bot.ai_state.claim())
+        assert bot.ai_state.request(1, note["id"])["state"] == "failed"
+        assert "Создано: План" in bot.telegram.sent[-1][1]["text"]
+        await bot.callback(1, None, 99, f"airetry:{note['id']}")
+        await bot.process_ai(bot.ai_state.claim())
+        assert len(bot.store.notes(1)) == 1 and bot.ai_state.request(1, note["id"])["state"] == "ready"
+    asyncio.run(run())
+
+
+def test_folder_mode_snapshot_and_reply_survive_restart_before_asr(bot, tmp_path):
+    async def run():
+        folder = bot.store.create_folder(1, "ИИ", thread=100)
+        bot.ai_state.mode(1, folder["id"], "chat")
+        note, _ = bot.store.add_note(1, folder["id"], {"message_id": 10, "message_thread_id": 100},
+                                      "text", transcript="Привет")
+        bot.ai_state.mode(1, folder["id"], "notes")
+        await bot.process(bot.store.claim_note())
+        assert bot.store.note(1, note["id"])["entry_type"] == "ai"
+        assert bot.router.calls == 0
+    asyncio.run(run())
+
+
+def test_real_address_adapter_rejects_invented_evidence_and_middle_names():
+    class Provider(CodexAssistant):
+        result = {"addressed": True, "evidence": "Луна, помоги"}
+
+        async def structured(self, *args):
+            return self.result
+    async def run():
+        provider = Provider(LLMConfig())
+        assert await provider.addressed("Луна, помоги составить план", ["Луна"], "model")
+        assert not await provider.addressed("Сегодня красивая луна", ["Луна"], "model")
+        assert not edge_candidate("слово " * 100 + "Луна " + "слово " * 100, ["Луна"])
+        provider.result = {"addressed": "true", "evidence": "Луна"}
+        with pytest.raises(ProviderError):
+            await provider.addressed("Луна, привет", ["Луна"], "model")
+    asyncio.run(run())
+
+
+def test_settings_controls_and_ownership(bot):
+    async def run():
+        await bot.ai_settings(1, None)
+        text = json.dumps(bot.telegram.sent[-1], ensure_ascii=False)
+        assert "Изменить имена" not in text
+        await bot.callback(1, None, 1, "aiwake:1")
+        assert "Изменить имена" in json.dumps(bot.telegram.sent[-1], ensure_ascii=False)
+        await bot.callback(1, None, 1, "ainames")
+        await bot.input_action(1, None, "Помощник, Luna")
+        assert bot.ai_state.settings(1)["names"] == ["помощник", "luna"]
+        await bot.callback(1, None, 1, "aimodel:1")
+        assert bot.ai_engine.model(1) == "another-model"
+        foreign = ready_note(bot, owner=2)
+        with pytest.raises(ValueError):
+            await bot.callback(1, None, 1, f"aiask:{foreign['id']}")
+    asyncio.run(run())
+
+
+def test_revoke_write_access_while_model_is_generating(bot):
+    async def run():
+        note = await receive(bot, "Создай заметку")
+        bot.ai_state.enqueue(1, note["id"], "button")
+        calls = []
+        async def respond(payload, model):
+            calls.append(payload)
+            if len(calls) == 1:
+                bot.ai_state.set_settings(1, notes_access="none")
+                return step("create_note", folder_id=bot.store.ensure_user(1), title="Нельзя", content="Нельзя")
+            assert payload["steps"][0]["result"]["error"]
+            assert payload["notes_access"] == "none" and not payload["folders"]
+            return step(message="Доступ выключен")
+        bot.assistant.respond = respond
+        await bot.process_ai(bot.ai_state.claim())
+        assert bot.store.notes(1) == []
+    asyncio.run(run())
+
+
+def test_ai_queue_rejects_new_input_before_archiving_and_context_is_bounded(bot):
+    async def run():
+        folder = bot.store.create_folder(1, "ИИ", 100)
+        bot.ai_state.mode(1, folder["id"], "chat")
+        bot.store.limits = replace(bot.store.limits, max_pending_per_user=1)
+        first = await receive(bot, "Привет", thread=100)
+        await bot.handle({"message": {"message_id": 102, "text": "Ещё", "message_thread_id": 100,
+                                     "from": {"id": 1}, "chat": {"id": 1, "type": "private"}}})
+        assert bot.store.one("SELECT count(*) AS n FROM notes WHERE owner=1")["n"] == 1
+        assert "Очередь ИИ заполнена" in bot.telegram.sent[-1][1]["text"]
+        await bot.process_ai(bot.ai_state.claim())
+        bot.ai_state.update_request(1, first["id"], response="Очень длинная история " * 3000)
+        second = await receive(bot, "Продолжим", message_id=103, thread=100)
+        payload = bot.ai_engine.payload(bot.ai_state.request(1, second["id"]), [])
+        assert payload["history_truncated"] and payload["history"] == []
+        assert len(bot.ai_state.history(1, bot.ai_state.request(1, first["id"])["conversation_id"])) == 1
+    asyncio.run(run())
