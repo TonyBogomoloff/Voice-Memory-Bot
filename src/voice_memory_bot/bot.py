@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .archive import Archive
 from .config import Config
+from .message_store import MessageStore
 from .providers import CodexRouter, Groq, ProviderError, Telegram
 from .routing import decide
 from .store import Store, clean_name
@@ -76,6 +77,7 @@ class Bot:
         self.config, self.store = config, store
         self.telegram, self.groq, self.router = telegram, groq, router
         self.archive = Archive(config.data_dir / "notes")
+        self.messages = MessageStore(store)
         self.topics_enabled = False
         self.recent = defaultdict(deque)
         self.export_locks = defaultdict(asyncio.Lock)
@@ -236,6 +238,7 @@ class Bot:
                 note, created = self.store.add_note(owner, folder, message, kind, media["file_id"],
                                                     extension, size, duration)
             if created:
+                self.messages.record(note, message["message_id"], thread, "source")
                 # The worker uses the same lock, so a quick ASR cannot outrun the status checkpoint.
                 async with self.note_locks[note["id"]]:
                     status = "Конвертирую в текст…" if note["file_id"] else "Сохраняю…"
@@ -460,8 +463,7 @@ class Bot:
         if action == "pick":
             return await self.choose_note_folder(owner, identity, message_id, int(pieces[2]))
         if action == "place":
-            await self.move(owner, identity, pieces[2], thread)
-            return await self.edit_note_buttons(owner, message_id, options_keyboard(identity))
+            return await self.move(owner, identity, pieces[2], thread)
         if action == "note":
             return await self.show_note(owner, identity, thread, message_id)
         if action == "choose":
@@ -544,17 +546,57 @@ class Bot:
 
     async def move(self, owner, identity, folder_id, thread):
         note = self.store.note(owner, identity)
-        self.store.folder(owner, folder_id)
+        folder = self.store.folder(owner, folder_id)
         if note["state"] in {"processing", "queued"} or self.note_locks[identity].locked():
             raise ValueError("Дождись завершения обработки, затем перенеси запись")
         async with self.note_locks[identity]:
-            self.store.update_note(owner, identity, folder_id=folder_id, routing="manual", requested_folder=None)
-            note = self.store.note(owner, identity)
-            self.archive.persist_text(note, self.store.folder(owner, folder_id))
-            # Explicit user move creates a new representation; old Telegram messages remain history.
-            self.store.update_note(owner, identity, delivery="pending")
-            await self.deliver(note)
-            await self.show(owner, "Запись перенесена. Предыдущие сообщения остаются в истории Telegram.", thread)
+            previous = self.messages.get(owner, identity)
+            if previous and previous["state"] == "cleanup":
+                return await self.cleanup_move(previous)
+            if folder_id == note["folder_id"] and thread == folder["thread_id"]:
+                return await self.show(owner, "Запись уже в этой папке.", thread)
+            self.messages.begin(note, folder_id, thread)
+            target_note = {**note, "folder_id": folder_id, "routing": "manual", "requested_folder": None}
+            try:
+                destination = await self.ensure_topic(owner, folder_id)
+                response, destination = await self.publish_note(target_note, destination)
+                self.archive.persist_text(target_note, self.store.folder(owner, folder_id))
+                # Destination is confirmed before the source becomes eligible for deletion.
+                self.messages.confirm(note, folder_id, response, destination)
+            except (ProviderError, OSError) as exc:
+                self.messages.state(owner, identity, "unknown")
+                log.warning("move delivery not confirmed note_id=%s type=%s", identity, type(exc).__name__)
+                return await self.show(owner, "Не удалось подтвердить перенос. Исходные сообщения сохранены.", thread)
+            return await self.cleanup_move(self.messages.get(owner, identity))
+
+    async def cleanup_move(self, move):
+        owner, identity = move["owner"], move["note_id"]
+        remaining = set(self.messages.in_thread(owner, identity, move["source_thread"]))
+        transient, forbidden = False, False
+        for message_id in json.loads(move["source_ids"]):
+            if message_id not in remaining:
+                continue
+            try:
+                await self.telegram.call("deleteMessage", chat_id=owner, message_id=message_id)
+            except ProviderError as exc:
+                reason = getattr(exc, "reason", None)
+                if reason == "delete_forbidden":
+                    forbidden = True
+                    continue
+                if reason != "delete_target_missing":
+                    transient = True
+                    continue
+            self.messages.removed(owner, identity, message_id)
+        if transient:
+            self.messages.state(owner, identity, "cleanup")
+            return
+        self.messages.state(owner, identity, "blocked" if forbidden else "done")
+        text = ("Запись перенесена, но Telegram не разрешил удалить часть исходных сообщений."
+                if forbidden else "Запись перенесена.")
+        try:
+            await self.show(owner, text, move["source_thread"])
+        except ProviderError as exc:
+            log.warning("move confirmation not delivered note_id=%s error=%s", identity, exc)
 
     async def probe_duration(self, path):
         process = await asyncio.create_subprocess_exec("ffprobe", "-v", "error", "-show_entries",
@@ -645,7 +687,27 @@ class Bot:
                     raise
                 thread = await self.ensure_topic(note["owner"], note["folder_id"], invalid_thread=thread)
                 response = await self.telegram.text(note["owner"], text, thread, keys, reply_to=reply_to)
+            self.messages.record(note, response["message_id"], thread, "transcript")
         return response, thread
+
+    async def publish_note(self, note, thread):
+        if note["file_id"]:
+            method, field = {"voice": ("sendVoice", "voice"), "audio": ("sendAudio", "audio"),
+                             "document": ("sendDocument", "document")}[note["kind"]]
+            keys = options_keyboard(note["id"]) if not note["transcript"] else None
+            try:
+                response = await self.telegram.call(method, chat_id=note["owner"], message_thread_id=thread,
+                                                     reply_markup=keys, **{field: note["file_id"]})
+            except ProviderError as exc:
+                if not (thread and self.topics_enabled and missing_topic(exc)):
+                    raise
+                thread = await self.ensure_topic(note["owner"], note["folder_id"], invalid_thread=thread)
+                response = await self.telegram.call(method, chat_id=note["owner"], message_thread_id=thread,
+                                                     reply_markup=keys, **{field: note["file_id"]})
+            self.messages.record(note, response["message_id"], thread, "audio")
+            if not note["transcript"]:
+                return response, thread
+        return await self.send_transcript(note, thread, recover_topic=not note["file_id"])
 
     async def deliver_transcript(self, note):
         owner, identity = note["owner"], note["id"]
@@ -685,19 +747,7 @@ class Bot:
                                        result_message_id=saved["transcript_message_id"],
                                        result_thread=note["source_thread"])
                 return
-            if note["file_id"]:
-                method, field = {"voice": ("sendVoice", "voice"), "audio": ("sendAudio", "audio"),
-                                 "document": ("sendDocument", "document")}[note["kind"]]
-                try:
-                    await self.telegram.call(method, chat_id=owner, message_thread_id=thread,
-                                             **{field: note["file_id"]})
-                except ProviderError as exc:
-                    if not (self.topics_enabled and missing_topic(exc)):
-                        raise
-                    thread = await self.ensure_topic(owner, note["folder_id"], invalid_thread=thread)
-                    await self.telegram.call(method, chat_id=owner, message_thread_id=thread,
-                                             **{field: note["file_id"]})
-            response, thread = await self.send_transcript(note, thread, recover_topic=not note["file_id"])
+            response, thread = await self.publish_note(note, thread)
             self.store.update_note(owner, identity, delivery="sent", result_message_id=response["message_id"],
                                    result_thread=thread)
         except ProviderError as exc:
@@ -715,11 +765,15 @@ class Bot:
                 if note:
                     await self.deliver(note)
                 else:
+                    move = self.messages.pending()
+                    if move and not self.note_locks[move["note_id"]].locked():
+                        async with self.note_locks[move["note_id"]]:
+                            await self.cleanup_move(move)
                     stale = self.store.one("SELECT * FROM notes WHERE status_message_id IS NOT NULL "
                                            "AND state IN ('ready','asr_failed') AND deleted=0 "
                                            "ORDER BY created_at LIMIT 1")
                     if stale:
                         await self.clear_status(stale)
-                    await asyncio.sleep(3 if stale else .5)
+                    await asyncio.sleep(3 if stale or move else .5)
                 continue
             await self.process(note)

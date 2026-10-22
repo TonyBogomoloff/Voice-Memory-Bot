@@ -224,6 +224,7 @@ class FakeTelegram:
     def __init__(self):
         self.sent = []
         self.fail_delivery = False
+        self.message_sequence = 0
 
     async def call(self, method, **kwargs):
         self.sent.append((method, kwargs))
@@ -231,7 +232,8 @@ class FakeTelegram:
             return {"message_thread_id": 123}
         if self.fail_delivery and method.startswith("send"):
             raise ProviderError("telegram_transport_unknown")
-        return {"message_id": len(self.sent)}
+        self.message_sequence += 1
+        return {"message_id": self.message_sequence}
 
     async def text(self, owner, text, thread=None, keyboard=None, reply_to=None):
         return await self.call("sendMessage", chat_id=owner, text=text, thread=thread, keyboard=keyboard,
@@ -359,7 +361,9 @@ def test_voice_options_move_keeps_transcript_and_publishes_in_selected_topic(tmp
         assert any(method == "sendMessage" and payload["thread"] == 200
                    and payload["text"] == note["transcript"] for method, payload in bot.telegram.sent)
         assert all(method != "editMessageText" for method, _ in bot.telegram.sent)
-        assert bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Опции"
+        assert bot.telegram.sent[-1][1]["text"] == "Запись перенесена."
+        deleted = [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"]
+        assert 10 in deleted and message_id in deleted
     asyncio.run(run())
 
 
