@@ -172,6 +172,9 @@ def test_export_split_text_only_and_delete(tmp_path, store):
 def test_provider_errors_do_not_expose_credentials_or_transcripts(tmp_path):
     async def run():
         def handler(request):
+            if request.url.path.endswith("getMe"):
+                return httpx.Response(400, json={"ok": False, "error_code": 400,
+                                                "description": "SENSITIVE PROVIDER RESPONSE SECRET"})
             return httpx.Response(429, text="SENSITIVE PROVIDER RESPONSE")
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         groq = Groq("SECRET", client=client)
@@ -320,6 +323,49 @@ def test_callback_cannot_read_or_delete_another_users_note(tmp_path, store):
             "data": "confirmdelete:" + note["id"]}})
         assert store.note(2, note["id"])["transcript"] == "Чужая заметка"
         assert all("Чужая заметка" not in str(payload) for _, payload in bot.telegram.sent)
+    asyncio.run(run())
+
+
+def test_dispatch_preserves_source_update_when_note_storage_fails(tmp_path, store, monkeypatch):
+    async def run():
+        bot = make_bot(tmp_path, store)
+        update = {"update_id": 3, "message": {"message_id": 7, "from": {"id": 1},
+                  "chat": {"id": 1, "type": "private"}, "text": "Нельзя потерять эту идею"}}
+        store.ingest([update], {1})
+        def disk_failure(*args, **kwargs):
+            raise OSError("disk problem")
+        monkeypatch.setattr(store, "add_note", disk_failure)
+        task = asyncio.create_task(bot.dispatch())
+        try:
+            await asyncio.sleep(.02)
+            saved = store.one("SELECT * FROM updates WHERE id=3")
+            assert saved["state"] == "failed"
+            assert json.loads(saved["payload"]) == update
+            assert store.offset() == 4
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    asyncio.run(run())
+
+
+def test_shutdown_keeps_inflight_update_for_restart(tmp_path, store, monkeypatch):
+    async def run():
+        bot = make_bot(tmp_path, store)
+        update = {"update_id": 3, "message": {"message_id": 7, "from": {"id": 1},
+                  "chat": {"id": 1, "type": "private"}, "text": "Идея"}}
+        store.ingest([update], {1})
+        entered = asyncio.Event()
+        async def interrupted(_):
+            entered.set()
+            await asyncio.Event().wait()
+        monkeypatch.setattr(bot, "handle", interrupted)
+        task = asyncio.create_task(bot.dispatch())
+        await asyncio.wait_for(entered.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert store.one("SELECT state FROM updates WHERE id=3")["state"] == "processing"
     asyncio.run(run())
 
 

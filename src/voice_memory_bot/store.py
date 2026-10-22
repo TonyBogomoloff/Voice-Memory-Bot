@@ -324,6 +324,11 @@ class Store:
         with self.db:
             self.db.execute("DELETE FROM updates WHERE id=?", (identity,))
 
+    def fail_update(self, identity):
+        # Preserve recoverable source data; replay requires inspection because a UI send may have succeeded.
+        with self.db:
+            self.db.execute("UPDATE updates SET state='failed' WHERE id=?", (identity,))
+
 
 def safe_component(name: str) -> str:
     return re.sub(r"[^\w\-]", "_", name, flags=re.UNICODE).strip("._")[:60] or "project"

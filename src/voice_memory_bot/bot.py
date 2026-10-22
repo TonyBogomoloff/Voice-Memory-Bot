@@ -121,15 +121,23 @@ class Bot:
             if update is None:
                 await asyncio.sleep(.2)
                 continue
+            completed = None
             try:
                 await self.handle(update)
+                completed = True
             except ProviderError as exc:
+                completed = True
                 # UI sends are not retried automatically: a lost response may already have delivered.
-                log.warning("update failed update_id=%s error=%s", update["update_id"], exc)
+                log.warning("update failed update_id=%s error=%s method=%s reason=%s", update["update_id"], exc,
+                            getattr(exc, "method", "unknown"), getattr(exc, "reason", "unknown"))
             except Exception as exc:
+                completed = False
                 log.error("update failed update_id=%s type=%s", update["update_id"], type(exc).__name__)
             finally:
-                self.store.finish_update(update["update_id"])
+                if completed is True:
+                    self.store.finish_update(update["update_id"])
+                elif completed is False:
+                    self.store.fail_update(update["update_id"])
 
     async def show(self, owner, text, thread=None, keys=None, edit_id=None):
         if edit_id:

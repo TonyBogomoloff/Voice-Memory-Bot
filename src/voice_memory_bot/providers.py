@@ -17,6 +17,25 @@ class ProviderError(Exception):
     """Only a fixed error code escapes provider boundaries; never tokens, URLs or response bodies."""
 
 
+class TelegramError(ProviderError):
+    def __init__(self, code, method, description):
+        super().__init__(f"telegram_{code}")
+        self.method = method
+        known = {
+            "message thread not found": "thread_not_found",
+            "message_thread_invalid": "thread_invalid",
+            "topic_closed": "topic_closed",
+            "topic_deleted": "topic_deleted",
+            "message to edit not found": "edit_target_missing",
+            "message is not modified": "not_modified",
+            "chat not found": "chat_not_found",
+            "button_data_invalid": "button_invalid",
+            "query is too old": "callback_expired",
+        }
+        # Never expose arbitrary provider descriptions, which may echo request data.
+        self.reason = next((v for k, v in known.items() if k in str(description).lower()), "unspecified")
+
+
 class Telegram:
     def __init__(self, token: str, client=None):
         self._base = f"https://api.telegram.org/bot{token}/"
@@ -36,7 +55,7 @@ class Telegram:
             raise ProviderError("telegram_transport_unknown") from None
         if not isinstance(body, dict) or not body.get("ok"):
             code = body.get("error_code", response.status_code) if isinstance(body, dict) else response.status_code
-            raise ProviderError(f"telegram_{int(code)}")
+            raise TelegramError(int(code), method, body.get("description") if isinstance(body, dict) else "")
         return body["result"]
 
     async def text(self, owner, text, thread=None, keyboard=None):
