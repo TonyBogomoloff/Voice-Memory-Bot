@@ -34,6 +34,8 @@ class Archive:
         return self.root / str(owner) / identity
 
     def audio(self, note):
+        if note["kind"] == "photo" and note["extension"] == "jpg":
+            return self.directory(note) / "photo.jpg"
         if note["extension"] not in {"ogg", "mp3", "mp4", "mpeg", "mpga", "m4a", "flac", "wav", "webm", "txt"}:
             raise ValueError("invalid_audio_extension")
         return self.directory(note) / ("voice." + note["extension"])
@@ -42,9 +44,12 @@ class Archive:
     def markdown(note, folder):
         date = datetime.fromtimestamp(note["created_at"], UTC).isoformat()
         meta = f"Проект: {folder['name']}\nДата UTC: {date}\nID: {note['id']}\n"
-        audio = f"\n[Исходное аудио](voice.{note['extension']})\n" if note["file_id"] else ""
+        photo = note["kind"] == "photo"
+        media = ("\n[Фото](photo.jpg)\n" if photo else f"\n[Исходное аудио](voice.{note['extension']})\n")
+        audio = media if note["file_id"] else ""
         text = note["transcript"] if note["transcript"] is not None else "Расшифровка пока не получена."
-        return f"# {note['title']}\n\n{meta}{audio}\n## Расшифровка\n\n{text}\n"
+        section = "Подпись" if photo else "Расшифровка"
+        return f"# {note['title']}\n\n{meta}{audio}\n## {section}\n\n{text}\n"
 
     def persist_text(self, note, folder):
         directory = self.directory(note)
@@ -79,6 +84,7 @@ class Archive:
                 markdown = self.markdown(note, folder)
                 if not include_audio:
                     markdown = markdown.replace(f"\n[Исходное аудио](voice.{note['extension']})\n", "\n")
+                    markdown = markdown.replace("\n[Фото](photo.jpg)\n", "\n")
                 text_files = {"note.md": markdown}
                 if note["transcript"] is not None:
                     text_files["transcript.txt"] = note["transcript"]
@@ -105,6 +111,7 @@ class Archive:
                         raise ValueError("archive_audio_checksum_mismatch")
                     handle.write(audio, f"{prefix}/{audio.name}")
                 manifest.append({"id": note["id"], "project": folder["name"], "path": prefix,
+                                 "kind": note["kind"],
                                  "state": note["state"], "audio_included": bool(audio),
                                  "audio_sha256": note["sha256"] if audio else None})
                 used += size

@@ -67,6 +67,7 @@ HELP = """🎙 Voice Memory Bot
 
 В карточке записи доступны текст, исходное аудио, перенос и удаление.
 Голосовые сразу расшифровываются в текст. Под расшифровкой: «Опции» → «Переместить».
+Фото тоже сохраняются: под снимком появится отдельное сообщение с кнопкой «Опции».
 Аудио отправляется в Groq для распознавания, текст — в OpenAI для выбора проекта и заголовка.
 Оригинал и исходная расшифровка хранятся в твоём архиве. Удаление из архива не удаляет сообщения
 в истории Telegram. Автосинхронизация с другими сервисами пока не подключена."""
@@ -170,6 +171,8 @@ class Bot:
                                                text=text[:4000], reply_markup=keys,
                                                link_preview_options={"is_disabled": True})
             except ProviderError as exc:
+                if getattr(exc, "reason", None) == "not_modified":
+                    return {"message_id": edit_id}
                 if str(exc) != "telegram_400":
                     raise
                 # Captions cannot be edited as text; older messages may no longer be editable.
@@ -222,25 +225,29 @@ class Bot:
             if text:
                 note, created = self.store.add_note(owner, folder, message, "text", transcript=text)
             else:
-                kind = next((k for k in ("voice", "audio", "document") if message.get(k)), None)
+                kind = next((k for k in ("voice", "audio", "document", "photo") if message.get(k)), None)
                 if kind is None:
-                    return await self.show(owner, "Пришли голосовое, аудиофайл или текстовую заметку.", thread, HOME)
-                media = message[kind]
-                extension = "ogg" if kind == "voice" else Path(media.get("file_name", "")).suffix.lower().lstrip(".")
-                if extension not in {"ogg", "mp3", "mp4", "mpeg", "mpga", "m4a", "flac", "wav", "webm"}:
+                    return await self.show(owner, "Пришли голосовое, аудиофайл, фото или текстовую заметку.", thread, HOME)
+                media = message[kind][-1] if kind == "photo" else message[kind]
+                extension = ("jpg" if kind == "photo" else "ogg" if kind == "voice"
+                             else Path(media.get("file_name", "")).suffix.lower().lstrip("."))
+                if kind != "photo" and extension not in {"ogg", "mp3", "mp4", "mpeg", "mpga", "m4a", "flac", "wav", "webm"}:
                     raise ValueError("Поддерживаются OGG, MP3, MP4, M4A, FLAC, WAV и WebM")
                 size, duration = media.get("file_size", 0), media.get("duration", 0)
                 if size <= 0 or size > self.config.limits.max_file_bytes:
-                    raise ValueError("Для MVP нужен аудиофайл размером до 20 MB")
+                    raise ValueError("Для MVP нужен файл размером до 20 MB")
                 if duration > self.config.limits.max_audio_seconds:
                     raise ValueError(f"Максимальная длительность — {self.config.limits.max_audio_seconds // 60} минут")
                 # Uploaded documents lack reliable duration; probe the saved file before calling Groq.
                 note, created = self.store.add_note(owner, folder, message, kind, media["file_id"],
-                                                    extension, size, duration)
+                                                    extension, size, duration,
+                                                    transcript=message.get("caption", "") if kind == "photo" else None)
             if created:
                 self.messages.record(note, message["message_id"], thread, "source")
                 # The worker uses the same lock, so a quick ASR cannot outrun the status checkpoint.
                 async with self.note_locks[note["id"]]:
+                    if note["kind"] == "photo":
+                        return await self.photo_controls(note)
                     status = "Конвертирую в текст…" if note["file_id"] else "Сохраняю…"
                     response = await self.telegram.text(owner, status, thread)
                     self.store.update_note(owner, note["id"], status_message_id=response["message_id"])
@@ -369,8 +376,11 @@ class Bot:
         if note["state"] in {"queued", "processing"}:
             text += "\n⏳ Обрабатываю запись."
         elif note["state"] == "asr_failed":
-            text += "\nНе удалось получить расшифровку."
-            text += " Аудио сохранено." if note["audio_bytes"] else " Загрузка аудио пока не завершена."
+            if note["kind"] == "photo":
+                text += "\nНе удалось сохранить фото. Попробуй ещё раз."
+            else:
+                text += "\nНе удалось получить расшифровку."
+                text += " Аудио сохранено." if note["audio_bytes"] else " Загрузка аудио пока не завершена."
             if note["error"] == "daily_asr_limit":
                 text += " Достигнут лимит распознавания за последние 24 часа."
         if note["routing"] == "unavailable":
@@ -384,7 +394,7 @@ class Bot:
         identity = note["id"]
         rows = [[button("📄 Текст", f"text:{identity}"), button("📁 Переместить", f"choose:{identity}:0")]]
         if note["audio_bytes"]:
-            rows.append([button("🎙 Аудио", f"audio:{identity}")])
+            rows.append([button("📷 Фото" if note["kind"] == "photo" else "🎙 Аудио", f"audio:{identity}")])
         if note["state"] == "asr_failed" or note["routing"] in {"unavailable", "review"}:
             rows.append([button("Повторить обработку", f"retry:{identity}")])
         if note["requested_folder"] and note["routing"] == "review":
@@ -476,12 +486,16 @@ class Bot:
             return await self.create_folder(owner, thread, note["requested_folder"], identity)
         if action == "retry":
             self.store.retry(owner, identity)
+            if note["kind"] == "photo":
+                self.store.update_note(owner, identity, transcript_delivery="pending")
             async with self.note_locks[identity]:
                 status = "Конвертирую в текст…" if note["transcript"] is None else "Сохраняю…"
                 response = await self.show(owner, status, thread, edit_id=message_id)
                 self.store.update_note(owner, identity, status_message_id=response["message_id"])
             return
         if action == "text":
+            if note["kind"] == "photo" and not note["transcript"]:
+                return await self.show(owner, "У фото нет подписи.", thread)
             if note["transcript"] is None:
                 raise ValueError("Расшифровка ещё не получена; исходное аудио можно выгрузить отдельно")
             if len(note["transcript"]) <= 3900:
@@ -491,10 +505,11 @@ class Bot:
         if action == "audio":
             path = self.archive.audio(note)
             if not note["audio_bytes"] or not path.exists():
-                raise ValueError("Исходное аудио пока недоступно")
-            return await self.telegram.document(owner, path, thread, "Исходное аудио без перекодирования")
+                raise ValueError("Исходный файл пока недоступен")
+            return await self.telegram.document(owner, path, thread,
+                                                "Фото" if note["kind"] == "photo" else "Исходное аудио без перекодирования")
         if action == "delete":
-            return await self.show(owner, "Удалить запись и аудио из архива бота?\nСообщения в Telegram останутся.",
+            return await self.show(owner, "Удалить запись и исходный файл из архива бота?\nСообщения в Telegram останутся.",
                 thread, keyboard([button("Удалить", f"confirmdelete:{identity}"), button("Отмена", f"note:{identity}")]))
         if action == "confirmdelete":
             if note["state"] == "processing" or self.note_locks[identity].locked():
@@ -517,7 +532,7 @@ class Bot:
     async def export_menu(self, owner, thread, identity, edit_id=None):
         label = "всего архива" if identity == "all" else "папки «" + self.store.folder(owner, identity)["name"] + "»"
         await self.show(owner, f"Экспорт {label}:", thread, keyboard(
-            [button("Только тексты", f"zip:{identity}:text"), button("Тексты + аудио", f"zip:{identity}:audio")],
+            [button("Только тексты", f"zip:{identity}:text"), button("Тексты + файлы", f"zip:{identity}:audio")],
             [button("← Папки", "folders")]), edit_id)
 
     async def send_export(self, owner, thread, identity, audio):
@@ -622,6 +637,8 @@ class Bot:
         owner, identity = note["owner"], note["id"]
         async with self.note_locks[identity]:
             note = self.store.note(owner, identity)
+            if note["kind"] == "photo":
+                return await self.process_photo(note)
             try:
                 if note["file_id"] and note["transcript"] is None:
                     path = self.archive.audio(note)
@@ -662,6 +679,51 @@ class Bot:
                 note = self.store.note(owner, identity)
             await self.deliver(note)
 
+    async def photo_controls(self, note, error=False):
+        note = self.store.note(note["owner"], note["id"])
+        if note["transcript_delivery"] in {"sending", "unknown"}:
+            return
+        edit_id = note["transcript_message_id"] if note["transcript_delivery"] == "sent" else None
+        text = "Не удалось сохранить фото. Попробуй ещё раз." if error else "📷 Фото"
+        keys = keyboard([button("Повторить", f"retry:{note['id']}")]) if error else options_keyboard(note["id"])
+        self.store.update_note(note["owner"], note["id"], transcript_delivery="sending")
+        try:
+            response = await self.show(note["owner"], text, note["source_thread"], keys, edit_id)
+            self.messages.record(note, response["message_id"], note["source_thread"], "photo_controls")
+            self.store.update_note(note["owner"], note["id"], transcript_delivery="sent",
+                                   transcript_message_id=response["message_id"])
+        except ProviderError:
+            self.store.update_note(note["owner"], note["id"], transcript_delivery="unknown")
+            raise
+
+    async def process_photo(self, note):
+        owner, identity = note["owner"], note["id"]
+        try:
+            path = self.archive.audio(note)
+            if path.exists():
+                size = path.stat().st_size
+                with path.open("rb") as handle:
+                    checksum = hashlib.file_digest(handle, "sha256").hexdigest()
+            else:
+                size, checksum = await self.telegram.download(note["file_id"], path, self.config.limits.max_file_bytes)
+            self.store.update_note(owner, identity, audio_bytes=size, sha256=checksum, state="ready",
+                                   title=(note["transcript"] or "Фото")[:80], routing="manual", error=None)
+            note = self.store.note(owner, identity)
+            self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
+            await self.clear_status(note)
+            if note["transcript_delivery"] == "pending":
+                await self.photo_controls(note)
+        except (ProviderError, OSError, ValueError) as exc:
+            self.store.update_note(owner, identity, state="asr_failed", error=type(exc).__name__)
+            await self.clear_status(note)
+            try:
+                await self.photo_controls(note, error=True)
+            except ProviderError:
+                pass
+            self.store.update_note(owner, identity, delivery="unknown")
+            return
+        await self.deliver(self.store.note(owner, identity))
+
     async def clear_status(self, note):
         owner, identity = note["owner"], note["id"]
         message_id = self.store.note(owner, identity)["status_message_id"]
@@ -674,6 +736,7 @@ class Bot:
                 log.warning("status cleanup failed note_id=%s error=%s", identity, exc)
                 return
         self.store.update_note(owner, identity, status_message_id=None)
+        self.messages.removed(owner, identity, message_id)
 
     async def send_transcript(self, note, thread, reply_to=None, recover_topic=False):
         chunks = list(transcript_chunks(note["transcript"]))
@@ -691,6 +754,18 @@ class Bot:
         return response, thread
 
     async def publish_note(self, note, thread):
+        if note["kind"] == "photo":
+            try:
+                response = await self.telegram.call("sendPhoto", chat_id=note["owner"], message_thread_id=thread,
+                    photo=note["file_id"], caption=note["transcript"] or None, reply_markup=options_keyboard(note["id"]))
+            except ProviderError as exc:
+                if not (thread and self.topics_enabled and missing_topic(exc)):
+                    raise
+                thread = await self.ensure_topic(note["owner"], note["folder_id"], invalid_thread=thread)
+                response = await self.telegram.call("sendPhoto", chat_id=note["owner"], message_thread_id=thread,
+                    photo=note["file_id"], caption=note["transcript"] or None, reply_markup=options_keyboard(note["id"]))
+            self.messages.record(note, response["message_id"], thread, "photo")
+            return response, thread
         if note["file_id"]:
             method, field = {"voice": ("sendVoice", "voice"), "audio": ("sendAudio", "audio"),
                              "document": ("sendDocument", "document")}[note["kind"]]
@@ -732,14 +807,15 @@ class Bot:
         self.store.update_note(owner, identity, delivery="sending")
         try:
             await self.clear_status(note)
-            if not note["transcript"]:
+            if not note["transcript"] and note["kind"] != "photo":
                 text = "Не удалось конвертировать запись в текст. Попробуй ещё раз."
                 keys = keyboard([button("Повторить", f"retry:{identity}")])
                 response = await self.telegram.text(owner, text, note["source_thread"], keys)
                 self.store.update_note(owner, identity, delivery="sent", result_message_id=response["message_id"],
                                        result_thread=note["source_thread"])
                 return
-            await self.deliver_transcript(note)
+            if note["kind"] != "photo":
+                await self.deliver_transcript(note)
             thread = await self.ensure_topic(owner, note["folder_id"])
             if not thread or thread == note["source_thread"]:
                 saved = self.store.note(owner, identity)

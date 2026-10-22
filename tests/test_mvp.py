@@ -230,6 +230,8 @@ class FakeTelegram:
         self.sent.append((method, kwargs))
         if method == "createForumTopic":
             return {"message_thread_id": 123}
+        if method.startswith("editMessage"):
+            return {"message_id": kwargs["message_id"]}
         if self.fail_delivery and method.startswith("send"):
             raise ProviderError("telegram_transport_unknown")
         self.message_sequence += 1
