@@ -234,14 +234,15 @@ class Bot(AIBotMixin):
                 elif thread and name:
                     self.store.import_topic(owner, name, thread)
                 return
-            if thread and not self.store.folder_for_thread(owner, thread) and not self.store.is_implicit_topic(owner, thread):
-                self.store.create_folder(owner, f"Проект {thread}", thread)
             text = message.get("text", "").strip()
             if text.startswith("/"):
                 command, _, argument = text.partition(" ")
                 return await self.command(owner, thread, command.split("@")[0].lower(), argument.strip())
             if text and self.store.action(owner):
                 return await self.input_action(owner, thread, text)
+            # Commands and prompt answers must not import their source thread as a folder.
+            if thread and not self.store.folder_for_thread(owner, thread) and not self.store.is_implicit_topic(owner, thread):
+                self.store.create_folder(owner, f"Проект {thread}", thread)
             folder = self.store.current_folder(owner, thread)
             if not message.get("photo"):
                 self.check_ai_capacity(owner, folder, message)
@@ -283,6 +284,8 @@ class Bot(AIBotMixin):
             await self.show(owner, str(exc), thread, HOME)
 
     async def command(self, owner, thread, command, argument):
+        # A new command leaves the previous name/search prompt behind.
+        self.store.set_action(owner, None)
         if command == "/ai":
             return await self.open_ai(owner, thread)
         if command == "/newchat":
@@ -295,7 +298,6 @@ class Bot(AIBotMixin):
                     pass
             return await self.show(owner, HELP, thread, HOME)
         if command == "/cancel":
-            self.store.set_action(owner, None)
             return await self.show(owner, "Ввод отменён.", thread, HOME)
         if command == "/folders":
             return await self.show_folders(owner, thread)
