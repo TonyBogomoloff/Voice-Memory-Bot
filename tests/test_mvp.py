@@ -146,9 +146,11 @@ def test_export_preserves_original_and_raw_text_and_checks_corruption(tmp_path, 
     with zipfile.ZipFile(paths[0]) as zipped:
         assert all(not name.startswith("/") and ".." not in name.split("/") for name in zipped.namelist())
         names = zipped.namelist()
-        assert zipped.read(next(n for n in names if n.endswith("voice.ogg"))) == b"unchanged audio"
-        assert zipped.read(next(n for n in names if n.endswith("transcript.txt"))).decode() == note["transcript"]
-        assert b"not-for-export" not in zipped.read("manifest.json")
+        assert zipped.read(next(n for n in names if n.endswith(".ogg"))) == b"unchanged audio"
+        manifest = zipped.read("manifest-001.json")
+        history = next(f for f in json.loads(manifest)["files"] if f["kind"] == "history")
+        assert history["notes"][0]["transcript"] == note["transcript"]
+        assert b"not-for-export" not in manifest
     audio.write_bytes(b"modified  audio")
     with pytest.raises(ValueError, match="checksum"):
         archive.export([note], store.folders(1), tmp_path / "bad-export", True, 45000000)
@@ -156,10 +158,22 @@ def test_export_preserves_original_and_raw_text_and_checks_corruption(tmp_path, 
 
 def test_export_split_text_only_and_delete(tmp_path, store):
     notes = [add(store, message=i, kind="text", transcript="x" * 1000) for i in range(3)]
+    for i, note in enumerate(notes):
+        folder = store.create_folder(1, f"Проект {i}")
+        store.update_note(1, note["id"], folder_id=folder["id"])
+    notes = store.export_notes(1)
     archive = Archive(tmp_path / "files")
-    paths = archive.export(notes, store.folders(1), tmp_path / "export", False, 15000)
+    paths = archive.export(notes, store.folders(1), tmp_path / "export", False, 5200, text_format="markdown")
     assert len(paths) == 3
-    assert all(p.stat().st_size < 15000 for p in paths)
+    assert all(p.stat().st_size <= 5200 for p in paths)
+    exported, manifests = [], []
+    for path in paths:
+        with zipfile.ZipFile(path) as zipped:
+            name = next(n for n in zipped.namelist() if n.startswith("manifest-"))
+            manifests.append(name)
+            exported.extend(n["id"] for f in json.loads(zipped.read(name))["files"] for n in f["notes"])
+    assert len(set(manifests)) == len(paths)
+    assert sorted(exported) == sorted(n["id"] for n in notes)
     for note in notes:
         archive.persist_text(note, store.folder(1, note["folder_id"]))
     store.delete(1, notes[0]["id"])
@@ -351,7 +365,7 @@ def test_voice_options_move_publishes_then_removes_source_with_only_toast(tmp_pa
         bot.telegram.sent.clear()
         await bot.callback(1, 100, message_id, f"options:{note['id']}")
         keys = bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
-        assert [row[0]["text"] for row in keys] == ["Переместить", "← Назад"]
+        assert [row[0]["text"] for row in keys] == ["Переместить", "Обратиться к ИИ", "← Назад"]
         await bot.callback(1, 100, message_id, keys[0][0]["callback_data"])
         keys = bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
         target = next(row[0]["callback_data"] for row in keys if row[0]["text"] == "📁 Работа")

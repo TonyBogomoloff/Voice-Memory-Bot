@@ -60,7 +60,7 @@ async def check(config):
             saved = store.note(owner, note["id"])
             paths = bot.archive.export([saved], store.folders(owner), root / "export", True, 45000000)
             with zipfile.ZipFile(paths[0]) as archive:
-                filename = next(n for n in archive.namelist() if n.endswith("voice.wav"))
+                filename = next(n for n in archive.namelist() if n.endswith(".wav"))
                 original_ok = archive.read(filename) == audio.read_bytes()
             result = {"asr": config.groq_model, "llm": config.llm.model,
                       "transcription_nonempty": bool(saved["transcript"]),

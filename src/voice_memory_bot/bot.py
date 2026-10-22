@@ -10,6 +10,7 @@ from collections import defaultdict, deque
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .ai_bot import AIBotMixin
 from .archive import Archive
 from .config import Config
 from .message_store import MessageStore
@@ -50,7 +51,8 @@ def transcript_chunks(text, limit=3900):
 
 
 HOME = keyboard([button("📁 Папки", "folders"), button("🔎 Поиск", "search")],
-                [button("📦 Экспорт всего", "export:all"), button("ℹ️ Помощь", "help")])
+                [button("🤖 ИИ", "aiopen"), button("📦 Экспорт всего", "export:all")],
+                [button("⚙️ Настройки", "settings:all"), button("ℹ️ Помощь", "help")])
 
 HELP = """🎙 Voice Memory Bot
 
@@ -63,18 +65,26 @@ HELP = """🎙 Voice Memory Bot
 /notes — последние записи
 /search текст — поиск по всему архиву
 /export — выгрузить архив
+/ai — открыть папку для диалога с ИИ
+/settings — настройки ИИ и экспорта PDF / Markdown
+/newchat — начать новый разговор
 /cancel — отменить ввод названия или поиск
 
 В карточке записи доступны текст, исходное аудио, перенос и удаление.
-Голосовые сразу расшифровываются в текст. Под расшифровкой: «Опции» → «Переместить».
+Голосовые сразу расшифровываются в текст. Под расшифровкой: «Опции» → «Переместить» / «Обратиться к ИИ».
+В папке с режимом «Диалог с ИИ» все сообщения идут помощнику. Ответ на реплику ИИ продолжает разговор.
+Обращение по имени в начале или конце можно включить в настройках. По умолчанию оно выключено.
+ИИ умеет искать, создавать и менять заметки; исходная расшифровка сохраняется, правку можно отменить.
+История разговора и запрошенные заметки передаются модели. Доступ к заметкам можно выключить в настройках.
 Фото тоже сохраняются: под снимком появится отдельное сообщение с кнопкой «Опции».
 Аудио отправляется в Groq для распознавания, текст — в OpenAI для выбора проекта и заголовка.
 Оригинал и исходная расшифровка хранятся в твоём архиве. Удаление из архива не удаляет сообщения
 в истории Telegram. Автосинхронизация с другими сервисами пока не подключена."""
 
 
-class Bot:
-    def __init__(self, config: Config, store: Store, telegram: Telegram, groq: Groq, router: CodexRouter):
+class Bot(AIBotMixin):
+    def __init__(self, config: Config, store: Store, telegram: Telegram, groq: Groq, router: CodexRouter,
+                 assistant=None):
         self.config, self.store = config, store
         self.telegram, self.groq, self.router = telegram, groq, router
         self.archive = Archive(config.data_dir / "notes")
@@ -85,6 +95,7 @@ class Bot:
         self.note_locks = defaultdict(asyncio.Lock)
         self.folder_locks = defaultdict(asyncio.Lock)
         self.export_tasks = set()
+        self.init_ai(assistant)
 
     async def start(self):
         me = await self.telegram.call("getMe")
@@ -99,6 +110,9 @@ class Bot:
             {"command": "notes", "description": "Последние записи"},
             {"command": "search", "description": "Поиск по записям"},
             {"command": "export", "description": "Выгрузить архив"},
+            {"command": "ai", "description": "Поговорить с ИИ"},
+            {"command": "settings", "description": "Настройки"},
+            {"command": "newchat", "description": "Новый разговор с ИИ"},
             {"command": "help", "description": "Как пользоваться"},
             {"command": "cancel", "description": "Отменить ввод"},
         ])
@@ -111,6 +125,7 @@ class Bot:
                 group.create_task(self.poll())
                 group.create_task(self.dispatch())
                 group.create_task(self.worker())
+                group.create_task(self.ai_worker())
         finally:
             for task in self.export_tasks:
                 task.cancel()
@@ -228,6 +243,8 @@ class Bot:
             if text and self.store.action(owner):
                 return await self.input_action(owner, thread, text)
             folder = self.store.current_folder(owner, thread)
+            if not message.get("photo"):
+                self.check_ai_capacity(owner, folder, message)
             if text:
                 note, created = self.store.add_note(owner, folder, message, "text", transcript=text)
             else:
@@ -250,6 +267,8 @@ class Bot:
                                                     transcript=message.get("caption", "") if kind == "photo" else None)
             if created:
                 self.messages.record(note, message["message_id"], thread, "source")
+                if note["kind"] != "photo":
+                    self.capture_ai_input(note, message)
                 # The worker uses the same lock, so a quick ASR cannot outrun the status checkpoint.
                 async with self.note_locks[note["id"]]:
                     if note["kind"] == "photo":
@@ -264,6 +283,10 @@ class Bot:
             await self.show(owner, str(exc), thread, HOME)
 
     async def command(self, owner, thread, command, argument):
+        if command == "/ai":
+            return await self.open_ai(owner, thread)
+        if command == "/newchat":
+            return await self.new_ai_conversation(owner, thread, self.store.current_folder(owner, thread))
         if command in {"/start", "/help", "/privacy"}:
             if command == "/start":
                 try:
@@ -290,11 +313,16 @@ class Bot:
             return await self.show(owner, "Что найти в твоих заметках? Пришли слова текстом.", thread)
         if command == "/export":
             return await self.export_menu(owner, thread, "all")
+        if command == "/settings":
+            return await self.settings_menu(owner, thread)
         return await self.show(owner, "Команда не найдена. Открой меню папок или отправь заметку.", thread, HOME)
 
     async def input_action(self, owner, thread, text):
         action = self.store.action(owner)
-        if action == "create":
+        if action == "ai_names":
+            self.ai_state.set_settings(owner, names=[n.strip() for n in text.split(",") if n.strip()])
+            await self.ai_settings(owner, thread)
+        elif action == "create":
             await self.create_folder(owner, thread, text)
         elif action == "search":
             await self.search(owner, thread, text)
@@ -362,6 +390,7 @@ class Bot:
         notes = self.store.notes(owner, identity, offset=page * 8, limit=9)
         aliases = ", ".join(json.loads(folder["aliases"]))
         text = f"📁 {folder['name']}" + (f"\nМожно говорить: {aliases}" if aliases else "")
+        text += "\nРежим: " + ("диалог с ИИ" if folder["mode"] == "chat" else "заметки")
         text += "\nЗаписи:" if notes else "\nПока нет записей. Отправь голосовое в эту тему или выбери папку ниже."
         rows = [[button(n["title"][:55], f"note:{n['id']}")] for n in notes[:8]]
         nav = []
@@ -375,6 +404,12 @@ class Bot:
                      [button("Псевдонимы", f"aliases:{identity}")]])
         if not folder["is_inbox"]:
             rows[-1].append(button("Переименовать", f"rename:{identity}"))
+        target_mode = "notes" if folder["mode"] == "chat" else "chat"
+        rows.append([button("Режим → " + ("Заметки" if target_mode == "notes" else "Диалог с ИИ"),
+                            f"aimode:{identity}:{target_mode}")])
+        if folder["mode"] == "chat":
+            rows.append([button("Новый разговор", f"ainew:{identity}"),
+                         button("История ИИ", f"ailist:{identity}:0")])
         rows.append([button("← Папки", "folders")])
         await self.show(owner, text, thread, keyboard(*rows), edit_id)
 
@@ -396,14 +431,20 @@ class Bot:
             text += "\nВыбор проекта недоступен. Сохранил во «Входящие» — папку можно выбрать вручную."
         elif note["routing"] == "review":
             text += "\nУточни папку кнопкой ниже."
-        if note["transcript"]:
-            text += "\n\n" + note["transcript"][:450]
-            if len(note["transcript"]) > 450:
+        content = note["content"] if note.get("content") is not None else note["transcript"]
+        if content:
+            text += "\n\n" + content[:450]
+            if len(content) > 450:
                 text += "…"
         identity = note["id"]
         rows = [[button("📄 Текст", f"text:{identity}"), button("📁 Переместить", f"choose:{identity}:0")]]
         if note["audio_bytes"]:
             rows.append([button("📷 Фото" if note["kind"] == "photo" else "🎙 Аудио", f"audio:{identity}")])
+        if note.get("content") is not None:
+            rows.append([button("Исходная расшифровка", f"original:{identity}"),
+                         button("Отменить правку", f"aiundo:{identity}:{note['revision']}")])
+        if note["kind"] != "photo":
+            rows.append([button("Обратиться к ИИ", f"aiask:{identity}")])
         if note["state"] == "asr_failed" or note["routing"] in {"unavailable", "review"}:
             rows.append([button("Повторить обработку", f"retry:{identity}")])
         if note["requested_folder"] and note["routing"] == "review":
@@ -440,6 +481,8 @@ class Bot:
         await self.edit_note_buttons(owner, message_id, keyboard(*rows))
 
     async def callback(self, owner, thread, message_id, data):
+        if await self.ai_callback(owner, thread, message_id, data):
+            return
         pieces = data.split(":")
         action, identity = pieces[0], pieces[1] if len(pieces) > 1 else None
         if action == "help":
@@ -464,19 +507,35 @@ class Bot:
             return await self.show(owner, prompt + " /cancel — отмена.", thread)
         if action == "export":
             return await self.export_menu(owner, thread, identity, message_id)
+        if action == "settings":
+            return await self.settings_menu(owner, thread, message_id)
+        if action == "exportsettings":
+            return await self.export_settings(owner, thread, identity or "all", message_id)
+        if action == "exportformat":
+            scope = pieces[2] if len(pieces) > 2 else "all"
+            if scope != "all":
+                self.store.folder(owner, scope)
+            self.store.set_export_format(owner, identity)
+            return await self.export_settings(owner, thread, scope, message_id)
         if action == "zip":
+            if len(pieces) != 3 or pieces[2] not in {"all", "text", "voice", "audio"}:
+                raise ValueError("Выбери вид экспорта в меню /export")
             folder_id = None if identity == "all" else identity
             if folder_id:
                 self.store.folder(owner, folder_id)
-            task = asyncio.create_task(self.send_export(owner, thread, folder_id, pieces[2] == "audio"))
+            # Keep old 'texts + audio' buttons working after the update.
+            content = "all" if pieces[2] == "audio" else pieces[2]
+            task = asyncio.create_task(self.send_export(owner, thread, folder_id, content))
             self.export_tasks.add(task)
             task.add_done_callback(self.export_tasks.discard)
             return
         note = self.store.note(owner, identity)
         if action == "options":
-            return await self.edit_note_buttons(owner, message_id, keyboard(
-                [button("Переместить", f"pick:{identity}:0")],
-                [button("← Назад", f"collapse:{identity}")]))
+            rows = [[button("Переместить", f"pick:{identity}:0")]]
+            if note["kind"] != "photo":
+                rows.append([button("Обратиться к ИИ", f"aiask:{identity}")])
+            rows.append([button("← Назад", f"collapse:{identity}")])
+            return await self.edit_note_buttons(owner, message_id, keyboard(*rows))
         if action == "collapse":
             return await self.edit_note_buttons(owner, message_id, options_keyboard(identity))
         if action == "pick":
@@ -502,15 +561,15 @@ class Bot:
                 response = await self.show(owner, status, thread, edit_id=message_id)
                 self.store.update_note(owner, identity, status_message_id=response["message_id"])
             return
-        if action == "text":
-            if note["kind"] == "photo" and not note["transcript"]:
+        if action in {"text", "original"}:
+            if note["kind"] == "photo" and not note["transcript"] and not note.get("content"):
                 return await self.show(owner, "У фото нет подписи.", thread)
             if note["transcript"] is None:
                 raise ValueError("Расшифровка ещё не получена; исходное аудио можно выгрузить отдельно")
-            if len(note["transcript"]) <= 3900:
-                return await self.show(owner, note["transcript"], thread)
-            self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
-            return await self.telegram.document(owner, self.archive.directory(note) / "transcript.txt", thread)
+            content = note["content"] if action == "text" and note["content"] is not None else note["transcript"]
+            for chunk in transcript_chunks(content):
+                await self.show(owner, chunk, thread)
+            return
         if action == "audio":
             path = self.archive.audio(note)
             if not note["audio_bytes"] or not path.exists():
@@ -538,35 +597,90 @@ class Bot:
         rows.append([button("Папки", "folders")])
         await self.show(owner, text, thread, keyboard(*rows))
 
+    async def settings_menu(self, owner, thread, edit_id=None):
+        label = "PDF" if self.store.export_format(owner) == "pdf" else "Markdown"
+        rows = [[button(f"📦 Экспорт · {label}", "exportsettings:all")]]
+        if hasattr(self, "ai_settings"):
+            rows.append([button("🤖 Настройки ИИ", "aisettings")])
+        rows.append([button("📁 Папки", "folders")])
+        await self.show(owner, "⚙️ Настройки", thread, keyboard(*rows), edit_id)
+
+    async def export_settings(self, owner, thread, scope="all", edit_id=None):
+        if scope != "all":
+            self.store.folder(owner, scope)
+        selected = self.store.export_format(owner)
+        label = "PDF" if selected == "pdf" else "Markdown"
+        await self.show(owner, f"⚙️ Настройки\n\nФормат экспорта текста: {label}.\n"
+                        "Вся история темы — один файл внутри папки проекта.\n"
+                        "Выбор сохраняется для следующих выгрузок.", thread, keyboard(
+                            [button(("✓ " if selected == "pdf" else "") + "PDF", f"exportformat:pdf:{scope}"),
+                             button(("✓ " if selected == "markdown" else "") + "Markdown",
+                                    f"exportformat:markdown:{scope}")],
+                            [button("📦 К экспорту", f"export:{scope}"), button("← Настройки", "settings:all")]), edit_id)
+
     async def export_menu(self, owner, thread, identity, edit_id=None):
         label = "всего архива" if identity == "all" else "папки «" + self.store.folder(owner, identity)["name"] + "»"
-        await self.show(owner, f"Экспорт {label}:", thread, keyboard(
-            [button("Только тексты", f"zip:{identity}:text"), button("Тексты + файлы", f"zip:{identity}:audio")],
-            [button("← Папки", "folders")]), edit_id)
+        text_format = "PDF" if self.store.export_format(owner) == "pdf" else "Markdown"
+        await self.show(owner, f"📦 Экспорт {label}\n\n"
+                        f"Тексты: {text_format}, вся история темы в одном файле. Папки проектов сохранятся.\n"
+                        "Всё будет в одном ZIP. Если он больше лимита Telegram — в нескольких частях.",
+                        thread, keyboard(
+                            [button(f"Всё: {text_format} + файлы", f"zip:{identity}:all")],
+                            [button(f"Только тексты · {text_format}", f"zip:{identity}:text"),
+                             button("Только аудио", f"zip:{identity}:voice")],
+                            [button("⚙️ Формат текста", f"exportsettings:{identity}"), button("← Папки", "folders")]), edit_id)
 
-    async def send_export(self, owner, thread, identity, audio):
+    async def send_export(self, owner, thread, identity, content):
         if self.export_locks[owner].locked():
-            return
+            return await self.show(owner, "Предыдущий экспорт ещё готовится. Дождись его завершения.", thread)
         async with self.export_locks[owner]:
             try:
-                notes = self.store.notes(owner, identity, limit=self.config.limits.max_notes_per_user)
-                if not notes:
-                    return await self.show(owner, "В архиве пока нет записей.", thread)
-                await self.show(owner, "Готовлю ZIP. Большой архив будет разделён на части.", thread)
+                if content not in {"all", "text", "voice"}:
+                    raise ValueError("invalid_export_format")
+                # Snapshot all metadata and the preference before yielding to other handlers.
+                notes = self.store.export_notes(owner, identity)
+                folders = [self.store.folder(owner, identity)] if identity else self.store.folders(owner)
+                text_format = self.store.export_format(owner)
+                preferences = self.store.export_preferences(owner)
+                if content == "voice" and not any(
+                        n["kind"] != "photo" and (n["file_id"] or n["audio_bytes"]) for n in notes):
+                    return await self.show(owner, "В выбранном архиве пока нет аудиозаписей.", thread)
+                await self.show(owner, "Готовлю ZIP…", thread)
                 export_root = self.config.data_dir / "exports"
                 export_root.mkdir(exist_ok=True, mode=0o700)
                 with tempfile.TemporaryDirectory(prefix="export-", dir=export_root) as directory:
-                    # Snapshot metadata on the event loop; file work runs in a thread.
-                    folders = self.store.folders(owner)
-                    paths = await asyncio.to_thread(self.archive.export, notes, folders, Path(directory),
-                                                    audio, self.config.limits.export_part_bytes)
+                    build = asyncio.create_task(asyncio.to_thread(
+                        self.archive.export, notes, folders, Path(directory), content != "text",
+                        self.config.limits.export_part_bytes, text_format=text_format, audio_only=content == "voice",
+                        settings=preferences))
+                    try:
+                        paths = await asyncio.shield(build)
+                    except asyncio.CancelledError:
+                        # to_thread keeps running on cancellation; do not remove its directory early.
+                        await build
+                        raise
+                    if len(paths) > 1:
+                        await self.show(owner, f"Архив большой: отправляю {len(paths)} ZIP-частей.\n"
+                                        "Распакуй их в одну папку — файлы распределены между частями.", thread)
                     for i, path in enumerate(paths):
-                        await self.telegram.document(owner, path, thread, f"Архив · часть {i + 1} из {len(paths)}")
-            except (ValueError, OSError) as exc:
-                log.warning("export failed type=%s", type(exc).__name__)
-                await self.show(owner, "Не удалось собрать полный архив. Попробуй ещё раз; записи сохранены.", thread)
+                        label = "Аудио" if content == "voice" else "PDF" if text_format == "pdf" else "Markdown"
+                        if content == "all":
+                            label += " + файлы"
+                        caption = f"{label} · ZIP" if len(paths) == 1 else f"{label} · часть {i + 1} из {len(paths)}"
+                        await self.telegram.document(owner, path, thread, caption)
             except ProviderError as exc:
                 log.warning("export delivery error=%s", exc)
+            except Exception as exc:
+                log.warning("export failed type=%s", type(exc).__name__)
+                if isinstance(exc, ValueError) and str(exc) == "archive_audio_pending":
+                    message = ("Часть файлов ещё не загружена в архив. Дождись обработки или повтори её "
+                               "в карточке записи. Тексты можно выгрузить отдельно.")
+                elif isinstance(exc, ValueError) and str(exc) == "export_document_too_large":
+                    message = ("История одной темы слишком велика для отправки через Telegram. "
+                               "Попробуй другой формат в настройках. Аудио можно выгрузить отдельно.")
+                else:
+                    message = "Не удалось собрать полный архив. Попробуй ещё раз; записи сохранены."
+                await self.show(owner, message, thread)
 
     async def move(self, owner, identity, folder_id, thread):
         note = self.store.note(owner, identity)
@@ -665,12 +779,19 @@ class Bot:
                     self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
                 # A folder/title decision must never delay the text the user is waiting for.
                 await self.deliver_transcript(note)
+                self.capture_ai_input(note, {"message_id": note["message_id"],
+                    "message_thread_id": note["source_thread"],
+                    "reply_to_message": {"message_id": note["reply_message_id"]}})
+                if await self.route_ai(note):
+                    return
                 folders = self.store.folders(owner)
                 result = None
                 try:
                     result = await self.router.classify(note["transcript"], folders)
                 except ProviderError as exc:
                     log.warning("routing error=%s", exc)
+                if await self.route_ai(note, detect=False):
+                    return
                 decision = decide(note["transcript"], folders, note["source_folder"],
                                   self.store.ensure_user(owner), result)
                 self.store.update_note(owner, identity, state="ready", title=decision.title,
@@ -744,7 +865,8 @@ class Bot:
         self.messages.removed(owner, identity, message_id)
 
     async def send_transcript(self, note, thread, reply_to=None, recover_topic=False):
-        chunks = list(transcript_chunks(note["transcript"]))
+        content = note["content"] if note.get("content") is not None else note["transcript"]
+        chunks = list(transcript_chunks(content))
         for index, text in enumerate(chunks):
             keys = options_keyboard(note["id"]) if index == len(chunks) - 1 else None
             try:
@@ -760,16 +882,22 @@ class Bot:
 
     async def publish_note(self, note, thread):
         if note["kind"] == "photo":
+            content = note["content"] if note.get("content") is not None else note["transcript"]
+            separate_text = len((content or "").encode("utf-16-le")) > 2048
+            payload = {"photo": note["file_id"], "caption": None if separate_text else content or None,
+                       "reply_markup": None if separate_text else options_keyboard(note["id"])}
             try:
-                response = await self.telegram.call("sendPhoto", chat_id=note["owner"], message_thread_id=thread,
-                    photo=note["file_id"], caption=note["transcript"] or None, reply_markup=options_keyboard(note["id"]))
+                response = await self.telegram.call("sendPhoto", chat_id=note["owner"],
+                                                    message_thread_id=thread, **payload)
             except ProviderError as exc:
                 if not (thread and self.topics_enabled and missing_topic(exc)):
                     raise
                 thread = await self.ensure_topic(note["owner"], note["folder_id"], invalid_thread=thread)
-                response = await self.telegram.call("sendPhoto", chat_id=note["owner"], message_thread_id=thread,
-                    photo=note["file_id"], caption=note["transcript"] or None, reply_markup=options_keyboard(note["id"]))
+                response = await self.telegram.call("sendPhoto", chat_id=note["owner"],
+                                                    message_thread_id=thread, **payload)
             self.messages.record(note, response["message_id"], thread, "photo")
+            if separate_text:
+                return await self.send_transcript(note, thread)
             return response, thread
         if note["file_id"]:
             method, field = {"voice": ("sendVoice", "voice"), "audio": ("sendAudio", "audio"),

@@ -35,6 +35,7 @@ class Config:
     groq_model: str = "whisper-large-v3-turbo"
     llm: LLMConfig = field(default_factory=LLMConfig)
     limits: Limits = field(default_factory=Limits)
+    assistant_models: tuple[str, ...] = ()
 
     @classmethod
     def load(cls, path: Path, secrets_path: Path | None = None) -> Config:
@@ -54,6 +55,11 @@ class Config:
             raise ValueError("MVP поддерживает llm.provider=codex и effort=low/medium/high")
         if not 5 <= llm.timeout_seconds <= 180:
             raise ValueError("llm.timeout_seconds: допустимо 5–180")
+        models = raw.get("assistant_models", [])
+        if (not isinstance(models, list) or len(models) > 10
+                or any(not isinstance(m, str) or not 1 <= len(m) <= 100
+                       or not all(c.isalnum() or c in "-._" for c in m) for m in models)):
+            raise ValueError("assistant_models: укажи до 10 идентификаторов доступных моделей")
         limits = Limits(**raw.get("limits", {}))
         if any(type(v) is not int or v <= 0 for v in vars(limits).values()):
             raise ValueError("Все limits должны быть положительными целыми числами")
@@ -63,4 +69,4 @@ class Config:
         if not directory.is_absolute():
             directory = path.resolve().parent / directory
         return cls(token, frozenset(ids), key, directory.resolve(),
-                   raw.get("groq_model", "whisper-large-v3-turbo"), llm, limits)
+                   raw.get("groq_model", "whisper-large-v3-turbo"), llm, limits, tuple(models))

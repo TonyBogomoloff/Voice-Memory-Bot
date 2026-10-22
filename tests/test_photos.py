@@ -53,11 +53,14 @@ def test_photo_controls_archive_and_move_remove_only_source_messages(tmp_path, s
         assert len(bot.telegram.sent) == 1  # No extra copy or caption in the source topic.
         assert bot.archive.audio(note).name == "photo.jpg"
         assert bot.archive.audio(note).read_bytes() == PHOTO
-        paths = bot.archive.export([note], store.folders(1), tmp_path / "export", True, 100000)
+        paths = bot.archive.export([note], store.folders(1), tmp_path / "export", True, 100000,
+                                   text_format="markdown")
         with zipfile.ZipFile(paths[0]) as archive:
-            assert archive.read(next(n for n in archive.namelist() if n.endswith("photo.jpg"))) == PHOTO
-            markdown = archive.read(next(n for n in archive.namelist() if n.endswith("note.md"))).decode()
-            assert "[Фото](photo.jpg)" in markdown and "## Подпись" in markdown
+            assert archive.read(next(n for n in archive.namelist() if n.endswith(".jpg"))) == PHOTO
+            markdown = archive.read(next(n for n in archive.namelist() if n.endswith("history.md"))).decode()
+            assert "[Фото](photos/" in markdown and caption in markdown
+        assert bot.archive.export([note], store.folders(1), tmp_path / "audio-only", True,
+                                  100000, audio_only=True) == []
         control_id = note["transcript_message_id"]
         await bot.callback(1, 100, control_id, f"options:{note['id']}")
         assert bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Переместить"

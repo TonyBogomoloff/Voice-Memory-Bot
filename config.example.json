@@ -4,6 +4,7 @@
   "groq_voice": "",
   "groq_model": "whisper-large-v3-turbo",
   "data_dir": "data",
+  "assistant_models": [],
   "llm": {
     "provider": "codex",
     "model": "gpt-5.6-luna",
