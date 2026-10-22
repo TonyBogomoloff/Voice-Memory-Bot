@@ -286,7 +286,7 @@ def test_voice_transcript_arrives_before_routing_and_replaces_status(tmp_path, s
         await receive_voice(bot)
         note = store.notes(1)[0]
         assert bot.telegram.sent == [("sendMessage", {
-            "chat_id": 1, "text": "Конвертирую в текст…", "thread": 100, "keyboard": None, "reply_to": 10})]
+            "chat_id": 1, "text": "Конвертирую в текст…", "thread": 100, "keyboard": None, "reply_to": None})]
         entered, finish = asyncio.Event(), asyncio.Event()
         async def slow_router(transcript, folders):
             entered.set()
@@ -303,7 +303,7 @@ def test_voice_transcript_arrives_before_routing_and_replaces_status(tmp_path, s
             assert bot.telegram.sent[1] == ("deleteMessage", {"chat_id": 1, "message_id": 1})
             method, payload = bot.telegram.sent[2]
             assert method == "sendMessage" and payload["text"] == saved["transcript"]
-            assert payload["thread"] == 100 and payload["reply_to"] == 10
+            assert payload["thread"] == 100 and payload["reply_to"] is None
             assert payload["keyboard"] == {"inline_keyboard": [[{
                 "text": "Опции", "callback_data": f"options:{note['id']}"}]]}
         finally:
@@ -328,6 +328,7 @@ def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store):
                     if method == "sendMessage" and payload["text"] != "Конвертирую в текст…"]
         assert len(messages) > 1 and "".join(p["text"] for p in messages) == raw
         assert all(len(p["text"].encode("utf-16-le")) <= 7800 for p in messages)
+        assert all(p["reply_to"] is None for p in messages)
         assert all(p["keyboard"] is None for p in messages[:-1])
         assert messages[-1]["keyboard"]["inline_keyboard"][0][0]["text"] == "Опции"
         assert all(method != "sendDocument" for method, _ in bot.telegram.sent)

@@ -239,7 +239,7 @@ class Bot:
                 # The worker uses the same lock, so a quick ASR cannot outrun the status checkpoint.
                 async with self.note_locks[note["id"]]:
                     status = "Конвертирую в текст…" if note["file_id"] else "Сохраняю…"
-                    response = await self.telegram.text(owner, status, thread, reply_to=message["message_id"])
+                    response = await self.telegram.text(owner, status, thread)
                     self.store.update_note(owner, note["id"], status_message_id=response["message_id"])
         except ValueError as exc:
             await self.show(owner, str(exc), thread, HOME)
@@ -655,7 +655,7 @@ class Bot:
         await self.clear_status(note)
         self.store.update_note(owner, identity, transcript_delivery="sending")
         try:
-            response, _ = await self.send_transcript(note, note["source_thread"], note["message_id"])
+            response, _ = await self.send_transcript(note, note["source_thread"])
             self.store.update_note(owner, identity, transcript_delivery="sent",
                                    transcript_message_id=response["message_id"])
         except ProviderError as exc:
@@ -673,8 +673,7 @@ class Bot:
             if not note["transcript"]:
                 text = "Не удалось конвертировать запись в текст. Попробуй ещё раз."
                 keys = keyboard([button("Повторить", f"retry:{identity}")])
-                response = await self.telegram.text(owner, text, note["source_thread"], keys,
-                                                    reply_to=note["message_id"])
+                response = await self.telegram.text(owner, text, note["source_thread"], keys)
                 self.store.update_note(owner, identity, delivery="sent", result_message_id=response["message_id"],
                                        result_thread=note["source_thread"])
                 return
