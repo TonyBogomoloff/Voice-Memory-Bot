@@ -27,6 +27,27 @@ def keyboard(*rows):
     return {"inline_keyboard": list(rows)}
 
 
+def options_keyboard(identity):
+    return keyboard([button("Опции", f"options:{identity}")])
+
+
+def missing_topic(error):
+    return getattr(error, "reason", None) in {"thread_not_found", "thread_invalid", "topic_deleted"}
+
+
+def transcript_chunks(text, limit=3900):
+    """Keep the entire transcript, with room for Telegram's UTF-16 length limit."""
+    start, units = 0, 0
+    for index, char in enumerate(text):
+        size = 2 if ord(char) > 0xFFFF else 1
+        if units + size > limit:
+            yield text[start:index]
+            start, units = index, 0
+        units += size
+    if start < len(text):
+        yield text[start:]
+
+
 HOME = keyboard([button("📁 Папки", "folders"), button("🔎 Поиск", "search")],
                 [button("📦 Экспорт всего", "export:all"), button("ℹ️ Помощь", "help")])
 
@@ -44,6 +65,7 @@ HELP = """🎙 Voice Memory Bot
 /cancel — отменить ввод названия или поиск
 
 В карточке записи доступны текст, исходное аудио, перенос и удаление.
+Голосовые сразу расшифровываются в текст. Под расшифровкой: «Опции» → «Переместить».
 Аудио отправляется в Groq для распознавания, текст — в OpenAI для выбора проекта и заголовка.
 Оригинал и исходная расшифровка хранятся в твоём архиве. Удаление из архива не удаляет сообщения
 в истории Telegram. Автосинхронизация с другими сервисами пока не подключена."""
@@ -214,8 +236,11 @@ class Bot:
                 note, created = self.store.add_note(owner, folder, message, kind, media["file_id"],
                                                     extension, size, duration)
             if created:
-                await self.show(owner, "Принял запись. Сохраняю и обрабатываю…", thread,
-                                keyboard([button("Открыть запись", f"note:{note['id']}")]))
+                # The worker uses the same lock, so a quick ASR cannot outrun the status checkpoint.
+                async with self.note_locks[note["id"]]:
+                    status = "Конвертирую в текст…" if note["file_id"] else "Сохраняю…"
+                    response = await self.telegram.text(owner, status, thread, reply_to=message["message_id"])
+                    self.store.update_note(owner, note["id"], status_message_id=response["message_id"])
         except ValueError as exc:
             await self.show(owner, str(exc), thread, HOME)
 
@@ -270,9 +295,12 @@ class Bot:
             await self.show_notes(owner, thread, identity)
         self.store.set_action(owner, None)
 
-    async def ensure_topic(self, owner, identity):
+    async def ensure_topic(self, owner, identity, invalid_thread=None):
         async with self.folder_locks[identity]:
             folder = self.store.folder(owner, identity)
+            if invalid_thread is not None and folder["thread_id"] == invalid_thread:
+                self.store.bind_thread(owner, identity, None)
+                folder["thread_id"] = None
             if self.topics_enabled and not folder["thread_id"]:
                 result = await self.telegram.call("createForumTopic", chat_id=owner, name=folder["name"])
                 self.store.bind_thread(owner, identity, result["message_thread_id"])
@@ -366,6 +394,29 @@ class Bot:
         text, keys = self.note_card(note)
         await self.show(owner, text, thread, keys, edit_id)
 
+    async def edit_note_buttons(self, owner, message_id, keys):
+        try:
+            await self.telegram.call("editMessageReplyMarkup", chat_id=owner, message_id=message_id,
+                                     reply_markup=keys)
+        except ProviderError as exc:
+            if getattr(exc, "reason", None) != "not_modified":
+                raise
+
+    async def choose_note_folder(self, owner, identity, message_id, page):
+        folders = self.store.folders(owner)
+        page = max(0, min(page, (len(folders) - 1) // 8))
+        rows = [[button(f"📁 {folder['name']}", f"place:{identity}:{folder['id']}")]
+                for folder in folders[page * 8:(page + 1) * 8]]
+        nav = []
+        if page:
+            nav.append(button("←", f"pick:{identity}:{page - 1}"))
+        if len(folders) > (page + 1) * 8:
+            nav.append(button("→", f"pick:{identity}:{page + 1}"))
+        if nav:
+            rows.append(nav)
+        rows.append([button("← Назад", f"options:{identity}")])
+        await self.edit_note_buttons(owner, message_id, keyboard(*rows))
+
     async def callback(self, owner, thread, message_id, data):
         pieces = data.split(":")
         action, identity = pieces[0], pieces[1] if len(pieces) > 1 else None
@@ -400,6 +451,17 @@ class Bot:
             task.add_done_callback(self.export_tasks.discard)
             return
         note = self.store.note(owner, identity)
+        if action == "options":
+            return await self.edit_note_buttons(owner, message_id, keyboard(
+                [button("Переместить", f"pick:{identity}:0")],
+                [button("← Назад", f"collapse:{identity}")]))
+        if action == "collapse":
+            return await self.edit_note_buttons(owner, message_id, options_keyboard(identity))
+        if action == "pick":
+            return await self.choose_note_folder(owner, identity, message_id, int(pieces[2]))
+        if action == "place":
+            await self.move(owner, identity, pieces[2], thread)
+            return await self.edit_note_buttons(owner, message_id, options_keyboard(identity))
         if action == "note":
             return await self.show_note(owner, identity, thread, message_id)
         if action == "choose":
@@ -412,7 +474,11 @@ class Bot:
             return await self.create_folder(owner, thread, note["requested_folder"], identity)
         if action == "retry":
             self.store.retry(owner, identity)
-            return await self.show(owner, "Повторная обработка поставлена в очередь.", thread)
+            async with self.note_locks[identity]:
+                status = "Конвертирую в текст…" if note["transcript"] is None else "Сохраняю…"
+                response = await self.show(owner, status, thread, edit_id=message_id)
+                self.store.update_note(owner, identity, status_message_id=response["message_id"])
+            return
         if action == "text":
             if note["transcript"] is None:
                 raise ValueError("Расшифровка ещё не получена; исходное аудио можно выгрузить отдельно")
@@ -513,6 +579,7 @@ class Bot:
     async def process(self, note):
         owner, identity = note["owner"], note["id"]
         async with self.note_locks[identity]:
+            note = self.store.note(owner, identity)
             try:
                 if note["file_id"] and note["transcript"] is None:
                     path = self.archive.audio(note)
@@ -532,6 +599,8 @@ class Bot:
                     self.store.update_note(owner, identity, transcript=transcript)
                     note = self.store.note(owner, identity)
                     self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
+                # A folder/title decision must never delay the text the user is waiting for.
+                await self.deliver_transcript(note)
                 folders = self.store.folders(owner)
                 result = None
                 try:
@@ -551,6 +620,48 @@ class Bot:
                 note = self.store.note(owner, identity)
             await self.deliver(note)
 
+    async def clear_status(self, note):
+        owner, identity = note["owner"], note["id"]
+        message_id = self.store.note(owner, identity)["status_message_id"]
+        if message_id is None:
+            return
+        try:
+            await self.telegram.call("deleteMessage", chat_id=owner, message_id=message_id)
+        except ProviderError as exc:
+            if getattr(exc, "reason", None) != "delete_target_missing":
+                log.warning("status cleanup failed note_id=%s error=%s", identity, exc)
+                return
+        self.store.update_note(owner, identity, status_message_id=None)
+
+    async def send_transcript(self, note, thread, reply_to=None, recover_topic=False):
+        chunks = list(transcript_chunks(note["transcript"]))
+        for index, text in enumerate(chunks):
+            keys = options_keyboard(note["id"]) if index == len(chunks) - 1 else None
+            try:
+                response = await self.telegram.text(note["owner"], text, thread, keys, reply_to=reply_to)
+            except ProviderError as exc:
+                # Only a definitive rejection before any published part permits another send.
+                if not (recover_topic and index == 0 and thread and self.topics_enabled and missing_topic(exc)):
+                    raise
+                thread = await self.ensure_topic(note["owner"], note["folder_id"], invalid_thread=thread)
+                response = await self.telegram.text(note["owner"], text, thread, keys, reply_to=reply_to)
+        return response, thread
+
+    async def deliver_transcript(self, note):
+        owner, identity = note["owner"], note["id"]
+        note = self.store.note(owner, identity)
+        if not note["transcript"] or note["transcript_delivery"] != "pending":
+            return
+        await self.clear_status(note)
+        self.store.update_note(owner, identity, transcript_delivery="sending")
+        try:
+            response, _ = await self.send_transcript(note, note["source_thread"], note["message_id"])
+            self.store.update_note(owner, identity, transcript_delivery="sent",
+                                   transcript_message_id=response["message_id"])
+        except ProviderError as exc:
+            self.store.update_note(owner, identity, transcript_delivery="unknown")
+            log.warning("transcript delivery unknown note_id=%s error=%s", identity, exc)
+
     async def deliver(self, note):
         owner, identity = note["owner"], note["id"]
         if self.store.note(owner, identity)["delivery"] != "pending":
@@ -558,20 +669,42 @@ class Bot:
         # Mark intent before any non-idempotent Telegram operation, including topic creation.
         self.store.update_note(owner, identity, delivery="sending")
         try:
+            await self.clear_status(note)
+            if not note["transcript"]:
+                text = "Не удалось конвертировать запись в текст. Попробуй ещё раз."
+                keys = keyboard([button("Повторить", f"retry:{identity}")])
+                response = await self.telegram.text(owner, text, note["source_thread"], keys,
+                                                    reply_to=note["message_id"])
+                self.store.update_note(owner, identity, delivery="sent", result_message_id=response["message_id"],
+                                       result_thread=note["source_thread"])
+                return
+            await self.deliver_transcript(note)
             thread = await self.ensure_topic(owner, note["folder_id"])
-            text, keys = self.note_card(note)
-            if note["file_id"] and thread != note["source_thread"]:
+            if not thread or thread == note["source_thread"]:
+                saved = self.store.note(owner, identity)
+                self.store.update_note(owner, identity, delivery=saved["transcript_delivery"],
+                                       result_message_id=saved["transcript_message_id"],
+                                       result_thread=note["source_thread"])
+                return
+            if note["file_id"]:
                 method, field = {"voice": ("sendVoice", "voice"), "audio": ("sendAudio", "audio"),
                                  "document": ("sendDocument", "document")}[note["kind"]]
-                response = await self.telegram.call(method, chat_id=owner, message_thread_id=thread or None,
-                    caption=text, reply_markup=keys, **{field: note["file_id"]})
-            else:
-                response = await self.telegram.text(owner, text, thread, keys)
+                try:
+                    await self.telegram.call(method, chat_id=owner, message_thread_id=thread,
+                                             **{field: note["file_id"]})
+                except ProviderError as exc:
+                    if not (self.topics_enabled and missing_topic(exc)):
+                        raise
+                    thread = await self.ensure_topic(owner, note["folder_id"], invalid_thread=thread)
+                    await self.telegram.call(method, chat_id=owner, message_thread_id=thread,
+                                             **{field: note["file_id"]})
+            response, thread = await self.send_transcript(note, thread, recover_topic=not note["file_id"])
             self.store.update_note(owner, identity, delivery="sent", result_message_id=response["message_id"],
                                    result_thread=thread)
         except ProviderError as exc:
             self.store.update_note(owner, identity, delivery="unknown")
-            log.warning("note delivery unknown note_id=%s error=%s", identity, exc)
+            log.warning("note delivery unknown note_id=%s error=%s method=%s reason=%s", identity, exc,
+                        getattr(exc, "method", "unknown"), getattr(exc, "reason", "unknown"))
 
     async def worker(self):
         while True:
@@ -583,6 +716,11 @@ class Bot:
                 if note:
                     await self.deliver(note)
                 else:
-                    await asyncio.sleep(.5)
+                    stale = self.store.one("SELECT * FROM notes WHERE status_message_id IS NOT NULL "
+                                           "AND state IN ('ready','asr_failed') AND deleted=0 "
+                                           "ORDER BY created_at LIMIT 1")
+                    if stale:
+                        await self.clear_status(stale)
+                    await asyncio.sleep(3 if stale else .5)
                 continue
             await self.process(note)

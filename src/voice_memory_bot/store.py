@@ -73,10 +73,22 @@ class Store:
             );
             CREATE INDEX IF NOT EXISTS usage_time ON asr_usage(owner, at);
         """)
-        self.db.execute("UPDATE notes SET state='queued' WHERE state='processing' AND deleted=0")
-        self.db.execute("UPDATE notes SET delivery='unknown' WHERE delivery='sending'")
-        self.db.execute("UPDATE updates SET state='pending' WHERE state='processing'")
-        self.db.commit()
+        # Add checkpoints without replaying results already delivered by older versions.
+        with self.db:
+            self.db.execute("BEGIN")
+            columns = {row["name"] for row in self.all("PRAGMA table_info(notes)")}
+            if "status_message_id" not in columns:
+                self.db.execute("ALTER TABLE notes ADD COLUMN status_message_id INTEGER")
+            if "transcript_delivery" not in columns:
+                self.db.execute("ALTER TABLE notes ADD COLUMN transcript_delivery TEXT NOT NULL DEFAULT 'pending'")
+                self.db.execute("UPDATE notes SET transcript_delivery=delivery "
+                                "WHERE delivery!='pending' AND transcript IS NOT NULL")
+            if "transcript_message_id" not in columns:
+                self.db.execute("ALTER TABLE notes ADD COLUMN transcript_message_id INTEGER")
+            self.db.execute("UPDATE notes SET state='queued' WHERE state='processing' AND deleted=0")
+            self.db.execute("UPDATE notes SET delivery='unknown' WHERE delivery='sending'")
+            self.db.execute("UPDATE notes SET transcript_delivery='unknown' WHERE transcript_delivery='sending'")
+            self.db.execute("UPDATE updates SET state='pending' WHERE state='processing'")
 
     def close(self):
         self.db.close()
@@ -251,7 +263,8 @@ class Store:
 
     def update_note(self, owner, identity, **fields):
         allowed = {"state", "transcript", "title", "routing", "requested_folder", "error", "audio_bytes",
-                   "sha256", "delivery", "result_message_id", "result_thread", "folder_id"}
+                   "sha256", "delivery", "result_message_id", "result_thread", "folder_id",
+                   "status_message_id", "transcript_delivery", "transcript_message_id"}
         if not fields or not fields.keys() <= allowed:
             raise ValueError("Invalid note fields")
         self.note(owner, identity)

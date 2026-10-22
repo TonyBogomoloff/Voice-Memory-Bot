@@ -27,6 +27,7 @@ class TelegramError(ProviderError):
             "topic_closed": "topic_closed",
             "topic_deleted": "topic_deleted",
             "message to edit not found": "edit_target_missing",
+            "message to delete not found": "delete_target_missing",
             "message is not modified": "not_modified",
             "chat not found": "chat_not_found",
             "button_data_invalid": "button_invalid",
@@ -58,9 +59,11 @@ class Telegram:
             raise TelegramError(int(code), method, body.get("description") if isinstance(body, dict) else "")
         return body["result"]
 
-    async def text(self, owner, text, thread=None, keyboard=None):
+    async def text(self, owner, text, thread=None, keyboard=None, reply_to=None):
         return await self.call("sendMessage", chat_id=owner, text=text[:4000],
                                message_thread_id=thread or None, reply_markup=keyboard,
+                               reply_parameters={"message_id": reply_to, "allow_sending_without_reply": True}
+                               if reply_to else None,
                                link_preview_options={"is_disabled": True})
 
     async def document(self, owner, path: Path, thread=None, caption=None):
