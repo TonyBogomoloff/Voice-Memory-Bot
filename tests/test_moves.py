@@ -27,14 +27,14 @@ def test_move_removes_all_source_parts_and_can_move_back(tmp_path, store):
                                  "text", transcript="Другую запись не удалять")
         bot.messages.record(other, 99, 100, "source")
         bot.telegram.sent.clear()
-        await bot.move(1, note["id"], work["id"], 100)
+        notification = await bot.move(1, note["id"], work["id"], 100)
         deleted = [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"]
         assert deleted == source_ids and 99 not in deleted
         first_delete = next(i for i, (m, _) in enumerate(bot.telegram.sent) if m == "deleteMessage")
         assert all(m.startswith("send") for m, _ in bot.telegram.sent[:first_delete])
         destination_ids = bot.messages.in_thread(1, note["id"], 200)
         assert len(destination_ids) == len(source_ids)
-        assert bot.telegram.sent[-1][1]["text"] == "Запись перенесена."
+        assert notification == "Запись перенесена."
         bot.telegram.sent.clear()
         await bot.move(1, note["id"], game["id"], 200)
         deleted = [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"]
@@ -61,11 +61,11 @@ def test_move_does_not_delete_source_or_change_folder_on_uncertain_delivery(tmp_
             return await call(method, **kwargs)
         bot.telegram.call = fail_destination
         bot.telegram.sent.clear()
-        await bot.move(1, note["id"], work["id"], 100)
+        notification = await bot.move(1, note["id"], work["id"], 100)
         assert all(m != "deleteMessage" for m, _ in bot.telegram.sent)
         assert store.note(1, note["id"])["folder_id"] == game["id"]
         assert bot.messages.get(1, note["id"])["state"] == "unknown"
-        assert "Исходные сообщения сохранены" in bot.telegram.sent[-1][1]["text"]
+        assert "Исходные сообщения сохранены" in notification
     asyncio.run(run())
 
 
@@ -100,7 +100,7 @@ def test_move_cleanup_resumes_after_restart_without_republishing(tmp_path, store
                 with pytest.raises(asyncio.CancelledError):
                     await task
             assert [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"] == source_ids
-            assert [p["text"] for m, p in bot.telegram.sent if m == "sendMessage"] == ["Запись перенесена."]
+            assert all(m != "sendMessage" for m, _ in bot.telegram.sent)
             assert all(m != "sendVoice" for m, _ in bot.telegram.sent)
         finally:
             restarted.close()
@@ -121,9 +121,9 @@ def test_move_reports_telegram_delete_restriction_without_losing_destination(tmp
                 raise TelegramError(400, method, "Bad Request: message can't be deleted")
             return await call(method, **kwargs)
         bot.telegram.call = old_source
-        await bot.move(1, note["id"], work["id"], 100)
+        notification = await bot.move(1, note["id"], work["id"], 100)
         assert store.note(1, note["id"])["folder_id"] == work["id"]
         assert bot.messages.in_thread(1, note["id"], 100) == [10]
         assert bot.messages.get(1, note["id"])["state"] == "blocked"
-        assert "Telegram не разрешил" in bot.telegram.sent[-1][1]["text"]
+        assert "Telegram не разрешил" in notification
     asyncio.run(run())

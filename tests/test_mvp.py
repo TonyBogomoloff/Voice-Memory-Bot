@@ -339,7 +339,7 @@ def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store):
     asyncio.run(run())
 
 
-def test_voice_options_move_keeps_transcript_and_publishes_in_selected_topic(tmp_path, store):
+def test_voice_options_move_publishes_then_removes_source_with_only_toast(tmp_path, store):
     async def run():
         store.create_folder(1, "Игра", thread=100)
         work = store.create_folder(1, "Работа", thread=200)
@@ -356,14 +356,18 @@ def test_voice_options_move_keeps_transcript_and_publishes_in_selected_topic(tmp
         keys = bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
         target = next(row[0]["callback_data"] for row in keys if row[0]["text"] == "📁 Работа")
         assert all(method == "editMessageReplyMarkup" for method, _ in bot.telegram.sent)
-        await bot.callback(1, 100, message_id, target)
+        await bot.handle({"callback_query": {"id": "move-click", "from": {"id": 1}, "data": target,
+            "message": {"message_id": message_id, "message_thread_id": 100,
+                        "chat": {"id": 1, "type": "private"}}}})
         assert store.note(1, note["id"])["folder_id"] == work["id"]
         assert any(method == "sendVoice" and payload["message_thread_id"] == 200
                    for method, payload in bot.telegram.sent)
         assert any(method == "sendMessage" and payload["thread"] == 200
                    and payload["text"] == note["transcript"] for method, payload in bot.telegram.sent)
         assert all(method != "editMessageText" for method, _ in bot.telegram.sent)
-        assert bot.telegram.sent[-1][1]["text"] == "Запись перенесена."
+        assert bot.telegram.sent[-1] == ("answerCallbackQuery", {
+            "callback_query_id": "move-click", "text": "Запись перенесена."})
+        assert all(p["thread"] == 200 for m, p in bot.telegram.sent if m == "sendMessage")
         deleted = [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"]
         assert 10 in deleted and message_id in deleted
     asyncio.run(run())

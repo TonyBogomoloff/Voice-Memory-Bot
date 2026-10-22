@@ -63,14 +63,15 @@ def test_photo_controls_archive_and_move_remove_only_source_messages(tmp_path, s
         assert bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Переместить"
         await bot.callback(1, 100, control_id, f"pick:{note['id']}:0")
         bot.telegram.sent.clear()
-        await bot.callback(1, 100, control_id, f"place:{note['id']}:{work['id']}")
+        notification = await bot.callback(1, 100, control_id, f"place:{note['id']}:{work['id']}")
         sent_photo = bot.telegram.sent[0]
         assert sent_photo[0] == "sendPhoto"
         assert sent_photo[1]["photo"] == "photo-original" and sent_photo[1]["message_thread_id"] == 200
         assert sent_photo[1]["caption"] == (caption or None)
         assert sent_photo[1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Опции"
         assert [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"] == [10, control_id]
-        assert bot.telegram.sent[-1][1]["text"] == "Запись перенесена."
+        assert notification == "Запись перенесена."
+        assert all(m != "sendMessage" for m, _ in bot.telegram.sent)
         destination_ids = bot.messages.in_thread(1, note["id"], 200)
         assert len(destination_ids) == 1
         bot.telegram.sent.clear()

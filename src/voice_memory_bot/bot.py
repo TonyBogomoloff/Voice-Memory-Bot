@@ -189,13 +189,19 @@ class Bot:
             return
         self.store.ensure_user(owner)
         thread = message.get("message_thread_id")
-        if callback:
+        move_callback = callback and callback.get("data", "").startswith(("place:", "move:", "newfor:"))
+        if callback and not move_callback:
             await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
         if (callback or message.get("text", "").startswith("/")) and not self.rate_allowed(owner):
+            if move_callback:
+                await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
             return
         try:
             if callback:
-                return await self.callback(owner, thread, message["message_id"], callback.get("data", ""))
+                result = await self.callback(owner, thread, message["message_id"], callback.get("data", ""))
+                if move_callback:
+                    await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"], text=result)
+                return result
             if "forum_topic_created" in message:
                 topic = message["forum_topic_created"]
                 if thread and topic.get("is_name_implicit"):
@@ -252,6 +258,9 @@ class Bot:
                     response = await self.telegram.text(owner, status, thread)
                     self.store.update_note(owner, note["id"], status_message_id=response["message_id"])
         except ValueError as exc:
+            if move_callback:
+                return await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"],
+                                                text=str(exc)[:200], show_alert=True)
             await self.show(owner, str(exc), thread, HOME)
 
     async def command(self, owner, thread, command, argument):
@@ -325,7 +334,7 @@ class Bot:
         except ProviderError:
             await self.show(owner, "Папка создана в архиве. Тему Telegram пока создать не удалось.", thread)
         if note_id:
-            await self.move(owner, note_id, folder["id"], thread)
+            return await self.move(owner, note_id, folder["id"], thread)
         else:
             await self.show_notes(owner, thread, folder["id"])
 
@@ -569,7 +578,7 @@ class Bot:
             if previous and previous["state"] == "cleanup":
                 return await self.cleanup_move(previous)
             if folder_id == note["folder_id"] and thread == folder["thread_id"]:
-                return await self.show(owner, "Запись уже в этой папке.", thread)
+                return "Запись уже в этой папке."
             self.messages.begin(note, folder_id, thread)
             target_note = {**note, "folder_id": folder_id, "routing": "manual", "requested_folder": None}
             try:
@@ -581,7 +590,7 @@ class Bot:
             except (ProviderError, OSError) as exc:
                 self.messages.state(owner, identity, "unknown")
                 log.warning("move delivery not confirmed note_id=%s type=%s", identity, type(exc).__name__)
-                return await self.show(owner, "Не удалось подтвердить перенос. Исходные сообщения сохранены.", thread)
+                return "Не удалось подтвердить перенос. Исходные сообщения сохранены."
             return await self.cleanup_move(self.messages.get(owner, identity))
 
     async def cleanup_move(self, move):
@@ -604,14 +613,10 @@ class Bot:
             self.messages.removed(owner, identity, message_id)
         if transient:
             self.messages.state(owner, identity, "cleanup")
-            return
+            return "Запись перенесена. Удаляю исходные сообщения…"
         self.messages.state(owner, identity, "blocked" if forbidden else "done")
-        text = ("Запись перенесена, но Telegram не разрешил удалить часть исходных сообщений."
+        return ("Запись перенесена, но Telegram не разрешил удалить часть исходных сообщений."
                 if forbidden else "Запись перенесена.")
-        try:
-            await self.show(owner, text, move["source_thread"])
-        except ProviderError as exc:
-            log.warning("move confirmation not delivered note_id=%s error=%s", identity, exc)
 
     async def probe_duration(self, path):
         process = await asyncio.create_subprocess_exec("ffprobe", "-v", "error", "-show_entries",
