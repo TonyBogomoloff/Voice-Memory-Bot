@@ -1,0 +1,22 @@
+[Unit]
+Description=Voice Memory Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@APP_DIR@
+ExecStart=@APP_DIR@/.venv/bin/python -m voice_memory_bot run --config @CONFIG@ --secrets @SECRETS@
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=@APP_DIR@/src
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
