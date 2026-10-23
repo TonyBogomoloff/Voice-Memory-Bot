@@ -204,23 +204,31 @@ async function openMedia(note, card, button) {
     player.controls = true; player.preload = "metadata"; player.src = url; player.playsInline = true;
     player.addEventListener("error", () => { toast("Этот формат не воспроизводится здесь. Можно скачать оригинал."); });
     button.replaceWith(player);
-    const download = element("a", "text-button", "Скачать оригинал"); download.href = url + "&download=1";
-    download.download = note.original_name || note.title; card.append(download);
+    card.append(action("Скачать оригинал", "text-button", () => downloadNote(note).catch(fail)));
     player.play().catch(() => {});
   } else if (note.kind === "photo") {
     $("preview-title").textContent = note.original_name || "Фото";
     const img = element("img", "photo-preview"); img.src = url; img.alt = note.title;
-    const link = element("a", "text-button", "Скачать оригинал"); link.href = url + "&download=1"; link.download = note.original_name || "Фото";
+    const link = action("Скачать оригинал", "text-button", () => downloadNote(note).catch(fail));
     $("preview-content").replaceChildren(img, link); $("preview-dialog").showModal(); button.disabled = false;
   } else {
-    // Fetch into a Blob; never navigate the Mini App to an uploaded document.
-    const response = await fetch(url + "&download=1");
-    if (!response.ok) throw new Error("Не удалось скачать файл.");
-    const blobUrl = URL.createObjectURL(await response.blob());
-    const link = element("a"); link.href = blobUrl; link.download = note.original_name || "Файл";
-    document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    await downloadNote(note, url);
     button.disabled = false;
   }
+}
+async function downloadNote(note, url) {
+  if (!url) ({url} = await api(`/api/notes/${note.id}/media`));
+  const name = note.original_name || note.title || "Файл";
+  if (tg?.isVersionAtLeast?.("8.0") && tg.downloadFile) {
+    tg.downloadFile({url: new URL(url + "&download=1", location.origin).href, file_name: name});
+    return;
+  }
+  // Older clients: download a Blob without navigating to an uploaded document.
+  const response = await fetch(url + "&download=1", {signal: AbortSignal.timeout(120000)});
+  if (!response.ok) throw new Error("Не удалось скачать файл.");
+  const blobUrl = URL.createObjectURL(await response.blob());
+  const link = element("a"); link.href = blobUrl; link.download = name;
+  document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
 }
 function showMove(note) {
   closeMenus(); $("move-title").textContent = note.title;

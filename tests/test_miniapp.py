@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import time
 import wave
 import zipfile
@@ -10,6 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from urllib.parse import urlencode
 
+import httpx
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -92,6 +94,10 @@ def test_archive_upload_move_media_permissions_idempotency_and_export(tmp_path, 
             assert media.headers["Content-Type"] == "application/octet-stream"
             assert media.headers["Content-Disposition"].startswith("attachment")
             assert media.headers["Cache-Control"] == "no-store"
+            native = await client.get(ticket + "&download=1", headers={"Origin": "https://web.telegram.org"})
+            assert native.status == 200 and await native.read() == b"private attachment"
+            assert native.headers["Access-Control-Allow-Origin"] == "https://web.telegram.org"
+            assert 'filename="private.html"' in native.headers["Content-Disposition"]
             forged = await client.get(ticket + "x")
             assert forged.status == 401
             missing_auth = await client.get("/api/folders", headers={"Authorization": ""})
@@ -99,6 +105,10 @@ def test_archive_upload_move_media_permissions_idempotency_and_export(tmp_path, 
             cross_origin = await client.post("/api/folders", json={"name": "bad"},
                                               headers={"Origin": "https://evil.example"})
             assert cross_origin.status == 403
+            assert (await client.get(ticket, headers={"Origin": "https://evil.example"})).status == 403
+            assert (await client.get(ticket + "x", headers={"Origin": "https://web.telegram.org"})).status == 401
+            assert (await client.post("/api/folders", json={"name": "bad"},
+                                      headers={"Origin": "https://web.telegram.org"})).status == 403
             client.session.headers["Authorization"] = "Bearer " + mini.sign("session", 2)
             assert (await client.get(f"/api/folders/{second}/notes")).status == 400
             assert (await client.post(f"/api/notes/{note['id']}/move",
@@ -220,4 +230,24 @@ def test_app_command_and_home_open_registered_url(tmp_path, store):
         from voice_memory_bot.bot import HOME
         await bot.show(1, "Menu", keys=HOME)
         assert bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"][0][0]["web_app"]["url"] == bot.config.web_url
+    asyncio.run(run())
+
+
+def test_real_server_startup_never_logs_media_tickets(tmp_path, store, caplog):
+    async def run():
+        bot = make_bot(tmp_path, store)
+        bot.config = replace(bot.config, web_port=0)
+        mini = bot.web = MiniApp(bot)
+        caplog.set_level(logging.INFO, logger="aiohttp.access")
+        await mini.start()
+        try:
+            host, port = mini.runner.addresses[0]
+            async with httpx.AsyncClient(base_url=f"http://{host}:{port}", trust_env=False) as client:
+                assert (await client.get("/healthz")).status_code == 200
+                assert (await client.get("/media/test?ticket=never-log-this-ticket")).status_code == 401
+                assert (await client.post("/api/session", json={"init_data": init_data()})).status_code == 200
+            assert not [r for r in caplog.records if r.name == "aiohttp.access"]
+            assert not [r for r in caplog.records if "falling back to filtered kwargs" in r.message]
+        finally:
+            await mini.close()
     asyncio.run(run())

@@ -100,24 +100,33 @@ class MiniApp:
 
     @web.middleware
     async def guard(self, request, handler):
+        media_download = request.method in {"GET", "HEAD"} and request.path.startswith("/media/")
         try:
-            if request.headers.get("Origin") not in (None, self.config.web_url):
+            origin = request.headers.get("Origin")
+            if origin not in (None, self.config.web_url) and not (
+                media_download and origin == "https://web.telegram.org"
+            ):
                 raise web.HTTPForbidden(text="Недопустимый источник запроса.")
             if request.path.startswith("/api/") and request.path != "/api/session":
                 owner = self.owner(request)
                 self.available(owner)
                 self.rate(owner)
                 request[OWNER] = owner
-            response = await handler(request)
+            async with asyncio.timeout(125):
+                response = await handler(request)
         except web.HTTPException as exc:
             response = web.json_response({"error": exc.text}, status=exc.status)
         except (ValueError, KeyError, TypeError):
             response = web.json_response({"error": "Запись или папка недоступна. Обнови список и попробуй снова."},
                                          status=400)
+        except TimeoutError:
+            response = web.json_response({"error": "Время ожидания истекло. Попробуй ещё раз."}, status=408)
         except Exception as exc:
             log.error("miniapp request failed type=%s", type(exc).__name__)
             response = web.json_response({"error": "Не удалось выполнить действие. Попробуй ещё раз."}, status=500)
         self.headers(response)
+        if media_download:
+            response.headers["Access-Control-Allow-Origin"] = "https://web.telegram.org"
         return response
 
     @staticmethod
@@ -151,7 +160,7 @@ class MiniApp:
         for path in staging.glob("*.part"):
             path.unlink()
         self.runner = web.AppRunner(self.application(), access_log=None, shutdown_timeout=10,
-                                    handler_args={"request_timeout": 130})
+                                    keepalive_timeout=30, auto_decompress=False)
         await self.runner.setup()
         await web.TCPSite(self.runner, "127.0.0.1", self.config.web_port).start()
 
@@ -355,8 +364,10 @@ class MiniApp:
                         "audio/flac", "audio/wav", "audio/x-wav", "audio/aac"}
         inline = safe and request.query.get("download") != "1"
         filename = note["original_name"] or f"{note['id']}.{note['extension']}"
+        fallback = re.sub(r"[^a-zA-Z0-9._-]", "_", filename) or "attachment"
         response = web.FileResponse(path, headers={"Content-Type": mime if safe else "application/octet-stream",
-            "Content-Disposition": f"{'inline' if inline else 'attachment'}; filename*=UTF-8''{quote(filename, safe='')}"})
+            "Content-Disposition": f"{'inline' if inline else 'attachment'}; filename=\"{fallback}\"; "
+                f"filename*=UTF-8''{quote(filename, safe='')}"})
         return response
 
 
