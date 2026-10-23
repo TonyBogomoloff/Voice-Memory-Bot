@@ -62,7 +62,8 @@ def history_pdf(notes: list[dict], folder: dict, audio_names: dict[str, str]) ->
             flow.extend([Paragraph(escape(note["title"]), heading),
                          Paragraph(date + " · ID: " + escape(note["id"]), meta)])
             if note["id"] in audio_names:
-                label = "Фото: " if note["kind"] == "photo" else "Аудио: "
+                label = {"photo": "Фото: ", "video": "Видео: "}.get(note["kind"],
+                    "Файл: " if note.get("origin") == "web" and note["kind"] == "document" else "Аудио: ")
                 flow.append(Paragraph(label + escape(audio_names[note["id"]]), meta))
             if note.get("entry_type") == "ai":
                 flow.append(Paragraph("Ты", role))

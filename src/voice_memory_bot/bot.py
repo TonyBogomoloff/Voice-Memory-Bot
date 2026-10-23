@@ -105,6 +105,7 @@ class Bot(RecordingMixin, CleanupMixin, AIBotMixin):
         self.init_ai(assistant)
         self.init_cleanup()
         self.init_recording()
+        self.web = None
 
     async def start(self):
         me = await self.telegram.call("getMe")
@@ -114,6 +115,7 @@ class Bot(RecordingMixin, CleanupMixin, AIBotMixin):
             raise ProviderError("webhook_present_stop_before_polling")
         await self.telegram.call("setMyCommands", commands=[
             {"command": "start", "description": "Открыть Voice Memory"},
+            *([{"command": "app", "description": "📂 Папки в мини-эпе"}] if self.config.web_url else []),
             {"command": "folders", "description": "Записи и папки"},
             {"command": "new", "description": "Создать папку"},
             {"command": "notes", "description": "Последние записи"},
@@ -131,6 +133,10 @@ class Bot(RecordingMixin, CleanupMixin, AIBotMixin):
             self.archive.delete(note)
         await self.resume_deletions()
         await self.install_record_panels()
+        if self.config.web_url:
+            from .miniapp import MiniApp
+            self.web = MiniApp(self)
+            await self.web.start()
         log.info("started bot_id=%s topics=%s", me["id"], self.topics_enabled)
         try:
             async with asyncio.TaskGroup() as group:
@@ -139,6 +145,8 @@ class Bot(RecordingMixin, CleanupMixin, AIBotMixin):
                 group.create_task(self.worker())
                 group.create_task(self.ai_worker())
         finally:
+            if self.web:
+                await self.web.close()
             for task in self.export_tasks:
                 task.cancel()
             await asyncio.gather(*self.export_tasks, return_exceptions=True)
@@ -192,6 +200,9 @@ class Bot(RecordingMixin, CleanupMixin, AIBotMixin):
                     self.store.fail_update(update["update_id"])
 
     async def show(self, owner, text, thread=None, keys=None, edit_id=None):
+        if keys is HOME and self.config.web_url:
+            keys = {"inline_keyboard": [[{"text": "📂 Открыть мини-эп",
+                    "web_app": {"url": self.config.web_url}}], *HOME["inline_keyboard"]]}
         if edit_id:
             try:
                 return await self.telegram.call("editMessageText", chat_id=owner, message_id=edit_id,
@@ -345,6 +356,9 @@ class Bot(RecordingMixin, CleanupMixin, AIBotMixin):
         return note
 
     async def command(self, owner, thread, command, argument):
+        if command == "/app" and self.config.web_url:
+            return await self.show(owner, "Твои папки, голосовые, фото, видео и файлы.", thread,
+                {"inline_keyboard": [[{"text": "📂 Открыть мини-эп", "web_app": {"url": self.config.web_url}}]]})
         # A new command leaves the previous name/search prompt behind.
         self.store.set_action(owner, None)
         if command == "/delete_all":
@@ -771,6 +785,9 @@ class Bot(RecordingMixin, CleanupMixin, AIBotMixin):
         if note["state"] in {"processing", "queued"} or self.note_locks[identity].locked():
             raise ValueError("Дождись завершения обработки, затем перенеси запись")
         async with self.note_locks[identity]:
+            if note.get("origin") == "web":
+                self.store.update_note(owner, identity, folder_id=folder_id, routing="manual", archive_dirty=1)
+                return "Запись перенесена в архиве и мини-эпе."
             previous = self.messages.get(owner, identity)
             if previous and previous["state"] == "cleanup":
                 return await self.cleanup_move(previous)
@@ -839,6 +856,9 @@ class Bot(RecordingMixin, CleanupMixin, AIBotMixin):
         owner, identity = note["owner"], note["id"]
         async with self.note_locks[identity]:
             note = self.store.note(owner, identity)
+            if note.get("origin") == "web":
+                from .miniapp import process_web_note
+                return await process_web_note(self, note)
             if note["kind"] == "photo":
                 return await self.process_photo(note)
             try:

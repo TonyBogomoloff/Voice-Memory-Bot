@@ -152,6 +152,7 @@ class CleanupMixin:
         notes = self.store.all("SELECT id,state,delivery,transcript_delivery FROM notes WHERE owner=? AND deleted=0",
                                (owner,))
         return (self.export_locks[owner].locked()
+                or bool(getattr(self, "web", None) and owner in self.web.uploading)
                 or any(n["state"] == "processing" or n["delivery"] == "sending"
                        or n["transcript_delivery"] == "sending"
                        or self.note_locks[n["id"]].locked() or self.ai_delivery_locks[n["id"]].locked()

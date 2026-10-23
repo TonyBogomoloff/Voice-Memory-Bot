@@ -6,6 +6,7 @@ import sqlite3
 import time
 import unicodedata
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 
 from .ai_store import migrate_ai
@@ -97,6 +98,8 @@ class Store:
             self.db.execute("UPDATE updates SET state='pending' WHERE state='processing'")
         migrate_ai(self.db)
         migrate_cleanup(self.db)
+        from .web_store import migrate_web
+        migrate_web(self.db)
 
     def close(self):
         self.db.close()
@@ -234,7 +237,7 @@ class Store:
         return self.one("SELECT action FROM users WHERE id=?", (owner,))["action"]
 
     def add_note(self, owner, folder, message, kind, file_id=None, extension="txt", size=0,
-                 duration=0, transcript=None):
+                 duration=0, transcript=None, *, commit=True):
         existing = self.one("SELECT * FROM notes WHERE owner=? AND message_id=?", (owner, message["message_id"]))
         if existing:
             return existing, False
@@ -249,7 +252,7 @@ class Store:
         if counters["bytes"] + size > self.limits.max_user_storage_bytes:
             raise ValueError("Достигнут лимит хранения аудио")
         identity = new_id()
-        with self.db:
+        with self.db if commit else nullcontext():
             self.db.execute("""INSERT INTO notes(id,owner,folder_id,source_folder,message_id,source_thread,
                 kind,file_id,extension,declared_bytes,duration,created_at,transcript,input_mode,reply_message_id)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -318,7 +321,8 @@ class Store:
     def update_note(self, owner, identity, **fields):
         allowed = {"state", "transcript", "title", "routing", "requested_folder", "error", "audio_bytes",
                    "sha256", "delivery", "result_message_id", "result_thread", "folder_id",
-                   "status_message_id", "transcript_delivery", "transcript_message_id", "archive_dirty"}
+                   "status_message_id", "transcript_delivery", "transcript_message_id", "archive_dirty",
+                   "origin", "original_name", "mime_type", "upload_key", "duration"}
         if not fields or not fields.keys() <= allowed:
             raise ValueError("Invalid note fields")
         before = self.note(owner, identity)

@@ -1,0 +1,7 @@
+tunnel: @TUNNEL_ID@
+credentials-file: @CREDENTIALS@
+metrics: 127.0.0.1:20294
+ingress:
+  - hostname: audio-notes.korobkoff.com
+    service: http://127.0.0.1:18767
+  - service: http_status:404

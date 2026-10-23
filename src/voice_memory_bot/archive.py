@@ -13,6 +13,14 @@ from .pdf import history_pdf
 from .store import safe_component
 
 
+def is_audio(note):
+    return note["kind"] in {"voice", "audio"} or (note["kind"] == "document" and note.get("origin") != "web")
+
+
+def media_label(note):
+    return "Исходное аудио" if is_audio(note) else {"photo": "Фото", "video": "Видео"}.get(note["kind"], "Файл")
+
+
 def atomic_write(path: Path, text: str):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     partial = path.with_suffix(path.suffix + ".part")
@@ -36,6 +44,11 @@ class Archive:
         return self.root / str(owner) / identity
 
     def audio(self, note):
+        if note.get("origin") == "web":
+            extension = note["extension"]
+            if not extension.isascii() or not extension.isalnum() or not 1 <= len(extension) <= 12:
+                raise ValueError("invalid_upload_extension")
+            return self.directory(note) / ("upload." + extension)
         if note["kind"] == "photo" and note["extension"] == "jpg":
             return self.directory(note) / "photo.jpg"
         if note["extension"] not in {"ogg", "mp3", "mp4", "mpeg", "mpga", "m4a", "flac", "wav", "webm", "txt"}:
@@ -47,9 +60,11 @@ class Archive:
         date = datetime.fromtimestamp(note["created_at"], UTC).isoformat()
         meta = f"Проект: {folder['name']}\nДата UTC: {date}\nID: {note['id']}\n"
         photo = note["kind"] == "photo"
-        audio_name = audio_name or ("photo.jpg" if photo else f"voice.{note['extension']}")
-        label = "Фото" if photo else "Исходное аудио"
-        audio = f"\n[{label}]({quote(audio_name)})\n" if note["file_id"] and include_audio else ""
+        audio_name = audio_name or (f"upload.{note['extension']}" if note.get("origin") == "web"
+                                   else "photo.jpg" if photo else f"voice.{note['extension']}")
+        label = media_label(note)
+        audio = (f"\n[{label}]({quote(audio_name)})\n"
+                 if (note["file_id"] or note["audio_bytes"]) and include_audio else "")
         text = note["transcript"] if note["transcript"] is not None else "Расшифровка пока не получена."
         edited = f"\n## Текст заметки\n\n{note['content']}\n" if note.get("content") is not None else ""
         section = "Подпись" if photo else "Исходная расшифровка"
@@ -62,7 +77,7 @@ class Archive:
             date = datetime.fromtimestamp(note["created_at"], UTC).isoformat()
             sections.append(f"\n## {note['title']}\n\nДата UTC: {date}\nID: {note['id']}\n")
             if note["id"] in audio_names:
-                label = "Фото" if note["kind"] == "photo" else "Исходное аудио"
+                label = media_label(note)
                 sections.append(f"\n[{label}]({quote(audio_names[note['id']])})\n")
             if note.get("entry_type") == "ai":
                 sections.append("\n### Ты\n")
@@ -106,7 +121,7 @@ class Archive:
         folders = list(folders)
         if audio_only:
             notes = [note for note in notes
-                     if note["kind"] != "photo" and (note["file_id"] or note["audio_bytes"])]
+                     if is_audio(note) and (note["file_id"] or note["audio_bytes"])]
             if not notes:
                 return []
         output.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -125,7 +140,8 @@ class Archive:
                 if not original.is_file() or original.stat().st_size != note["audio_bytes"]:
                     raise ValueError("archive_audio_missing")
                 date = datetime.fromtimestamp(note["created_at"], UTC).strftime("%Y-%m-%d_%H-%M-%S")
-                media_dir = "photos" if note["kind"] == "photo" else "audio"
+                media_dir = ("photos" if note["kind"] == "photo" else "audio" if is_audio(note)
+                             else "videos" if note["kind"] == "video" else "files")
                 audio_names[note["id"]] = f"{media_dir}/{date}_{safe_component(note['title'])}_{note['id']}.{note['extension']}"
                 audio_paths[note["id"]] = original
         metadata = {
@@ -182,14 +198,14 @@ class Archive:
                         data = self.history_markdown(grouped, folder, audio_names).encode("utf-8")
                     fields = ("id", "title", "created_at", "kind", "duration", "state", "routing", "transcript",
                               "content", "entry_type", "revision", "revisions", "ai_response", "ai_state",
-                              "conversation_id", "ai_model")
+                              "conversation_id", "ai_model", "original_name", "mime_type", "origin")
                     details = [{k: n[k] for k in fields if k in n} for n in grouped]
                     yield name, data, {"kind": "history", "folder_id": folder_id, "notes": details}
                 for note in grouped:
                     if note["id"] in audio_paths:
                         name = folder_path + "/" + audio_names[note["id"]]
                         yield name, audio_paths[note["id"]], {
-                            "kind": "photo" if note["kind"] == "photo" else "audio",
+                            "kind": "audio" if is_audio(note) else note["kind"],
                             "folder_id": folder_id, "note_id": note["id"],
                             "title": note["title"], "created_at": note["created_at"],
                             "duration": note["duration"], "bytes": note["audio_bytes"], "sha256": note["sha256"]}

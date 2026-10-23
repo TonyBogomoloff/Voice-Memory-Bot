@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#181a20">
+  <title>Audio Notes</title>
+  <script src="https://telegram.org/js/telegram-web-app.js?64"></script>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div id="gate" class="gate"><div class="brandmark" aria-hidden="true">▥</div><h1>Audio Notes</h1><p id="gate-text">Открываем твои папки…</p></div>
+  <div id="app" class="layout" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brandmark" aria-hidden="true">▥</span><div>Audio Notes<small>Всё по своим местам</small></div></div>
+      <div class="sidebar-heading"><h2>Папки</h2><button id="new-folder" class="icon-button" aria-label="Создать папку" title="Создать папку">＋</button></div>
+      <nav id="folders" aria-label="Папки"></nav>
+      <div class="sidebar-foot">Твой личный архив</div>
+    </aside>
+    <main>
+      <header class="topbar"><button id="back" class="icon-button mobile-only" aria-label="Назад к папкам">‹</button><div><div class="eyebrow">МОИ ЗАПИСИ</div><h1 id="folder-name"></h1></div><button id="refresh" class="icon-button" aria-label="Обновить" title="Обновить">↻</button></header>
+      <div class="folder-meta"><span id="count"></span><span class="desktop-only">Перетащи запись в другую папку</span></div>
+      <section id="notes" aria-label="Записи" aria-live="polite"></section>
+      <button id="more" class="secondary more" hidden>Показать ещё</button>
+      <div class="composer">
+        <div id="record-status" class="record-status" hidden><span class="record-dot"></span><span id="record-time">00:00</span><span>Идёт запись</span><button id="cancel-record" class="text-button">Отменить</button></div>
+        <div id="upload-status" class="upload-status" hidden><span id="upload-label"></span><progress id="progress" max="100" value="0"></progress><button id="retry-upload" class="text-button" hidden>Повторить</button><button id="dismiss-upload" class="text-button" hidden>Убрать</button></div>
+        <div class="composer-actions"><button id="attach" class="secondary"><span aria-hidden="true">＋</span> Прикрепить</button><button id="record" class="primary"><span aria-hidden="true">●</span> Записать голос</button></div>
+        <div id="limit" class="hint"></div>
+        <input id="file-input" type="file" multiple hidden>
+      </div>
+    </main>
+  </div>
+  <dialog id="folder-dialog"><form id="folder-form"><div class="dialog-head"><h2>Новая папка</h2><button type="button" class="icon-button close-dialog" aria-label="Закрыть">×</button></div><label for="folder-input">Название</label><input id="folder-input" maxlength="80" required autocomplete="off" placeholder="Например, Идеи"><p id="folder-error" class="error" role="alert"></p><button class="primary full" type="submit">Создать папку</button></form></dialog>
+  <dialog id="move-dialog"><div class="dialog-head"><h2>Переместить в…</h2><button class="icon-button close-dialog" aria-label="Закрыть">×</button></div><p id="move-title" class="muted"></p><div id="move-folders"></div></dialog>
+  <dialog id="preview-dialog"><div class="dialog-head"><h2 id="preview-title">Файл</h2><button class="icon-button close-dialog" aria-label="Закрыть">×</button></div><div id="preview-content"></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

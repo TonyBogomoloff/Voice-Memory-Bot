@@ -1,0 +1,223 @@
+import asyncio
+import hashlib
+import hmac
+import io
+import json
+import time
+import wave
+import zipfile
+from contextlib import asynccontextmanager
+from dataclasses import replace
+from urllib.parse import urlencode
+
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+from test_mvp import make_bot
+from test_mvp import store as store
+
+from voice_memory_bot.config import Limits
+from voice_memory_bot.miniapp import MiniApp, validate_init_data
+from voice_memory_bot.store import Store
+
+TOKEN = "123:secret"
+
+
+def init_data(owner=1, age=0, **extra):
+    fields = {"auth_date": str(int(time.time()) - age), "query_id": "query",
+              "user": json.dumps({"id": owner, "first_name": "Test"}), **extra}
+    data = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+    key = hmac.digest(b"WebAppData", TOKEN.encode(), "sha256")
+    fields["hash"] = hmac.new(key, data.encode(), hashlib.sha256).hexdigest()
+    return urlencode(fields)
+
+
+@pytest.mark.parametrize("raw", ["", "hash=bad", init_data(age=3605), init_data(age=-90),
+    init_data(owner=2), init_data() + "&auth_date=1", init_data().replace("query", "tampered", 1)])
+def test_rejects_invalid_expired_duplicate_or_unapproved_identity(raw):
+    with pytest.raises(web.HTTPUnauthorized):
+        validate_init_data(raw, TOKEN, {1})
+
+
+def test_validates_current_telegram_signature_including_signature_field():
+    assert validate_init_data(init_data(signature="telegram-ed25519-field"), TOKEN, {1}) == 1
+
+
+@asynccontextmanager
+async def client_for(tmp_path, store):
+    bot = make_bot(tmp_path, store)
+    bot.config = replace(bot.config, allowed_user_ids=frozenset({1, 2}),
+                         web_url="https://audio-notes.example.test")
+    mini = bot.web = MiniApp(bot)
+    async with TestClient(TestServer(mini.application())) as client:
+        result = await client.post("/api/session", json={"init_data": init_data()})
+        assert result.status == 200
+        client.session.headers["Authorization"] = "Bearer " + (await result.json())["token"]
+        yield bot, mini, client
+
+
+async def upload(client, folder, data=b"private attachment", name="notes.txt", mime="text/plain", key="a" * 32,
+                 voice=False):
+    return await client.put(f"/api/folders/{folder}/uploads/{key}", data=data,
+        headers={"X-File-Name": name, "Content-Type": mime, **({"X-Media-Kind": "voice"} if voice else {})})
+
+
+def test_archive_upload_move_media_permissions_idempotency_and_export(tmp_path, store):
+    async def run():
+        async with client_for(tmp_path, store) as (bot, mini, client):
+            first = (await (await client.get("/api/folders")).json())["folders"][0]["id"]
+            created = await client.post("/api/folders", json={"name": "Files"})
+            assert created.status == 201
+            second = (await created.json())["id"]
+            assert store.folder(1, second)["thread_id"] is None
+            response = await upload(client, first, name="../../private.html", mime="text/html")
+            assert response.status == 201
+            public = await response.json()
+            assert public["original_name"] == "private.html"
+            assert not {"owner", "file_id", "upload_key", "message_id", "sha256"} & public.keys()
+            duplicate = await upload(client, first)
+            assert (await duplicate.json())["id"] == public["id"]
+            assert len(store.notes(1)) == 1
+            await bot.process(store.claim_note())
+            note = store.note(1, public["id"])
+            assert note["state"] == "ready" and note["origin"] == "web"
+            assert not bot.telegram.sent and bot.groq.calls == 0
+            assert bot.archive.audio(note).read_bytes() == b"private attachment"
+            moved = await client.post(f"/api/notes/{note['id']}/move", json={"folder_id": second})
+            assert moved.status == 200 and store.note(1, note["id"])["folder_id"] == second
+            assert store.note(1, note["id"])["revision"] == 1
+            ticket = (await (await client.get(f"/api/notes/{note['id']}/media")).json())["url"]
+            media = await client.get(ticket, headers={"Range": "bytes=0-6"})
+            assert media.status == 206 and await media.read() == b"private"
+            assert media.headers["Content-Type"] == "application/octet-stream"
+            assert media.headers["Content-Disposition"].startswith("attachment")
+            assert media.headers["Cache-Control"] == "no-store"
+            forged = await client.get(ticket + "x")
+            assert forged.status == 401
+            missing_auth = await client.get("/api/folders", headers={"Authorization": ""})
+            assert missing_auth.status == 401
+            cross_origin = await client.post("/api/folders", json={"name": "bad"},
+                                              headers={"Origin": "https://evil.example"})
+            assert cross_origin.status == 403
+            client.session.headers["Authorization"] = "Bearer " + mini.sign("session", 2)
+            assert (await client.get(f"/api/folders/{second}/notes")).status == 400
+            assert (await client.post(f"/api/notes/{note['id']}/move",
+                                     json={"folder_id": store.ensure_user(2)})).status == 400
+            assert (await client.get(f"/api/notes/{note['id']}/media")).status == 400
+            owner2_ticket = mini.sign(f"media:{note['id']}", 2)
+            assert (await client.get(f"/media/{note['id']}?ticket={owner2_ticket}")).status == 400
+            note = store.note(1, note["id"])
+            paths = bot.archive.export([note], store.folders(1), tmp_path / "zip", True, 100000,
+                                       text_format="markdown")
+            with zipfile.ZipFile(paths[0]) as archive:
+                assert any("/files/" in n and n.endswith(".html") for n in archive.namelist())
+                assert archive.read(next(n for n in archive.namelist() if "/files/" in n)) == b"private attachment"
+            assert bot.archive.export([note], store.folders(1), tmp_path / "audio", True,
+                                      100000, audio_only=True) == []
+            store.delete(1, note["id"])
+            assert (await client.get(ticket)).status == 400
+    asyncio.run(run())
+
+
+def wav_bytes():
+    output = io.BytesIO()
+    with wave.open(output, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(b"\0\0" * 16000)
+    return output.getvalue()
+
+
+def test_voice_pipeline_recovers_after_restart_and_preserves_selected_folder(tmp_path, store):
+    async def run():
+        async with client_for(tmp_path, store) as (bot, mini, client):
+            folder = store.create_folder(1, "Selected")
+            store.create_folder(1, "Игра")
+            response = await upload(client, folder["id"], wav_bytes(), "record.wav", "audio/wav", voice=True)
+            assert response.status == 201
+            public = await response.json()
+            claimed = store.claim_note()
+            assert claimed["state"] == "processing"
+            # Reopen a copy as if the previous process stopped after claiming its durable job.
+            recovery_path = tmp_path / "recovery.sqlite3"
+            import sqlite3
+            with sqlite3.connect(recovery_path) as destination:
+                store.db.backup(destination)
+            recovered = Store(recovery_path, Limits())
+            recovered_bot = make_bot(tmp_path, recovered)
+            try:
+                assert recovered.note(1, public["id"])["state"] == "queued"
+                await recovered_bot.process(recovered.claim_note())
+                note = recovered.note(1, public["id"])
+                assert note["state"] == "ready" and "Игра" in note["transcript"]
+                assert note["folder_id"] == folder["id"] and note["duration"] > 0
+                assert recovered_bot.groq.calls == 1 and not recovered_bot.telegram.sent
+                assert not (recovered_bot.archive.directory(note) / "asr.mp3").exists()
+                assert recovered_bot.archive.audio(note).read_bytes() == wav_bytes()
+            finally:
+                recovered.close()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("mime,name,kind", [("image/png", "photo.png", "photo"),
+    ("video/mp4", "video.mp4", "video"), ("application/pdf", "document.pdf", "document")])
+def test_non_audio_uploads_never_use_asr(tmp_path, store, mime, name, kind):
+    async def run():
+        async with client_for(tmp_path, store) as (bot, mini, client):
+            response = await upload(client, store.ensure_user(1), name=name, mime=mime)
+            assert response.status == 201
+            note = await response.json()
+            await bot.process(store.claim_note())
+            saved = store.note(1, note["id"])
+            assert saved["kind"] == kind and saved["state"] == "ready"
+            assert bot.groq.calls == 0 and not bot.telegram.sent
+    asyncio.run(run())
+
+
+def test_size_quota_and_cleanup_protect_uploads(tmp_path, store):
+    async def run():
+        async with client_for(tmp_path, store) as (bot, mini, client):
+            folder = store.ensure_user(1)
+            mini.config = replace(mini.config, limits=replace(mini.config.limits, max_file_bytes=5))
+            assert (await upload(client, folder)).status == 413
+            assert (await upload(client, folder, data=b"", key="b" * 32)).status == 400
+            assert not store.notes(1)
+            assert not list((tmp_path / "uploads").glob("*.part"))
+            mini.uploading.add(1)
+            assert bot.deletion_busy(1)
+            assert (await upload(client, folder, data=b"123")).status == 409
+            mini.uploading.clear()
+            store.limits = replace(store.limits, max_user_storage_bytes=2)
+            assert (await upload(client, folder, data=b"123")).status == 409
+            assert not store.notes(1)
+    asyncio.run(run())
+
+
+def test_failed_asr_retains_original_and_retry_does_not_send_telegram(tmp_path, store):
+    async def run():
+        async with client_for(tmp_path, store) as (bot, mini, client):
+            folder = store.ensure_user(1)
+            bot.groq.error = "groq_unavailable"
+            response = await upload(client, folder, wav_bytes(), "record.wav", "audio/wav", voice=True)
+            identity = (await response.json())["id"]
+            await bot.process(store.claim_note())
+            note = store.note(1, identity)
+            assert note["state"] == "asr_failed" and bot.archive.audio(note).exists()
+            bot.groq.error = None
+            assert (await client.post(f"/api/notes/{identity}/retry", json={})).status == 200
+            await bot.process(store.claim_note())
+            assert store.note(1, identity)["state"] == "ready" and not bot.telegram.sent
+    asyncio.run(run())
+
+
+def test_app_command_and_home_open_registered_url(tmp_path, store):
+    async def run():
+        bot = make_bot(tmp_path, store)
+        bot.config = replace(bot.config, web_url="https://audio-notes.example.test")
+        await bot.command(1, None, "/app", "")
+        assert bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"][0][0]["web_app"]["url"] == bot.config.web_url
+        from voice_memory_bot.bot import HOME
+        await bot.show(1, "Menu", keys=HOME)
+        assert bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"][0][0]["web_app"]["url"] == bot.config.web_url
+    asyncio.run(run())
