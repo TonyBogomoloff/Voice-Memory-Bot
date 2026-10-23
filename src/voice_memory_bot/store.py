@@ -184,10 +184,7 @@ class Store:
         if pending:
             self.bind_thread(owner, pending["id"], thread)
             return self.folder(owner, pending["id"])
-        try:
-            return self.create_folder(owner, name, thread)
-        except ValueError:
-            return self.create_folder(owner, f"{name[:55]} ({thread})", thread)
+        return self.create_folder(owner, name, thread)
 
     def check_names(self, owner, names, exclude=None):
         values = [normalize(n) for n in names]

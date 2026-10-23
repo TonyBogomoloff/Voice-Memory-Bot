@@ -561,6 +561,8 @@ class Bot(RecordingMixin, CleanupMixin, AIBotMixin):
             return
         pieces = data.split(":")
         action, identity = pieces[0], pieces[1] if len(pieces) > 1 else None
+        if action == "recordlink":
+            return await self.link_recording_folder(owner, int(identity), pieces[2])
         if action == "record":
             return await self.start_recording(owner, int(identity))
         if action == "help":

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from .providers import ProviderError
-from .store import clean_name
+from .store import clean_name, normalize
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +112,15 @@ class RecordingMixin:
         name = clean_name(text)
         folder = self.store.folder_for_thread(owner, prompt["thread_id"])
         if not folder:
+            existing = next((f for f in self.store.folders(owner) if normalize(f["name"]) == normalize(name)), None)
+            if existing:
+                await self.telegram.text(owner,
+                    f"Архив «{existing['name']}» уже существует. Подключить его к этой папке? "
+                    "Все записи сохранятся. Прежняя привязка будет заменена, темы Telegram не удаляются.",
+                    prompt["thread_id"], {"inline_keyboard": [[{
+                        "text": "Подключить существующий архив",
+                        "callback_data": f"recordlink:{prompt['message_id']}:{existing['id']}"}]]})
+                return
             self.store.check_names(owner, [name])
             folder = self.store.import_topic(owner, name, prompt["thread_id"])
         with self.store.db:
@@ -126,3 +135,30 @@ class RecordingMixin:
             except ProviderError:
                 log.warning("record panel rename unconfirmed thread=%s", prompt["thread_id"])
         await self.start_recording(owner, prompt["thread_id"])
+
+    async def link_recording_folder(self, owner, prompt_id, folder_id):
+        async with self.folder_locks[f"record-link:{owner}"]:
+            prompt = self.store.one("SELECT * FROM record_prompts WHERE owner=? AND message_id=? AND purpose='name'",
+                                    (owner, prompt_id))
+            if not prompt:
+                raise ValueError("Этот запрос уже завершён. Нажми «Записать сюда» ещё раз.")
+            folder = self.store.folder(owner, folder_id)
+            if folder["is_inbox"] or self.store.folder_for_thread(owner, prompt["thread_id"]):
+                raise ValueError("Эта папка уже подключена или является папкой «Входящие».")
+            old_thread = folder["thread_id"]
+            with self.store.db:
+                self.store.db.execute("UPDATE folders SET thread_id=? WHERE owner=? AND id=?",
+                                      (prompt["thread_id"], owner, folder_id))
+                self.store.db.execute("UPDATE record_prompts SET purpose='done' WHERE owner=? AND thread_id IN (?,?)",
+                                      (owner, old_thread, prompt["thread_id"]))
+                self.store.db.execute("UPDATE record_panels SET state='detached' WHERE owner=? AND thread_id=?",
+                                      (owner, old_thread))
+            panel = self.store.one("SELECT message_id FROM record_panels WHERE owner=? AND thread_id=?",
+                                   (owner, prompt["thread_id"]))
+            if panel and panel["message_id"]:
+                try:
+                    await self.show(owner, f"📁 {folder['name']}", prompt["thread_id"],
+                                    {"inline_keyboard": [[record_button(prompt["thread_id"])]]}, panel["message_id"])
+                except ProviderError:
+                    log.warning("record panel refresh failed thread=%s", prompt["thread_id"])
+            await self.start_recording(owner, prompt["thread_id"])
