@@ -16,7 +16,7 @@ from .cleanup import CleanupMixin
 from .config import Config
 from .message_store import MessageStore
 from .providers import CodexRouter, Groq, ProviderError, Telegram
-from .routing import decide
+from .routing import fallback_title
 from .store import Store, clean_name
 
 log = logging.getLogger(__name__)
@@ -58,12 +58,12 @@ HOME = keyboard([button("📁 Папки", "folders"), button("🔎 Поиск",
 
 HELP = """🎙 Voice Memory Bot
 
-Выбери тему проекта и отправь голосовое или текст. Можно сказать в начале или конце записи:
-«Сохрани в проект Работа» — эта команда важнее выбранной темы.
-Без команды запись останется в выбранном проекте. Неоднозначные указания попадут во «Входящие».
+Выбери папку в списке Telegram и отправь голосовое, текст или фото.
+Расшифровка появится рядом с голосовым. Папка Telegram и папка архива — одно и то же.
+Слова в записи не меняют папку. Для переноса нажми «Опции» → «Переместить».
 
-/folders — проекты и записи
-/new Название — создать проект
+/folders — записи и управление папками
+/new Название — создать папку
 /notes — последние записи
 /search текст — поиск по всему архиву
 /export — выгрузить архив
@@ -80,7 +80,7 @@ HELP = """🎙 Voice Memory Bot
 ИИ умеет искать, создавать и менять заметки; исходная расшифровка сохраняется, правку можно отменить.
 История разговора и запрошенные заметки передаются модели. Доступ к заметкам можно выключить в настройках.
 Фото тоже сохраняются: под снимком появится отдельное сообщение с кнопкой «Опции».
-Аудио отправляется в Groq для распознавания, текст — в OpenAI для выбора проекта и заголовка.
+Аудио отправляется в Groq для распознавания. OpenAI используется для функций ИИ.
 Оригинал и исходная расшифровка хранятся в твоём архиве. Удаление отдельной записи из архива
 не удаляет историю Telegram. «Удалить всё» очищает также темы и известные боту сообщения;
 старые сообщения вне тем могут потребовать ручной очистки в Telegram.
@@ -111,7 +111,7 @@ class Bot(CleanupMixin, AIBotMixin):
             raise ProviderError("webhook_present_stop_before_polling")
         await self.telegram.call("setMyCommands", commands=[
             {"command": "start", "description": "Открыть Voice Memory"},
-            {"command": "folders", "description": "Папки проектов"},
+            {"command": "folders", "description": "Записи и папки"},
             {"command": "new", "description": "Создать папку"},
             {"command": "notes", "description": "Последние записи"},
             {"command": "search", "description": "Поиск по записям"},
@@ -242,11 +242,8 @@ class Bot(CleanupMixin, AIBotMixin):
                 return result
             if "forum_topic_created" in message:
                 topic = message["forum_topic_created"]
-                if thread and topic.get("is_name_implicit"):
-                    self.store.mark_implicit_topic(owner, thread)
-                    return
                 if thread and not self.store.folder_for_thread(owner, thread):
-                    name = topic.get("name") or f"Проект {thread}"
+                    name = topic.get("name") or f"Папка {thread}"
                     self.store.import_topic(owner, name, thread)
                 return
             if "forum_topic_edited" in message:
@@ -264,9 +261,7 @@ class Bot(CleanupMixin, AIBotMixin):
             if text and self.store.action(owner):
                 return await self.input_action(owner, thread, text)
             # Commands and prompt answers must not import their source thread as a folder.
-            if thread and not self.store.folder_for_thread(owner, thread) and not self.store.is_implicit_topic(owner, thread):
-                self.store.create_folder(owner, f"Проект {thread}", thread)
-            folder = self.store.current_folder(owner, thread)
+            folder = self.source_folder(owner, thread, message)["id"]
             if not message.get("photo"):
                 self.check_ai_capacity(owner, folder, message)
             if text:
@@ -291,20 +286,52 @@ class Bot(CleanupMixin, AIBotMixin):
                                                     transcript=message.get("caption", "") if kind == "photo" else None)
             if created:
                 self.messages.record(note, message["message_id"], thread, "source")
-                if note["kind"] != "photo":
-                    self.capture_ai_input(note, message)
                 # The worker uses the same lock, so a quick ASR cannot outrun the status checkpoint.
                 async with self.note_locks[note["id"]]:
                     if note["kind"] == "photo":
                         return await self.photo_controls(note)
                     status = "Конвертирую в текст…" if note["file_id"] else "Сохраняю…"
-                    response = await self.telegram.text(owner, status, thread)
+                    response = await self.telegram.text(owner, status, thread,
+                        reply_to=note["message_id"] if thread is None else None)
                     self.store.update_note(owner, note["id"], status_message_id=response["message_id"])
+                    note = self.adopt_source_topic(note, response)
+                    self.capture_ai_input(note, {**message, "message_thread_id": note["source_thread"]})
+                    log.info("note accepted note_id=%s source_thread=%s", note["id"], note["source_thread"])
         except ValueError as exc:
             if move_callback:
                 return await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"],
                                                 text=str(exc)[:200], show_alert=True)
             await self.show(owner, str(exc), thread, HOME)
+
+    def source_folder(self, owner, thread, message=None):
+        if thread is None:
+            return self.store.folder(owner, self.store.ensure_user(owner))
+        folder = self.store.folder_for_thread(owner, thread)
+        if folder:
+            return folder
+        message = message or {}
+        reply = message.get("reply_to_message", {})
+        topic = message.get("forum_topic_created", {})
+        if not topic and reply.get("message_thread_id") == thread:
+            topic = reply.get("forum_topic_created", {})
+        # Even formerly ignored implicit topics are real destinations chosen in Telegram.
+        return self.store.import_topic(owner, topic.get("name") or f"Папка {thread}", thread)
+
+    def adopt_source_topic(self, note, response):
+        thread = response.get("message_thread_id")
+        if type(thread) is not int or thread <= 0:
+            return self.store.note(note["owner"], note["id"])
+        if note["source_thread"] is not None:
+            if thread != note["source_thread"]:
+                raise ProviderError("telegram_topic_mismatch")
+            return self.store.note(note["owner"], note["id"])
+        folder = self.source_folder(note["owner"], thread, response)
+        note = self.messages.bind_source(note, folder)
+        self.cleanup.remember(note["owner"], note["message_id"], thread)
+        if note["status_message_id"]:
+            self.cleanup.remember(note["owner"], note["status_message_id"], thread)
+        log.info("source topic resolved note_id=%s source_thread=%s", note["id"], thread)
+        return note
 
     async def command(self, owner, thread, command, argument):
         # A new command leaves the previous name/search prompt behind.
@@ -384,7 +411,6 @@ class Bot(CleanupMixin, AIBotMixin):
 
     async def create_folder(self, owner, thread, name, note_id=None):
         folder = self.store.create_folder(owner, name)
-        self.store.select(owner, folder["id"])
         try:
             await self.ensure_topic(owner, folder["id"])
         except ProviderError:
@@ -412,16 +438,17 @@ class Bot(CleanupMixin, AIBotMixin):
         rows.append([button("＋ Новая папка", "create"), button("🔎 Поиск", "search")])
         if not note_id:
             rows.append([button("🗑 Удалить всё", "deleteall")])
-        await self.show(owner, "Выбери папку для записи:" if note_id else "Твои проекты:",
-                        thread, keyboard(*rows), edit_id)
+        text = "Куда переместить запись?" if note_id else (
+            "Твои папки. Для новой записи открой папку в списке Telegram.")
+        await self.show(owner, text, thread, keyboard(*rows), edit_id)
 
     async def show_notes(self, owner, thread, identity, page=0, edit_id=None):
         folder = self.store.folder(owner, identity)
         notes = self.store.notes(owner, identity, offset=page * 8, limit=9)
-        aliases = ", ".join(json.loads(folder["aliases"]))
-        text = f"📁 {folder['name']}" + (f"\nМожно говорить: {aliases}" if aliases else "")
+        text = f"📁 {folder['name']}"
         text += "\nРежим: " + ("диалог с ИИ" if folder["mode"] == "chat" else "заметки")
-        text += "\nЗаписи:" if notes else "\nПока нет записей. Отправь голосовое в эту тему или выбери папку ниже."
+        text += "\nДля новой записи открой эту папку в списке Telegram."
+        text += "\nЗаписи:" if notes else "\nПока нет записей."
         rows = [[button(n["title"][:55], f"note:{n['id']}")] for n in notes[:8]]
         nav = []
         if page:
@@ -430,8 +457,7 @@ class Bot(CleanupMixin, AIBotMixin):
             nav.append(button("→", f"folder:{identity}:{page + 1}"))
         if nav:
             rows.append(nav)
-        rows.extend([[button("Сохранять сюда", f"select:{identity}"), button("📦 Экспорт", f"export:{identity}")],
-                     [button("Псевдонимы", f"aliases:{identity}")]])
+        rows.append([button("📦 Экспорт", f"export:{identity}")])
         if not folder["is_inbox"]:
             rows[-1].append(button("Переименовать", f"rename:{identity}"))
         target_mode = "notes" if folder["mode"] == "chat" else "chat"
@@ -526,11 +552,11 @@ class Bot(CleanupMixin, AIBotMixin):
         if action == "folder":
             return await self.show_notes(owner, thread, identity, int(pieces[2]), message_id)
         if action == "select":
-            self.store.select(owner, identity)
+            # Old inline keyboards can remain in chat history after an upgrade.
             await self.ensure_topic(owner, identity)
             name = self.store.folder(owner, identity)["name"]
-            return await self.show(owner, f"Выбрана папка «{name}» для сообщений из общего чата.\n"
-                                   "В теме проекта записи сохраняются в эту тему, если голосом не указано другое.",
+            return await self.show(owner, f"Открой папку «{name}» в списке Telegram и отправь сообщение.\n"
+                                   "Дополнительно выбирать место сохранения больше не нужно.",
                                    thread, HOME, message_id)
         if action in {"rename", "aliases"}:
             self.store.folder(owner, identity)
@@ -812,25 +838,17 @@ class Bot(CleanupMixin, AIBotMixin):
                     self.store.update_note(owner, identity, transcript=transcript)
                     note = self.store.note(owner, identity)
                     self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
-                # A folder/title decision must never delay the text the user is waiting for.
+                # Deliver the text before any optional AI address detection.
                 await self.deliver_transcript(note)
+                note = self.store.note(owner, identity)
                 self.capture_ai_input(note, {"message_id": note["message_id"],
                     "message_thread_id": note["source_thread"],
                     "reply_to_message": {"message_id": note["reply_message_id"]}})
                 if await self.route_ai(note):
                     return
-                folders = self.store.folders(owner)
-                result = None
-                try:
-                    result = await self.router.classify(note["transcript"], folders)
-                except ProviderError as exc:
-                    log.warning("routing error=%s", exc)
-                if await self.route_ai(note, detect=False):
-                    return
-                decision = decide(note["transcript"], folders, note["source_folder"],
-                                  self.store.ensure_user(owner), result)
-                self.store.update_note(owner, identity, state="ready", title=decision.title,
-                    folder_id=decision.folder_id, routing=decision.status, requested_folder=decision.requested_folder)
+                # The selected Telegram topic is authoritative; note contents never move it.
+                self.store.update_note(owner, identity, state="ready", title=fallback_title(note["transcript"]),
+                                       routing="manual", requested_folder=None, error=None)
                 note = self.store.note(owner, identity)
                 self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
             except (ProviderError, ValueError, OSError, TimeoutError) as exc:
@@ -849,7 +867,12 @@ class Bot(CleanupMixin, AIBotMixin):
         keys = keyboard([button("Повторить", f"retry:{note['id']}")]) if error else options_keyboard(note["id"])
         self.store.update_note(note["owner"], note["id"], transcript_delivery="sending")
         try:
-            response = await self.show(note["owner"], text, note["source_thread"], keys, edit_id)
+            if edit_id:
+                response = await self.show(note["owner"], text, note["source_thread"], keys, edit_id)
+            else:
+                response = await self.telegram.text(note["owner"], text, note["source_thread"], keys,
+                    reply_to=note["message_id"] if note["source_thread"] is None else None)
+                note = self.adopt_source_topic(note, response)
             self.messages.record(note, response["message_id"], note["source_thread"], "photo_controls")
             self.store.update_note(note["owner"], note["id"], transcript_delivery="sent",
                                    transcript_message_id=response["message_id"])
@@ -901,7 +924,7 @@ class Bot(CleanupMixin, AIBotMixin):
             self.store.update_note(owner, identity, status_message_id=None)
         self.messages.removed(owner, identity, message_id)
 
-    async def send_transcript(self, note, thread, reply_to=None, recover_topic=False):
+    async def send_transcript(self, note, thread, reply_to=None, recover_topic=False, source=False):
         content = note["content"] if note.get("content") is not None else note["transcript"]
         chunks = list(transcript_chunks(content))
         for index, text in enumerate(chunks):
@@ -914,6 +937,11 @@ class Bot(CleanupMixin, AIBotMixin):
                     raise
                 thread = await self.ensure_topic(note["owner"], note["folder_id"], invalid_thread=thread)
                 response = await self.telegram.text(note["owner"], text, thread, keys, reply_to=reply_to)
+            if source:
+                note = self.adopt_source_topic(note, response)
+                thread = note["source_thread"]
+                if thread is not None:
+                    reply_to = None
             self.messages.record(note, response["message_id"], thread, "transcript")
         return response, thread
 
@@ -962,7 +990,8 @@ class Bot(CleanupMixin, AIBotMixin):
         await self.clear_status(note)
         self.store.update_note(owner, identity, transcript_delivery="sending")
         try:
-            response, _ = await self.send_transcript(note, note["source_thread"])
+            response, _ = await self.send_transcript(note, note["source_thread"], source=True,
+                reply_to=note["message_id"] if note["source_thread"] is None else None)
             self.store.update_note(owner, identity, transcript_delivery="sent",
                                    transcript_message_id=response["message_id"])
         except ProviderError as exc:
@@ -980,22 +1009,19 @@ class Bot(CleanupMixin, AIBotMixin):
             if not note["transcript"] and note["kind"] != "photo":
                 text = "Не удалось конвертировать запись в текст. Попробуй ещё раз."
                 keys = keyboard([button("Повторить", f"retry:{identity}")])
-                response = await self.telegram.text(owner, text, note["source_thread"], keys)
+                response = await self.telegram.text(owner, text, note["source_thread"], keys,
+                    reply_to=note["message_id"] if note["source_thread"] is None else None)
+                note = self.adopt_source_topic(note, response)
                 self.store.update_note(owner, identity, delivery="sent", result_message_id=response["message_id"],
                                        result_thread=note["source_thread"])
                 return
             if note["kind"] != "photo":
                 await self.deliver_transcript(note)
-            thread = await self.ensure_topic(owner, note["folder_id"])
-            if not thread or thread == note["source_thread"]:
-                saved = self.store.note(owner, identity)
-                self.store.update_note(owner, identity, delivery=saved["transcript_delivery"],
-                                       result_message_id=saved["transcript_message_id"],
-                                       result_thread=note["source_thread"])
-                return
-            response, thread = await self.publish_note(note, thread)
-            self.store.update_note(owner, identity, delivery="sent", result_message_id=response["message_id"],
-                                   result_thread=thread)
+            saved = self.store.note(owner, identity)
+            self.store.update_note(owner, identity, delivery=saved["transcript_delivery"],
+                                   result_message_id=saved["transcript_message_id"],
+                                   result_thread=saved["source_thread"])
+            # Publishing audio into another topic is reserved for an explicit move action.
         except ProviderError as exc:
             self.store.update_note(owner, identity, delivery="unknown")
             log.warning("note delivery unknown note_id=%s error=%s method=%s reason=%s", identity, exc,

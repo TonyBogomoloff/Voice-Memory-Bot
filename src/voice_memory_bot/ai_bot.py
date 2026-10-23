@@ -97,7 +97,6 @@ class AIBotMixin:
                 name, number = f"ИИ {number}", number + 1
             folder = self.store.create_folder(owner, name)
             self.ai_state.mode(owner, folder["id"], "chat")
-        self.store.select(owner, folder["id"])
         target = await self.ensure_topic(owner, folder["id"])
         conversation = self.ai_state.active(owner, folder["id"])
         response = await self.show(owner, f"🤖 Папка «{folder['name']}» — диалог с ИИ.\n"

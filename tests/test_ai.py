@@ -143,15 +143,16 @@ def test_button_converts_existing_voice_without_repeating_asr_or_request(bot):
     asyncio.run(run())
 
 
-def test_button_during_routing_wins_over_folder_classifier(bot):
+def test_button_during_address_detection_uses_the_same_note(bot):
     async def run():
         entered, finish = asyncio.Event(), asyncio.Event()
-        async def classify(*args):
+        async def addressed(*args):
             entered.set()
             await finish.wait()
-            return None
-        bot.router.classify = classify
-        task = asyncio.create_task(receive(bot, "Объясни это"))
+            return False
+        bot.assistant.addressed = addressed
+        bot.ai_state.set_settings(1, wake_enabled=True, names=["Луна"])
+        task = asyncio.create_task(receive(bot, "Луна, объясни это"))
         await asyncio.wait_for(entered.wait(), 2)
         note = bot.store.notes(1)[0]
         await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")

@@ -41,6 +41,21 @@ class MessageStore:
             self.db.execute("INSERT OR IGNORE INTO note_messages(owner,message_id,note_id,thread_id,kind) "
                             "VALUES (?,?,?,?,?)", (note["owner"], message_id, note["id"], thread, kind))
 
+    def bind_source(self, note, folder):
+        """Recover a missing inbound topic from Telegram's reply receipt, never from text."""
+        owner, identity = note["owner"], note["id"]
+        folder = self.store.folder(owner, folder["id"])
+        current = self.store.note(owner, identity)
+        if current["source_thread"] is not None or current["folder_id"] != current["source_folder"]:
+            return current
+        with self.db:
+            self.db.execute("UPDATE notes SET source_thread=?,source_folder=?,folder_id=?,input_mode=? "
+                            "WHERE owner=? AND id=? AND deleted=0",
+                            (folder["thread_id"], folder["id"], folder["id"], folder["mode"], owner, identity))
+            self.db.execute("UPDATE note_messages SET thread_id=? WHERE owner=? AND note_id=? AND thread_id IS NULL",
+                            (folder["thread_id"], owner, identity))
+        return self.store.note(owner, identity)
+
     def in_thread(self, owner, identity, thread):
         self.store.note(owner, identity)
         return [row["message_id"] for row in self.store.all(

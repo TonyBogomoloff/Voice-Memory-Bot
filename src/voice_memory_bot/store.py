@@ -160,8 +160,7 @@ class Store:
         native = self.folder_for_thread(owner, thread)
         if native:
             return native["id"]
-        active = self.one("SELECT active_folder FROM users WHERE id=?", (owner,))["active_folder"]
-        return active or inbox
+        return inbox
 
     def create_folder(self, owner: int, name: str, thread: int | None = None):
         self.ensure_user(owner)

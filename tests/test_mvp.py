@@ -110,15 +110,16 @@ def test_import_of_bot_created_topic_reuses_pending_folder(store):
     assert len(store.folders(1)) == 2
 
 
-def test_implicit_telegram_threads_are_not_new_projects(tmp_path, store):
+def test_implicit_telegram_threads_are_real_folders(tmp_path, store):
     async def run():
         bot = make_bot(tmp_path, store)
         base = {"from": {"id": 1}, "chat": {"id": 1, "type": "private"}, "message_thread_id": 99}
         await bot.handle({"message": {**base, "message_id": 1, "forum_topic_created": {
             "name": "Новая заметка", "is_name_implicit": True}}})
         await bot.handle({"message": {**base, "message_id": 2, "text": "Идея для будущего"}})
-        assert len(store.folders(1)) == 1
-        assert store.notes(1)[0]["source_folder"] == store.ensure_user(1)
+        folder = store.folder_for_thread(1, 99)
+        assert folder["name"] == "Новая заметка"
+        assert store.notes(1)[0]["source_folder"] == folder["id"]
     asyncio.run(run())
 
 
@@ -301,40 +302,25 @@ async def receive_voice(bot, message_id=10, thread=100):
         "voice": {"file_id": "voice-id", "file_size": 32044, "duration": 1}}})
 
 
-def test_voice_transcript_arrives_before_routing_and_replaces_status(tmp_path, store):
+def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_path, store):
     async def run():
-        store.create_folder(1, "Игра", thread=100)
+        game = store.create_folder(1, "Игра", thread=100)
         bot = make_bot(tmp_path, store)
+        async def unused_router(*args):
+            raise AssertionError("A folder classifier must not run for an ordinary note")
+        bot.router.classify = unused_router
         await receive_voice(bot)
-        note = store.notes(1)[0]
-        assert bot.telegram.sent == [("sendMessage", {
-            "chat_id": 1, "text": "Конвертирую в текст…", "thread": 100, "keyboard": None, "reply_to": None})]
-        entered, finish = asyncio.Event(), asyncio.Event()
-        async def slow_router(transcript, folders):
-            entered.set()
-            await finish.wait()
-            return route_result(next(f for f in folders if f["name"] == "Игра"))
-        bot.router.classify = slow_router
-        task = asyncio.create_task(bot.process(store.claim_note()))
-        try:
-            await asyncio.wait_for(entered.wait(), 2)
-            saved = store.note(1, note["id"])
-            assert saved["state"] == "processing"
-            assert saved["status_message_id"] is None
-            assert saved["transcript_delivery"] == "sent"
-            assert bot.telegram.sent[1] == ("deleteMessage", {"chat_id": 1, "message_id": 1})
-            method, payload = bot.telegram.sent[2]
-            assert method == "sendMessage" and payload["text"] == saved["transcript"]
-            assert payload["thread"] == 100 and payload["reply_to"] is None
-            assert payload["keyboard"] == {"inline_keyboard": [[{
-                "text": "Опции", "callback_data": f"options:{note['id']}"}]]}
-        finally:
-            finish.set()
-            await task
-        assert len(bot.telegram.sent) == 3
-        assert store.note(1, note["id"])["delivery"] == "sent"
+        await bot.process(store.claim_note())
+        saved = store.notes(1)[0]
+        assert saved["folder_id"] == game["id"] and saved["routing"] == "manual"
+        assert saved["state"] == "ready" and saved["delivery"] == "sent"
+        assert saved["status_message_id"] is None
+        assert [m for m, _ in bot.telegram.sent] == ["sendMessage", "deleteMessage", "sendMessage"]
+        payload = bot.telegram.sent[-1][1]
+        assert payload["text"] == saved["transcript"] and payload["thread"] == 100
+        assert payload["reply_to"] is None
+        assert payload["keyboard"]["inline_keyboard"][0][0]["text"] == "Опции"
     asyncio.run(run())
-
 
 def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store):
     async def run():
@@ -496,6 +482,7 @@ def test_deleted_destination_topic_is_recreated_after_rejected_first_send(tmp_pa
             return await call(method, **kwargs)
         bot.telegram.call = deleted_topic
         await bot.process(store.claim_note())
+        await bot.move(1, note["id"], game["id"], None)
         saved = store.note(1, note["id"])
         assert saved["delivery"] == "sent" and saved["result_thread"] == 123
         assert store.folder(1, game["id"])["thread_id"] == 123
@@ -524,8 +511,9 @@ def test_partial_destination_delivery_is_not_repeated_when_topic_disappears(tmp_
             return await call(method, **kwargs)
         bot.telegram.call = removed_midway
         await bot.process(store.claim_note())
+        await bot.move(1, note["id"], game["id"], None)
         saved = store.note(1, note["id"])
-        assert saved["transcript_delivery"] == "sent" and saved["delivery"] == "unknown"
+        assert saved["transcript_delivery"] == "sent" and bot.messages.get(1, note["id"])["state"] == "unknown"
         assert store.folder(1, game["id"])["thread_id"] == 100
         before = list(bot.telegram.sent)
         await bot.deliver(saved)
@@ -536,13 +524,13 @@ def test_partial_destination_delivery_is_not_repeated_when_topic_disappears(tmp_
 
 def test_complete_pipeline_and_unknown_delivery_not_retried(tmp_path, store):
     async def run():
-        game = store.create_folder(1, "Игра", thread=100)
+        store.create_folder(1, "Игра", thread=100)
         bot = make_bot(tmp_path, store)
         note = add(store, kind="voice", file_id="voice-id", extension="wav", size=32044, duration=1)
         bot.telegram.fail_delivery = True
         await bot.process(store.claim_note())
         saved = store.note(1, note["id"])
-        assert saved["state"] == "ready" and saved["folder_id"] == game["id"]
+        assert saved["state"] == "ready" and saved["folder_id"] == note["source_folder"]
         assert saved["transcript"].startswith("Сохрани в проект Игра.")
         assert saved["delivery"] == "unknown"
         before = len(bot.telegram.sent)
@@ -553,7 +541,7 @@ def test_complete_pipeline_and_unknown_delivery_not_retried(tmp_path, store):
     asyncio.run(run())
 
 
-def test_asr_failure_preserves_audio_and_llm_failure_does_not_repeat_asr(tmp_path, store):
+def test_asr_failure_preserves_audio_and_retry_needs_no_folder_classifier(tmp_path, store):
     async def run():
         store.create_folder(1, "Игра")
         bot = make_bot(tmp_path, store)
@@ -566,13 +554,11 @@ def test_asr_failure_preserves_audio_and_llm_failure_does_not_repeat_asr(tmp_pat
         store.retry(1, note["id"])
         await bot.process(store.claim_note())
         saved = store.note(1, note["id"])
-        assert saved["state"] == "ready" and saved["routing"] == "unavailable"
-        asr_calls = bot.groq.calls
-        store.retry(1, note["id"])
-        bot.router.error = False
-        await bot.process(store.claim_note())
-        assert bot.groq.calls == asr_calls
-        assert store.note(1, note["id"])["routing"] == "explicit"
+        assert saved["state"] == "ready" and saved["routing"] == "manual"
+        assert saved["folder_id"] == note["source_folder"] and bot.groq.calls == 2
+        with pytest.raises(ValueError, match="уже обработана"):
+            store.retry(1, note["id"])
+        assert bot.groq.calls == 2
     asyncio.run(run())
 
 

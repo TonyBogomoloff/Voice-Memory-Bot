@@ -70,7 +70,7 @@ class Telegram:
     async def text(self, owner, text, thread=None, keyboard=None, reply_to=None):
         return await self.call("sendMessage", chat_id=owner, text=text[:4000],
                                message_thread_id=thread or None, reply_markup=keyboard,
-                               reply_parameters={"message_id": reply_to, "allow_sending_without_reply": True}
+                               reply_parameters={"message_id": reply_to, "allow_sending_without_reply": thread is not None}
                                if reply_to else None,
                                link_preview_options={"is_disabled": True})
 
