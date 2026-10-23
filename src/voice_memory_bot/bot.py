@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .ai_bot import AIBotMixin
 from .archive import Archive
+from .cleanup import CleanupMixin
 from .config import Config
 from .message_store import MessageStore
 from .providers import CodexRouter, Groq, ProviderError, Telegram
@@ -52,7 +53,8 @@ def transcript_chunks(text, limit=3900):
 
 HOME = keyboard([button("📁 Папки", "folders"), button("🔎 Поиск", "search")],
                 [button("🤖 ИИ", "aiopen"), button("📦 Экспорт всего", "export:all")],
-                [button("⚙️ Настройки", "settings:all"), button("ℹ️ Помощь", "help")])
+                [button("⚙️ Настройки", "settings:all"), button("ℹ️ Помощь", "help")],
+                [button("🗑 Удалить всё", "deleteall")])
 
 HELP = """🎙 Voice Memory Bot
 
@@ -65,6 +67,7 @@ HELP = """🎙 Voice Memory Bot
 /notes — последние записи
 /search текст — поиск по всему архиву
 /export — выгрузить архив
+/delete_all — удалить все папки и сообщения с подтверждением
 /ai — открыть папку для диалога с ИИ
 /settings — настройки ИИ и экспорта PDF / Markdown
 /newchat — начать новый разговор
@@ -78,11 +81,13 @@ HELP = """🎙 Voice Memory Bot
 История разговора и запрошенные заметки передаются модели. Доступ к заметкам можно выключить в настройках.
 Фото тоже сохраняются: под снимком появится отдельное сообщение с кнопкой «Опции».
 Аудио отправляется в Groq для распознавания, текст — в OpenAI для выбора проекта и заголовка.
-Оригинал и исходная расшифровка хранятся в твоём архиве. Удаление из архива не удаляет сообщения
-в истории Telegram. Автосинхронизация с другими сервисами пока не подключена."""
+Оригинал и исходная расшифровка хранятся в твоём архиве. Удаление отдельной записи из архива
+не удаляет историю Telegram. «Удалить всё» очищает также темы и известные боту сообщения;
+старые сообщения вне тем могут потребовать ручной очистки в Telegram.
+Автосинхронизация с другими сервисами пока не подключена."""
 
 
-class Bot(AIBotMixin):
+class Bot(CleanupMixin, AIBotMixin):
     def __init__(self, config: Config, store: Store, telegram: Telegram, groq: Groq, router: CodexRouter,
                  assistant=None):
         self.config, self.store = config, store
@@ -96,6 +101,7 @@ class Bot(AIBotMixin):
         self.folder_locks = defaultdict(asyncio.Lock)
         self.export_tasks = set()
         self.init_ai(assistant)
+        self.init_cleanup()
 
     async def start(self):
         me = await self.telegram.call("getMe")
@@ -110,6 +116,7 @@ class Bot(AIBotMixin):
             {"command": "notes", "description": "Последние записи"},
             {"command": "search", "description": "Поиск по записям"},
             {"command": "export", "description": "Выгрузить архив"},
+            {"command": "delete_all", "description": "Удалить всё"},
             {"command": "ai", "description": "Поговорить с ИИ"},
             {"command": "settings", "description": "Настройки"},
             {"command": "newchat", "description": "Новый разговор с ИИ"},
@@ -119,6 +126,7 @@ class Bot(AIBotMixin):
         # Finish physical deletion interrupted by a previous shutdown.
         for note in self.store.all("SELECT * FROM notes WHERE deleted=1"):
             self.archive.delete(note)
+        await self.resume_deletions()
         log.info("started bot_id=%s topics=%s", me["id"], self.topics_enabled)
         try:
             async with asyncio.TaskGroup() as group:
@@ -202,8 +210,8 @@ class Bot(AIBotMixin):
             return
         if message["chat"]["id"] != owner:
             return
-        self.store.ensure_user(owner)
         thread = message.get("message_thread_id")
+        self.cleanup.remember(owner, message.get("message_id"), thread)
         move_callback = callback and callback.get("data", "").startswith(("place:", "move:", "newfor:"))
         if callback and not move_callback:
             await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
@@ -211,6 +219,21 @@ class Bot(AIBotMixin):
             if move_callback:
                 await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
             return
+        job = self.cleanup.job(owner)
+        if owner in self.deleting_owners or job and job["files_pending"]:
+            if owner not in self.deleting_owners and (
+                callback and callback.get("data") == "retrydeleteall"
+                or message.get("text", "").split("@", 1)[0] == "/delete_all"
+            ):
+                return await self.resume_delete_all(owner)
+            return await self.show(owner, "Очистка ещё не завершена. Повтори её перед отправкой новых заметок.",
+                                   keys=keyboard([button("Повторить очистку", "retrydeleteall")]))
+        if not callback and thread and self.store.one(
+            "SELECT 1 FROM deletion_targets WHERE owner=? AND kind='topic' AND identity=?", (owner, thread)
+        ):
+            return await self.show(owner, "Эта тема ожидает удаления. Отправь новые заметки в общий чат.",
+                                   keys=keyboard([button("Повторить очистку Telegram", "retrydeleteall")]))
+        self.store.ensure_user(owner)
         try:
             if callback:
                 result = await self.callback(owner, thread, message["message_id"], callback.get("data", ""))
@@ -286,6 +309,8 @@ class Bot(AIBotMixin):
     async def command(self, owner, thread, command, argument):
         # A new command leaves the previous name/search prompt behind.
         self.store.set_action(owner, None)
+        if command == "/delete_all":
+            return await self.delete_all_menu(owner, thread)
         if command == "/ai":
             return await self.open_ai(owner, thread)
         if command == "/newchat":
@@ -298,6 +323,7 @@ class Bot(AIBotMixin):
                     pass
             return await self.show(owner, HELP, thread, HOME)
         if command == "/cancel":
+            self.delete_confirmations.pop(owner, None)
             return await self.show(owner, "Ввод отменён.", thread, HOME)
         if command == "/folders":
             return await self.show_folders(owner, thread)
@@ -384,6 +410,8 @@ class Bot(AIBotMixin):
         if nav:
             rows.append(nav)
         rows.append([button("＋ Новая папка", "create"), button("🔎 Поиск", "search")])
+        if not note_id:
+            rows.append([button("🗑 Удалить всё", "deleteall")])
         await self.show(owner, "Выбери папку для записи:" if note_id else "Твои проекты:",
                         thread, keyboard(*rows), edit_id)
 
@@ -483,6 +511,8 @@ class Bot(AIBotMixin):
         await self.edit_note_buttons(owner, message_id, keyboard(*rows))
 
     async def callback(self, owner, thread, message_id, data):
+        if await self.cleanup_callback(owner, thread, message_id, data):
+            return
         if await self.ai_callback(owner, thread, message_id, data):
             return
         pieces = data.split(":")
@@ -633,6 +663,9 @@ class Bot(AIBotMixin):
                             [button("⚙️ Формат текста", f"exportsettings:{identity}"), button("← Папки", "folders")]), edit_id)
 
     async def send_export(self, owner, thread, identity, content):
+        job = self.cleanup.job(owner)
+        if owner in self.deleting_owners or job and job["files_pending"]:
+            return
         if self.export_locks[owner].locked():
             return await self.show(owner, "Предыдущий экспорт ещё готовится. Дождись его завершения.", thread)
         async with self.export_locks[owner]:
@@ -863,7 +896,9 @@ class Bot(AIBotMixin):
             if getattr(exc, "reason", None) != "delete_target_missing":
                 log.warning("status cleanup failed note_id=%s error=%s", identity, exc)
                 return
-        self.store.update_note(owner, identity, status_message_id=None)
+        # A full cleanup can finish while this best-effort status deletion is in flight.
+        if self.store.one("SELECT 1 FROM notes WHERE owner=? AND id=? AND deleted=0", (owner, identity)):
+            self.store.update_note(owner, identity, status_message_id=None)
         self.messages.removed(owner, identity, message_id)
 
     async def send_transcript(self, note, thread, reply_to=None, recover_topic=False):

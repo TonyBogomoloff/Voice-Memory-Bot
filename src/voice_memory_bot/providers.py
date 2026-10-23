@@ -40,6 +40,7 @@ class TelegramError(ProviderError):
 
 class Telegram:
     def __init__(self, token: str, client=None):
+        self.on_message = None
         self._base = f"https://api.telegram.org/bot{token}/"
         self._files = f"https://api.telegram.org/file/bot{token}/"
         self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10),
@@ -58,7 +59,13 @@ class Telegram:
         if not isinstance(body, dict) or not body.get("ok"):
             code = body.get("error_code", response.status_code) if isinstance(body, dict) else response.status_code
             raise TelegramError(int(code), method, body.get("description") if isinstance(body, dict) else "")
-        return body["result"]
+        result = body["result"]
+        self.remember_result(result, payload.get("chat_id"), payload.get("message_thread_id"))
+        return result
+
+    def remember_result(self, result, owner, thread=None):
+        if self.on_message and isinstance(result, dict) and result.get("message_id"):
+            self.on_message(owner, result["message_id"], result.get("message_thread_id", thread))
 
     async def text(self, owner, text, thread=None, keyboard=None, reply_to=None):
         return await self.call("sendMessage", chat_id=owner, text=text[:4000],
@@ -82,6 +89,7 @@ class Telegram:
             raise ProviderError("telegram_transport_unknown") from None
         if not isinstance(body, dict) or not body.get("ok"):
             raise ProviderError("telegram_upload_failed")
+        self.remember_result(body["result"], owner, thread)
         return body["result"]
 
     async def download(self, file_id, destination: Path, max_bytes):

@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from .ai_store import migrate_ai
+from .cleanup import migrate_cleanup
 from .config import Limits
 
 
@@ -95,6 +96,7 @@ class Store:
             self.db.execute("UPDATE notes SET transcript_delivery='unknown' WHERE transcript_delivery='sending'")
             self.db.execute("UPDATE updates SET state='pending' WHERE state='processing'")
         migrate_ai(self.db)
+        migrate_cleanup(self.db)
 
     def close(self):
         self.db.close()

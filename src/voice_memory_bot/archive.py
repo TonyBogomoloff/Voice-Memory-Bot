@@ -86,6 +86,13 @@ class Archive:
         if directory.exists():
             shutil.rmtree(directory)
 
+    def delete_all(self, owner):
+        if type(owner) is not int or owner <= 0:
+            raise ValueError("invalid_archive_owner")
+        directory = self.root / str(owner)
+        if directory.exists():
+            shutil.rmtree(directory)
+
     def export(self, notes, folders, output: Path, include_audio: bool, part_bytes: int,
                *, text_format="pdf", audio_only=False, settings=None):
         """One complete history document per folder, plus optional unmodified audio.

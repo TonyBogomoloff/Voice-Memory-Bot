@@ -249,7 +249,11 @@ class FakeTelegram:
         if self.fail_delivery and method.startswith("send"):
             raise ProviderError("telegram_transport_unknown")
         self.message_sequence += 1
-        return {"message_id": self.message_sequence}
+        result = {"message_id": self.message_sequence}
+        if getattr(self, "on_message", None) and method.startswith("send"):
+            self.on_message(kwargs["chat_id"], result["message_id"],
+                            kwargs.get("message_thread_id", kwargs.get("thread")))
+        return result
 
     async def text(self, owner, text, thread=None, keyboard=None, reply_to=None):
         return await self.call("sendMessage", chat_id=owner, text=text, thread=thread, keyboard=keyboard,
