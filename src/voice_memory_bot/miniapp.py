@@ -17,7 +17,7 @@ from urllib.parse import parse_qsl, quote, unquote
 from aiohttp import web
 
 from .providers import ProviderError
-from .routing import fallback_title
+from .web_store import create_text
 
 log = logging.getLogger(__name__)
 ASSETS = Path(__file__).with_name("web")
@@ -141,13 +141,15 @@ class MiniApp:
         })
 
     def application(self):
-        app = web.Application(middlewares=[self.guard], client_max_size=32768)
+        app = web.Application(middlewares=[self.guard], client_max_size=512000)
         app.add_routes([
             web.get("/", self.index), web.get("/app.js", self.asset), web.get("/app.css", self.asset),
             web.get("/healthz", self.health), web.post("/api/session", self.session),
             web.get("/api/folders", self.folders), web.post("/api/folders", self.create_folder),
             web.get("/api/folders/{folder}/notes", self.notes),
             web.put("/api/folders/{folder}/uploads/{key}", self.upload),
+            web.put("/api/folders/{folder}/text/{key}", self.text_note),
+            web.post("/api/notes/{note}/execute", self.execute),
             web.post("/api/notes/{note}/move", self.move), web.post("/api/notes/{note}/retry", self.retry),
             web.get("/api/notes/{note}/media", self.media_url), web.get("/media/{note}", self.media),
         ])
@@ -205,15 +207,53 @@ class MiniApp:
         # Virtual folders need no Telegram topic and are immediately usable in both UIs.
         return web.json_response({"id": folder["id"], "name": folder["name"]}, status=201)
 
-    @staticmethod
-    def public_note(note):
+    def public_note(self, note):
         result = {k: note[k] for k in ("id", "folder_id", "title", "kind", "state", "created_at",
                                       "duration", "audio_bytes", "original_name", "mime_type")}
         result["text"] = note["content"] if note.get("content") is not None else note["transcript"]
         result["has_file"] = bool(note["audio_bytes"])
         result["can_move"] = note["state"] not in {"queued", "processing"}
         result["can_retry"] = note["state"] == "asr_failed" and note.get("origin") == "web" and note["attempts"] < 5
+        result["ai_generated"] = bool(note.get("ai_generated_from"))
+        job = self.bot.ai_state.request(note["owner"], note["id"])
+        result["ai"] = ({k: job[k] for k in ("state", "result_note_id")} if job else None)
+        if job and job["state"] == "failed":
+            result["ai"]["error"] = job["response"]
+        result["can_execute"] = (note["kind"] in {"voice", "audio", "text"} and note["state"] == "ready"
+            and bool((result["text"] or "").strip()) and (not job or job["state"] == "failed"))
         return result
+
+    async def text_note(self, request):
+        owner, folder, key = request[OWNER], request.match_info["folder"], request.match_info["key"]
+        if not re.fullmatch(r"[0-9a-f]{32}", key):
+            raise web.HTTPBadRequest(text="Неверный идентификатор записи.")
+        body = await request.json()
+        try:
+            with self.store.db:
+                note, created = create_text(self.store, owner, folder, body.get("text"), key,
+                                            context=body.get("context_note_id"))
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from None
+        return web.json_response(self.public_note(note), status=201 if created else 200)
+
+    async def execute(self, request):
+        owner, identity = request[OWNER], request.match_info["note"]
+        note = self.store.note(owner, identity)
+        text = note["content"] if note["content"] is not None else note["transcript"]
+        if (note["kind"] not in {"voice", "audio", "text"} or note["state"] != "ready"
+                or not text or not text.strip() or len(text) > 40000):
+            raise web.HTTPConflict(text="Выполнить можно готовый текст или расшифрованное голосовое до 40000 символов.")
+        try:
+            model = self.bot.ai_engine.model(owner)
+            job = self.bot.ai_state.enqueue(owner, identity, "miniapp")
+            if job["state"] == "failed":
+                self.bot.ai_state.update_request(owner, identity, state="queued", response=None, error=None,
+                                                 delivery="pending", model=model)
+            elif not job["model"]:
+                self.bot.ai_state.update_request(owner, identity, model=model)
+        except ValueError as exc:
+            raise web.HTTPConflict(text=str(exc)) from None
+        return web.json_response(self.public_note(self.store.note(owner, identity)), status=202)
 
     async def notes(self, request):
         offset = max(0, min(int(request.query.get("offset", 0)), self.config.limits.max_notes_per_user))
@@ -259,6 +299,9 @@ class MiniApp:
             raise web.HTTPRequestEntityTooLarge(max_size=maximum, actual_size=request.content_length,
                                                 text=f"Файл должен быть не больше {maximum // 1000000} МБ.")
         filename, mime, extension, kind = self.upload_metadata(request)
+        context = request.headers.get("X-Context-Note") or None
+        if context:
+            self.store.note(owner, context)
         staging = self.config.data_dir / "uploads"
         staging.mkdir(exist_ok=True, mode=0o700)
         self.uploading.add(owner)
@@ -282,6 +325,8 @@ class MiniApp:
             # Recheck after streaming: deletion and quota usage may have changed meanwhile.
             self.available(owner)
             self.store.folder(owner, folder)
+            if context:
+                self.store.note(owner, context)
             message_id = -(int(key[:15], 16) + 1)
             try:
                 with self.store.db:
@@ -291,9 +336,9 @@ class MiniApp:
                     if not created:
                         note = None
                         raise web.HTTPConflict(text="Повтори загрузку с новым идентификатором.")
-                    self.store.db.execute("UPDATE notes SET origin='web',original_name=?,mime_type=?,upload_key=?,"
+                    self.store.db.execute("UPDATE notes SET origin='web',original_name=?,mime_type=?,upload_key=?,ai_context=?,"
                         "audio_bytes=?,sha256=?,title=?,delivery='sent',transcript_delivery='sent',routing='manual' "
-                        "WHERE id=? AND owner=?", (filename, mime, key, size, digest.hexdigest(), filename,
+                        "WHERE id=? AND owner=?", (filename, mime, key, context, size, digest.hexdigest(), filename,
                                                   note["id"], owner))
                     note = self.store.note(owner, note["id"])
                     target = self.bot.archive.audio(note)
@@ -406,7 +451,7 @@ async def process_web_note(bot, note):
             if not transcript:
                 raise ProviderError("no_speech")
             bot.store.update_note(owner, identity, transcript=transcript, duration=duration,
-                                  title=fallback_title(transcript))
+                                  title="Голосовое сообщение" if note["kind"] == "voice" else note["original_name"])
         bot.store.update_note(owner, identity, state="ready", error=None, archive_dirty=1,
                               delivery="sent", transcript_delivery="sent")
     except (ProviderError, ValueError, OSError, TimeoutError) as exc:

@@ -54,6 +54,10 @@ def migrate_ai(db):
         CREATE INDEX IF NOT EXISTS ai_request_queue ON ai_requests(state, created_at);
     """)
     with db:
+        columns = {r[1] for r in db.execute("PRAGMA table_info(ai_requests)")}
+        for name in ("input_text", "result_note_id"):
+            if name not in columns:
+                db.execute(f"ALTER TABLE ai_requests ADD COLUMN {name} TEXT")
         db.execute("UPDATE ai_requests SET state='queued' WHERE state='running'")
         db.execute("UPDATE ai_requests SET delivery='unknown' WHERE delivery='sending'")
 
@@ -153,8 +157,23 @@ class AIStore:
             self.db.execute("INSERT INTO ai_requests(note_id,owner,conversation_id,trigger,thread_id,reply_to,created_at) "
                             "VALUES (?,?,?,?,?,?,?)", (note_id, owner, conversation, trigger, thread, reply_to,
                                                       note["created_at"]))
-            self.db.execute("UPDATE notes SET entry_type='ai' WHERE id=? AND owner=?", (note_id, owner))
+            if trigger == "miniapp":
+                text = note["content"] if note["content"] is not None else note["transcript"]
+                self.db.execute("UPDATE ai_requests SET input_text=? WHERE note_id=?", (text, note_id))
+            else:
+                self.db.execute("UPDATE notes SET entry_type='ai' WHERE id=? AND owner=?", (note_id, owner))
         return self.request(owner, note_id)
+
+    def finish_reply(self, owner, note_id, text):
+        from .web_store import result_text
+        request = self.request(owner, note_id)
+        with self.db:
+            if request["trigger"] == "miniapp" and not request["result_note_id"]:
+                result = result_text(self.store, self.store.note(owner, note_id), text)
+                self.db.execute("UPDATE ai_requests SET result_note_id=? WHERE owner=? AND note_id=?",
+                                (result["id"], owner, note_id))
+            self.db.execute("UPDATE ai_requests SET response=?,state='ready',error=NULL WHERE owner=? AND note_id=?",
+                            (text, owner, note_id))
 
     def claim(self):
         row = self.store.one("""SELECT a.* FROM ai_requests a JOIN notes n ON n.id=a.note_id
@@ -225,7 +244,8 @@ class AIStore:
             self.store.folder(owner, folder_id)
         if action == "search_notes":
             matches = self.store.notes(owner, folder_id, query=command["query"] or None, limit=9)
-            return {"notes": [{"id": n["id"], "title": n["title"], "folder_id": n["folder_id"],
+            return {"notes": [{"id": n["id"], "title": n["title"], "folder_id": n["folder_id"], "kind": n["kind"],
+                               "created_at": n["created_at"],
                                "excerpt": (n["content"] if n["content"] is not None else n["transcript"] or "")[:250]}
                               for n in matches[:8]], "has_more": len(matches) > 8}
         if action == "read_note":
@@ -233,7 +253,7 @@ class AIStore:
             if note["entry_type"] != "note":
                 raise ValueError("Это сообщение диалога, а не заметка")
             content = note["content"] if note["content"] is not None else note["transcript"] or ""
-            return {"id": note["id"], "title": note["title"], "folder_id": note["folder_id"],
+            return {"id": note["id"], "title": note["title"], "folder_id": note["folder_id"], "kind": note["kind"],
                     "revision": note["revision"], "content": content[:40000], "truncated": len(content) > 40000}
         if action not in {"create_note", "update_note"}:
             raise ValueError("Неизвестная операция")
@@ -255,6 +275,9 @@ class AIStore:
                 created_at,state,transcript,title,routing,delivery,transcript_delivery,archive_dirty)
                 VALUES (?,?,?,?,?,'text','txt',?,'ready',?,?,'manual','sent','sent',1)""",
                 (identity, owner, folder_id, folder_id, message, time.time(), content, title))
+            if self.request(owner, request_id)["trigger"] == "miniapp":
+                self.db.execute("UPDATE notes SET origin='web',ai_generated_from=? WHERE id=?",
+                                (request_id, identity))
             return {"ok": True, "action": action, "id": identity, "title": title, "revision": 0}
         note = self.store.note(owner, command["note_id"])
         if self.is_busy(note["id"]):

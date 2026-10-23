@@ -370,7 +370,7 @@ class Store:
                             "content=NULL,requested_folder=NULL,error=NULL WHERE owner=? AND id=?", (owner, identity))
             self.db.execute("DELETE FROM note_revisions WHERE note_id=?", (identity,))
             self.db.execute("DELETE FROM ai_steps WHERE note_id=?", (identity,))
-            self.db.execute("UPDATE ai_requests SET state='deleted',response=NULL,error=NULL WHERE note_id=?", (identity,))
+            self.db.execute("UPDATE ai_requests SET state='deleted',response=NULL,input_text=NULL,error=NULL WHERE note_id=?", (identity,))
 
     def ingest(self, updates, allowed):
         with self.db:

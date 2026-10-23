@@ -24,7 +24,7 @@ class AIBotMixin:
         self.ai_state = AIStore(self.store, is_busy=lambda identity: self.note_locks[identity].locked())
         self.ai_models = tuple(dict.fromkeys((self.config.llm.model, *self.config.assistant_models)))
         self.assistant = assistant or CodexAssistant(self.config.llm)
-        self.ai_engine = AssistantEngine(self.ai_state, self.assistant, self.config.llm.model, self.ai_models)
+        self.ai_engine = AssistantEngine(self.ai_state, self.assistant, self.config.llm.model, self.ai_models, self.archive)
         self.ai_delivery_locks = defaultdict(asyncio.Lock)
 
     def check_ai_capacity(self, owner, folder_id, message):
@@ -220,6 +220,9 @@ class AIBotMixin:
         owner, identity = request["owner"], request["note_id"]
         current = self.ai_state.request(owner, identity)
         if not current or (not force and current["delivery"] != "pending") or not current["response"]:
+            return
+        if current["trigger"] == "miniapp" and not force:
+            self.ai_state.update_request(owner, identity, delivery="sent")
             return
         conversation = self.ai_state.conversation(owner, current["conversation_id"])
         rows, changes = [], []

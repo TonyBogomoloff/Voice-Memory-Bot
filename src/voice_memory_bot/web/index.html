@@ -25,6 +25,10 @@
       <section id="notes" aria-label="Записи" aria-live="polite"></section>
       <button id="more" class="secondary more" hidden>Показать ещё</button>
       <div class="composer">
+        <form id="text-form" class="text-composer">
+          <div id="context" class="context" hidden><span id="context-label"></span><button id="clear-context" type="button" class="icon-button" aria-label="Убрать выбранную запись">×</button></div>
+          <div class="text-row"><textarea id="note-input" rows="2" maxlength="40000" aria-label="Текстовая заметка" placeholder="Напиши заметку…"></textarea><button id="send-text" class="primary" type="submit" aria-label="Сохранить текстовую заметку" disabled>↑</button></div>
+        </form>
         <div id="record-status" class="record-status" hidden><span class="record-dot"></span><span id="record-time">00:00</span><span>Идёт запись</span><button id="cancel-record" class="text-button">Отменить</button></div>
         <div id="upload-status" class="upload-status" hidden><span id="upload-label"></span><progress id="progress" max="100" value="0"></progress><button id="retry-upload" class="text-button" hidden>Повторить</button><button id="dismiss-upload" class="text-button" hidden>Убрать</button></div>
         <div class="composer-actions"><button id="attach" class="secondary"><span aria-hidden="true">＋</span> Прикрепить</button><button id="record" class="primary"><span aria-hidden="true">●</span> Записать голос</button></div>

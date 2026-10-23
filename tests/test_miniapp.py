@@ -251,3 +251,110 @@ def test_real_server_startup_never_logs_media_tickets(tmp_path, store, caplog):
         finally:
             await mini.close()
     asyncio.run(run())
+
+
+def test_text_execution_keeps_source_and_commits_one_reply(tmp_path, store):
+    from test_ai import Assistant, step
+
+    async def run():
+        async with client_for(tmp_path, store) as (bot, mini, client):
+            provider = Assistant()
+            bot.ai_engine.provider = provider
+            folder = store.ensure_user(1)
+            source = await client.put(f"/api/folders/{folder}/text/{'b' * 32}", json={"text": "Итоги: встреча в среду."})
+            original = await source.json()
+            assert source.status == 201 and original["can_execute"]
+            # Include a long Cyrillic body: the limit is characters, not JSON bytes.
+            text = "Сделай summary выбранной заметки. " + "Дополнение. " * 3000
+            response = await client.put(f"/api/folders/{folder}/text/{'c' * 32}",
+                                        json={"text": text, "context_note_id": original["id"]})
+            assert response.status == 201
+            command = await response.json()
+            duplicate = await client.put(f"/api/folders/{folder}/text/{'c' * 32}", json={"text": text})
+            assert (await duplicate.json())["id"] == command["id"]
+            provider.responses = [step("read_note", note_id=original["id"]), step(message="Встреча — в среду.")]
+            for _ in range(2):
+                response = await client.post(f"/api/notes/{command['id']}/execute")
+                assert response.status == 202 and (await response.json())["ai"]["state"] == "queued"
+            assert store.one("SELECT count(*) AS n FROM ai_requests")["n"] == 1
+            await bot.process_ai(bot.ai_state.claim())
+            request = bot.ai_state.request(1, command["id"])
+            assert request["state"] == "ready" and request["delivery"] == "sent"
+            assert provider.calls[0][0]["context_note_id"] == original["id"]
+            assert provider.calls[1][0]["steps"][0]["result"]["content"] == original["text"]
+            assert store.note(1, command["id"])["entry_type"] == "note"
+            assert store.note(1, command["id"])["transcript"] == text
+            reply = store.note(1, request["result_note_id"])
+            assert reply["folder_id"] == folder and reply["transcript"] == "Встреча — в среду."
+            assert reply["origin"] == "web" and mini.public_note(reply)["ai_generated"]
+            await client.post(f"/api/notes/{command['id']}/execute")
+            await bot.deliver_ai(request)
+            assert len(store.notes(1)) == 3 and not bot.telegram.sent and bot.groq.calls == 0
+            client.session.headers["Authorization"] = "Bearer " + mini.sign("session", 2)
+            assert (await client.post(f"/api/notes/{command['id']}/execute")).status == 400
+            second_folder = store.ensure_user(2)
+            assert (await client.put(f"/api/folders/{second_folder}/text/{'d' * 32}",
+                                    json={"text": "Команда", "context_note_id": original["id"]})).status == 400
+            store.delete(1, command["id"])
+            assert store.one("SELECT input_text FROM ai_requests WHERE note_id=?", (command["id"],))["input_text"] is None
+    asyncio.run(run())
+
+
+def test_failed_execution_retries_without_duplicate_created_note(tmp_path, store):
+    from test_ai import Assistant, step
+
+    from voice_memory_bot.providers import ProviderError
+
+    async def run():
+        async with client_for(tmp_path, store) as (bot, mini, client):
+            provider = Assistant()
+            bot.ai_engine.provider = provider
+            folder = store.ensure_user(1)
+            response = await client.put(f"/api/folders/{folder}/text/{'e' * 32}", json={"text": "Исходный текст"})
+            identity = (await response.json())["id"]
+            with store.db:
+                store.db.execute("UPDATE notes SET content=? WHERE id=?", ("Создай заметку о встрече", identity))
+            provider.responses = [step("create_note", folder_id=folder, title="Встреча", content="В среду"),
+                                  ProviderError("temporary"), step(message="Создана заметка о встрече.")]
+            await client.post(f"/api/notes/{identity}/execute")
+            await bot.process_ai(bot.ai_state.claim())
+            assert bot.ai_state.request(1, identity)["state"] == "failed"
+            assert provider.calls[0][0]["request"] == "Создай заметку о встрече"
+            assert len(store.notes(1)) == 2
+            assert (await client.post(f"/api/notes/{identity}/execute")).status == 202
+            await bot.process_ai(bot.ai_state.claim())
+            assert bot.ai_state.request(1, identity)["state"] == "ready"
+            assert len(store.notes(1)) == 3
+            assert sum(n["title"] == "Встреча" for n in store.notes(1)) == 1
+            assert not bot.telegram.sent
+    asyncio.run(run())
+
+
+def test_image_is_attached_only_after_owner_scoped_read(tmp_path, store):
+    from test_ai import Assistant, step
+
+    class Vision(Assistant):
+        async def respond(self, payload, model, images=()):
+            if images:
+                self.seen = [path.read_bytes() for path in images]
+            return await super().respond(payload, model)
+
+    async def run():
+        async with client_for(tmp_path, store) as (bot, mini, client):
+            provider = Vision()
+            bot.ai_engine.provider = provider
+            folder = store.ensure_user(1)
+            response = await upload(client, folder, b"synthetic image", "photo.png", "image/png")
+            photo = await response.json()
+            await bot.process(store.claim_note())
+            response = await client.put(f"/api/folders/{folder}/text/{'f' * 32}",
+                                        json={"text": "Что на фото?", "context_note_id": photo["id"]})
+            identity = (await response.json())["id"]
+            provider.responses = [step("read_note", note_id=photo["id"]), step(message="Описание картинки")]
+            await client.post(f"/api/notes/{identity}/execute")
+            await bot.process_ai(bot.ai_state.claim())
+            assert provider.seen == [b"synthetic image"]
+            assert bot.ai_state.request(1, identity)["state"] == "ready"
+            bot.ai_state.set_settings(1, notes_access="none")
+            assert bot.ai_engine.images(bot.ai_state.request(1, identity), bot.ai_state.steps(1, identity)) == []
+    asyncio.run(run())

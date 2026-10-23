@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const tg = window.Telegram?.WebApp;
 const state = {token: "", folders: [], folder: null, notes: [], more: false, loading: false,
-  maxBytes: 20000000, maxSeconds: 1800, upload: false, failedUpload: null, recorder: null, starting: false};
+  maxBytes: 20000000, maxSeconds: 1800, upload: false, failedUpload: null, recorder: null, starting: false, drafts: {}, saving: false};
 const types = {voice: ["≋", "Голосовая запись"], audio: ["♫", "Аудио"], photo: ["▧", "Фото"],
   video: ["▷", "Видео"], document: ["▤", "Файл"], text: ["≡", "Заметка"]};
 let toastTimer, pollTimer;
@@ -28,7 +28,7 @@ function toast(message) {
 function fail(error) { toast(error.message || "Не удалось выполнить действие."); }
 function closingGuard() {
   if (!tg?.isVersionAtLeast?.("6.2")) return;
-  if (state.upload || state.recorder || state.starting || state.failedUpload) tg.enableClosingConfirmation();
+  if (state.upload || state.recorder || state.starting || state.failedUpload || state.saving || hasDraft()) tg.enableClosingConfirmation();
   else tg.disableClosingConfirmation();
 }
 async function api(path, options = {}) {
@@ -95,7 +95,7 @@ async function loadFolders() {
 }
 async function openFolder(id) {
   if (state.recorder || state.starting) { toast("Сначала заверши или отмени запись."); return; }
-  state.folder = id; state.notes = []; state.more = false;
+  state.folder = id; state.notes = []; state.more = false; renderDraft();
   $("app").classList.add("in-folder");
   $("notes").replaceChildren(element("p", "empty", "Загружаем записи…"));
   renderFolders();
@@ -145,76 +145,104 @@ function renderNotes() {
   }
   $("more").hidden = !state.more;
 }
-function closeMenus() { document.querySelectorAll(".note-menu").forEach(el => el.hidden = true); }
+function closeMenus() { document.querySelectorAll(".note-menu").forEach(el => { el.hidden = true; el.parentElement.querySelector(".icon-button").setAttribute("aria-expanded", "false"); }); }
 function noteCard(note) {
-  const card = element("article", "note"); card.dataset.id = note.id;
+  const card = element("article", "note" + (note.ai_generated ? " ai-note" : "")); card.dataset.id = note.id;
   card.draggable = note.can_move;
   card.addEventListener("dragstart", e => {
-    if (e.target.closest("button,audio,video,details,a")) { e.preventDefault(); return; }
+    if (e.target.closest("button,audio,video,details,a,img")) { e.preventDefault(); return; }
     e.dataTransfer.setData("application/x-audio-note", note.id); e.dataTransfer.effectAllowed = "move";
     card.classList.add("dragging");
   });
   card.addEventListener("dragend", () => card.classList.remove("dragging"));
   const type = types[note.kind] || types.document;
+  const heading = note.ai_generated ? "Ответ ИИ" : ["voice", "audio", "text"].includes(note.kind) ? type[1] : note.original_name || type[1];
   const head = element("div", "note-head"), info = element("div", "note-info");
-  info.append(element("div", "note-title", note.title || type[1]));
+  info.append(element("div", "note-title", heading));
   const date = new Intl.DateTimeFormat("ru", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"}).format(new Date(note.created_at * 1000));
-  info.append(element("div", "note-date", [type[1], date, note.audio_bytes ? bytes(note.audio_bytes) : ""].filter(Boolean).join(" · ")));
+  info.append(element("div", "note-date", [date, note.audio_bytes ? bytes(note.audio_bytes) : ""].filter(Boolean).join(" · ")));
   const actions = element("div", "note-actions"), menu = element("div", "note-menu"); menu.hidden = true;
   const more = action("⋯", "icon-button", e => {
     e.stopPropagation(); const open = menu.hidden; closeMenus(); menu.hidden = !open;
     more.setAttribute("aria-expanded", String(open));
   });
-  more.setAttribute("aria-label", `Опции: ${note.title}`); more.setAttribute("aria-expanded", "false");
+  more.setAttribute("aria-label", `Опции: ${heading}`); more.setAttribute("aria-expanded", "false");
+  if (["voice", "audio", "text"].includes(note.kind)) {
+    const execute = action(note.ai?.state === "failed" ? "Повторить выполнение" : "Выполнить", "", async e => {
+      e.stopPropagation(); e.currentTarget.disabled = true;
+      try { await post(`/api/notes/${note.id}/execute`); closeMenus(); toast("Выполняю. Ответ появится в этой папке."); await loadNotes(); }
+      catch (err) { fail(err); e.target.disabled = !note.can_execute; }
+    });
+    execute.disabled = !note.can_execute; menu.append(execute);
+  }
+  menu.append(action("Использовать в команде", "", () => {
+    draft().context = {id: note.id, title: heading}; closeMenus(); renderDraft(); $("note-input").focus(); closingGuard();
+  }));
   const move = action("Переместить", "", () => showMove(note)); move.disabled = !note.can_move;
   menu.append(move); actions.append(more, menu);
-  head.append(element("div", "type-icon", type[0]), info, actions); card.append(head);
-  if (note.text) {
-    card.append(element("div", "note-text", note.text.length > 420 ? note.text.slice(0, 420) + "…" : note.text));
-    if (note.text.length > 420) {
-      const details = element("details"); details.append(element("summary", "", "Весь текст"), element("div", "note-text", note.text)); card.append(details);
-    }
-  }
+  head.append(element("div", "type-icon", note.ai_generated ? "✦" : type[0]), info, actions); card.append(head);
   if (note.has_file) {
-    const label = note.kind === "photo" ? "▧ Открыть фото" : note.kind === "video" ? "▷ Смотреть видео" :
-      ["voice", "audio"].includes(note.kind) ? "▷ Прослушать" : "↓ Скачать файл";
-    const media = action(label, "media-button", async () => {
-      media.disabled = true;
-      try { await openMedia(note, card, media); } catch (err) { fail(err); media.disabled = false; }
+    const media = element("div", "inline-media"); card.append(media);
+    if (["voice", "audio", "video", "photo"].includes(note.kind)) inlineMedia(note, media).catch(error => {
+      media.replaceChildren(action("Загрузить файл", "media-button", () => inlineMedia(note, media).catch(fail)));
+      media.append(element("p", "error", error.message));
     });
-    card.append(media);
+    else media.append(action("↓ Скачать файл", "media-button", () => downloadNote(note).catch(fail)));
   }
+  if (note.text) card.append(element("div", "note-text", note.text));
   if (["queued", "processing", "asr_failed"].includes(note.state)) {
     const error = note.state === "asr_failed";
-    const text = error ? "Не удалось обработать. Оригинал сохранён." :
-      ["voice", "audio"].includes(note.kind) ? "Расшифровываем голосовую запись…" : "Сохраняем файл…";
-    const status = element("div", "note-status" + (error ? " error" : ""), text);
+    const status = element("div", "note-status" + (error ? " error" : ""), error ? "Не удалось обработать. Оригинал сохранён." :
+      ["voice", "audio"].includes(note.kind) ? "Расшифровываем голосовое…" : "Сохраняем файл…");
     if (note.can_retry) status.append(action("Повторить", "text-button", async e => {
       e.currentTarget.disabled = true;
       try { await post(`/api/notes/${note.id}/retry`); await loadNotes(); } catch (err) { fail(err); e.target.disabled = false; }
     }));
     card.append(status);
   }
+  if (note.ai) {
+    const running = ["queued", "running"].includes(note.ai.state), failed = note.ai.state === "failed";
+    card.append(element("div", "ai-status" + (running ? " running" : failed ? " error" : ""),
+      running ? "✦ ИИ выполняет команду…" : failed ? note.ai.error || "Не удалось выполнить. Можно повторить через ⋯." : "✓ Выполнено · ответ добавлен"));
+  }
   return card;
 }
-async function openMedia(note, card, button) {
-  const {url} = await api(`/api/notes/${note.id}/media`);
-  if (["voice", "audio", "video"].includes(note.kind)) {
-    const player = element(note.kind === "video" ? "video" : "audio", "player");
-    player.controls = true; player.preload = "metadata"; player.src = url; player.playsInline = true;
-    player.addEventListener("error", () => { toast("Этот формат не воспроизводится здесь. Можно скачать оригинал."); });
-    button.replaceWith(player);
-    card.append(action("Скачать оригинал", "text-button", () => downloadNote(note).catch(fail)));
-    player.play().catch(() => {});
-  } else if (note.kind === "photo") {
-    $("preview-title").textContent = note.original_name || "Фото";
-    const img = element("img", "photo-preview"); img.src = url; img.alt = note.title;
-    const link = action("Скачать оригинал", "text-button", () => downloadNote(note).catch(fail));
-    $("preview-content").replaceChildren(img, link); $("preview-dialog").showModal(); button.disabled = false;
+async function inlineMedia(note, host) {
+  let media;
+  if (note.kind === "photo") {
+    media = element("img", "note-photo"); media.alt = note.original_name || "Фото"; media.loading = "lazy";
   } else {
-    await downloadNote(note, url);
-    button.disabled = false;
+    media = element(note.kind === "video" ? "video" : "audio", "player");
+    media.controls = true; media.preload = "none"; media.playsInline = true;
+    media.setAttribute("aria-label", note.kind === "video" ? "Видео" : "Прослушать голосовое");
   }
+  host.replaceChildren(media);
+  const {url} = await api(`/api/notes/${note.id}/media`);
+  media.src = url;
+  if (note.kind === "photo") {
+    media.tabIndex = 0; media.setAttribute("role", "button");
+    const preview = () => {
+      $("preview-title").textContent = note.original_name || "Фото";
+      const img = element("img", "photo-preview"); img.src = url; img.alt = media.alt;
+      $("preview-content").replaceChildren(img, action("Скачать оригинал", "text-button", () => downloadNote(note).catch(fail)));
+      $("preview-dialog").showModal();
+    };
+    media.onclick = preview;
+    media.onkeydown = e => { if (["Enter", " "].includes(e.key)) { e.preventDefault(); preview(); } };
+  } else {
+    media.addEventListener("error", () => toast("Этот формат не воспроизводится здесь. Можно скачать оригинал."));
+    host.append(action("Скачать оригинал", "text-button", () => downloadNote(note).catch(fail)));
+  }
+}
+function draft() {
+  return state.drafts[state.folder] ||= {text: "", key: crypto.randomUUID().replaceAll("-", ""), context: null};
+}
+function hasDraft() { return Object.values(state.drafts).some(d => d.text.trim()); }
+function renderDraft() {
+  const current = draft(); $("note-input").value = current.text;
+  $("context").hidden = !current.context; $("context-label").textContent = current.context ? "К записи: " + current.context.title : "";
+  $("note-input").placeholder = current.context ? "Что сделать с этой записью?" : "Напиши заметку…";
+  busyButtons();
 }
 async function downloadNote(note, url) {
   if (!url) ({url} = await api(`/api/notes/${note.id}/media`));
@@ -245,8 +273,10 @@ async function moveNote(id, folder) {
   toast("Запись перемещена"); await loadFolders(); await loadNotes();
 }
 function busyButtons() {
-  $("attach").disabled = state.upload || !!state.recorder || state.starting || !!state.failedUpload;
-  $("record").disabled = state.upload || state.starting || !!state.failedUpload;
+  $("note-input").disabled = state.saving;
+  $("send-text").disabled = state.saving || !!state.recorder || state.starting || !draft().text.trim();
+  $("attach").disabled = state.saving || state.upload || !!state.recorder || state.starting || !!state.failedUpload;
+  $("record").disabled = state.saving || state.upload || state.starting || !!state.failedUpload;
   closingGuard();
 }
 function sendFile(job) {
@@ -255,6 +285,7 @@ function sendFile(job) {
     xhr.timeout = 130000; xhr.setRequestHeader("Authorization", `Bearer ${state.token}`);
     xhr.setRequestHeader("X-File-Name", encodeURIComponent(job.file.name));
     xhr.setRequestHeader("Content-Type", job.file.type || "application/octet-stream");
+    if (job.context) xhr.setRequestHeader("X-Context-Note", job.context);
     if (job.voice) xhr.setRequestHeader("X-Media-Kind", "voice");
     xhr.upload.onprogress = e => { if (e.lengthComputable) $("progress").value = e.loaded / e.total * 100; };
     xhr.onload = () => {
@@ -291,7 +322,7 @@ async function uploadJobs(jobs) {
   toast("Сохранено в папке"); await loadFolders(); await loadNotes();
 }
 function job(file, voice = false, folder = state.folder) {
-  return {file, voice, folder, key: crypto.randomUUID().replaceAll("-", "")};
+  return {file, voice, folder, context: voice ? state.drafts[folder]?.context?.id : null, key: crypto.randomUUID().replaceAll("-", "")};
 }
 async function record() {
   if (state.recorder) { state.recorder.stop(); return; }
@@ -334,6 +365,20 @@ async function record() {
     toast("Нет доступа к микрофону. Разреши его в настройках Telegram или прикрепи аудиофайл.");
   }
 }
+$("note-input").oninput = () => {
+  const current = draft(); current.text = $("note-input").value; current.key = crypto.randomUUID().replaceAll("-", ""); busyButtons();
+};
+$("clear-context").onclick = () => { draft().context = null; renderDraft(); };
+$("text-form").onsubmit = async e => {
+  e.preventDefault(); if (state.saving || !draft().text.trim()) return;
+  const folder = state.folder, current = draft(); state.saving = true; busyButtons();
+  try {
+    await api(`/api/folders/${folder}/text/${current.key}`, {method: "PUT", body: JSON.stringify({text: current.text, context_note_id: current.context?.id})});
+    delete state.drafts[folder]; if (state.folder === folder) renderDraft();
+    await loadFolders(); await loadNotes(); toast("Заметка сохранена. Чтобы обратиться к ИИ: ⋯ → Выполнить.");
+  } catch (error) { fail(error); } finally { state.saving = false; busyButtons(); }
+};
+$("note-input").onkeydown = e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("text-form").requestSubmit(); } };
 $("new-folder").onclick = () => { $("folder-error").textContent = ""; $("folder-input").value = ""; $("folder-dialog").showModal(); $("folder-input").focus(); };
 $("folder-form").onsubmit = async e => {
   e.preventDefault(); const submit = e.submitter; submit.disabled = true;
@@ -351,7 +396,7 @@ $("file-input").onchange = e => { const files = [...e.target.files]; e.target.va
 $("record").onclick = () => record().catch(fail);
 $("retry-upload").onclick = () => { if (state.failedUpload) uploadJobs(state.failedUpload).catch(fail); };
 $("dismiss-upload").onclick = () => { state.failedUpload = null; $("upload-status").hidden = true; busyButtons(); };
-window.addEventListener("beforeunload", e => { if (state.recorder || state.upload || state.failedUpload) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("beforeunload", e => { if (state.recorder || state.upload || state.failedUpload || state.saving || hasDraft()) { e.preventDefault(); e.returnValue = ""; } });
 
 async function poll() {
   try {
@@ -370,7 +415,7 @@ async function init() {
     const result = await post("/api/session", {init_data: tg.initData});
     state.token = result.token; state.maxBytes = result.max_file_bytes; state.maxSeconds = result.max_audio_seconds;
     $("limit").textContent = `Файл до ${bytes(state.maxBytes)} · голос до ${Math.floor(state.maxSeconds / 60)} мин · автоматическая расшифровка`;
-    await loadFolders(); await loadNotes(); $("gate").hidden = true; $("app").hidden = false;
+    await loadFolders(); await loadNotes(); renderDraft(); $("gate").hidden = true; $("app").hidden = false;
     pollTimer = setTimeout(poll, 5000);
   } catch (error) { $("gate-text").textContent = error.message; }
 }
