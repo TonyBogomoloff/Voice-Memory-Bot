@@ -16,6 +16,7 @@ from .cleanup import CleanupMixin
 from .config import Config
 from .message_store import MessageStore
 from .providers import CodexRouter, Groq, ProviderError, Telegram
+from .recording import RecordingMixin, record_button
 from .routing import fallback_title
 from .store import Store, clean_name
 
@@ -58,7 +59,8 @@ HOME = keyboard([button("📁 Папки", "folders"), button("🔎 Поиск",
 
 HELP = """🎙 Voice Memory Bot
 
-Выбери папку в списке Telegram и отправь голосовое, текст или фото.
+Выбери папку в списке Telegram, нажми «Записать сюда» и отправь голосовое, текст или фото.
+Бот сам включит ответ в выбранную папку; не отменяй его перед отправкой.
 Расшифровка появится рядом с голосовым. Папка Telegram и папка архива — одно и то же.
 Слова в записи не меняют папку. Для переноса нажми «Опции» → «Переместить».
 
@@ -87,7 +89,7 @@ HELP = """🎙 Voice Memory Bot
 Автосинхронизация с другими сервисами пока не подключена."""
 
 
-class Bot(CleanupMixin, AIBotMixin):
+class Bot(RecordingMixin, CleanupMixin, AIBotMixin):
     def __init__(self, config: Config, store: Store, telegram: Telegram, groq: Groq, router: CodexRouter,
                  assistant=None):
         self.config, self.store = config, store
@@ -102,6 +104,7 @@ class Bot(CleanupMixin, AIBotMixin):
         self.export_tasks = set()
         self.init_ai(assistant)
         self.init_cleanup()
+        self.init_recording()
 
     async def start(self):
         me = await self.telegram.call("getMe")
@@ -127,6 +130,7 @@ class Bot(CleanupMixin, AIBotMixin):
         for note in self.store.all("SELECT * FROM notes WHERE deleted=1"):
             self.archive.delete(note)
         await self.resume_deletions()
+        await self.install_record_panels()
         log.info("started bot_id=%s topics=%s", me["id"], self.topics_enabled)
         try:
             async with asyncio.TaskGroup() as group:
@@ -210,6 +214,9 @@ class Bot(CleanupMixin, AIBotMixin):
             return
         if message["chat"]["id"] != owner:
             return
+        recording = None if callback else self.recording_reply(owner, message)
+        if recording and message.get("message_thread_id") is None:
+            message = {**message, "message_thread_id": recording["thread_id"]}
         thread = message.get("message_thread_id")
         self.cleanup.remember(owner, message.get("message_id"), thread)
         move_callback = callback and callback.get("data", "").startswith(("place:", "move:", "newfor:"))
@@ -245,6 +252,7 @@ class Bot(CleanupMixin, AIBotMixin):
                 if thread and not self.store.folder_for_thread(owner, thread):
                     name = topic.get("name") or f"Папка {thread}"
                     self.store.import_topic(owner, name, thread)
+                await self.ensure_record_panel(owner, thread)
                 return
             if "forum_topic_edited" in message:
                 folder = self.store.folder_for_thread(owner, thread)
@@ -253,12 +261,15 @@ class Bot(CleanupMixin, AIBotMixin):
                     self.store.rename_folder(owner, folder["id"], name)
                 elif thread and name:
                     self.store.import_topic(owner, name, thread)
+                await self.ensure_record_panel(owner, thread)
                 return
             text = message.get("text", "").strip()
             if text.startswith("/"):
                 command, _, argument = text.partition(" ")
                 return await self.command(owner, thread, command.split("@")[0].lower(), argument.strip())
-            if text and self.store.action(owner):
+            if recording and recording["purpose"] == "name":
+                return await self.name_recording_folder(owner, recording, message)
+            if text and self.store.action(owner) and not recording:
                 return await self.input_action(owner, thread, text)
             # Commands and prompt answers must not import their source thread as a folder.
             folder = self.source_folder(owner, thread, message)["id"]
@@ -348,9 +359,13 @@ class Bot(CleanupMixin, AIBotMixin):
                     await self.ensure_topic(owner, self.store.ensure_user(owner))
                 except ProviderError:
                     pass
+            if command == "/start":
+                await self.install_record_panels(owner)
             return await self.show(owner, HELP, thread, HOME)
         if command == "/cancel":
             self.delete_confirmations.pop(owner, None)
+            with self.store.db:
+                self.store.db.execute("UPDATE record_prompts SET purpose='done' WHERE owner=?", (owner,))
             return await self.show(owner, "Ввод отменён.", thread, HOME)
         if command == "/folders":
             return await self.show_folders(owner, thread)
@@ -413,6 +428,7 @@ class Bot(CleanupMixin, AIBotMixin):
         folder = self.store.create_folder(owner, name)
         try:
             await self.ensure_topic(owner, folder["id"])
+            await self.ensure_record_panel(owner, self.store.folder(owner, folder["id"])["thread_id"])
         except ProviderError:
             await self.show(owner, "Папка создана в архиве. Тему Telegram пока создать не удалось.", thread)
         if note_id:
@@ -457,6 +473,8 @@ class Bot(CleanupMixin, AIBotMixin):
             nav.append(button("→", f"folder:{identity}:{page + 1}"))
         if nav:
             rows.append(nav)
+        if folder["thread_id"]:
+            rows.append([record_button(folder["thread_id"])])
         rows.append([button("📦 Экспорт", f"export:{identity}")])
         if not folder["is_inbox"]:
             rows[-1].append(button("Переименовать", f"rename:{identity}"))
@@ -543,6 +561,8 @@ class Bot(CleanupMixin, AIBotMixin):
             return
         pieces = data.split(":")
         action, identity = pieces[0], pieces[1] if len(pieces) > 1 else None
+        if action == "record":
+            return await self.start_recording(owner, int(identity))
         if action == "help":
             return await self.show(owner, HELP, thread, HOME, message_id)
         if action in {"create", "search"}:
@@ -595,7 +615,7 @@ class Bot(CleanupMixin, AIBotMixin):
             rows.append([button("← Назад", f"collapse:{identity}")])
             return await self.edit_note_buttons(owner, message_id, keyboard(*rows))
         if action == "collapse":
-            return await self.edit_note_buttons(owner, message_id, options_keyboard(identity))
+            return await self.edit_note_buttons(owner, message_id, self.note_controls(note, thread))
         if action == "pick":
             return await self.choose_note_folder(owner, identity, message_id, int(pieces[2]))
         if action == "place":
@@ -864,7 +884,7 @@ class Bot(CleanupMixin, AIBotMixin):
             return
         edit_id = note["transcript_message_id"] if note["transcript_delivery"] == "sent" else None
         text = "Не удалось сохранить фото. Попробуй ещё раз." if error else "📷 Фото"
-        keys = keyboard([button("Повторить", f"retry:{note['id']}")]) if error else options_keyboard(note["id"])
+        keys = keyboard([button("Повторить", f"retry:{note['id']}")]) if error else self.note_controls(note, note["source_thread"])
         self.store.update_note(note["owner"], note["id"], transcript_delivery="sending")
         try:
             if edit_id:
@@ -928,7 +948,7 @@ class Bot(CleanupMixin, AIBotMixin):
         content = note["content"] if note.get("content") is not None else note["transcript"]
         chunks = list(transcript_chunks(content))
         for index, text in enumerate(chunks):
-            keys = options_keyboard(note["id"]) if index == len(chunks) - 1 else None
+            keys = self.note_controls(note, thread) if index == len(chunks) - 1 else None
             try:
                 response = await self.telegram.text(note["owner"], text, thread, keys, reply_to=reply_to)
             except ProviderError as exc:

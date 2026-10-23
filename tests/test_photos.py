@@ -45,6 +45,7 @@ def test_photo_controls_archive_and_move_remove_only_source_messages(tmp_path, s
         method, controls = bot.telegram.sent[0]
         assert method == "sendMessage" and controls["thread"] == 100
         assert controls["keyboard"]["inline_keyboard"] == [[{
+            "text": "✍️ Записать сюда", "callback_data": "record:100"}, {
             "text": "Опции", "callback_data": f"options:{note['id']}"}]]
         await bot.process(store.claim_note())
         note = store.note(1, note["id"])
@@ -105,7 +106,7 @@ def test_photo_failed_download_can_retry_without_losing_controls(tmp_path, store
         assert saved["state"] == "ready" and saved["delivery"] == "sent"
         assert saved["status_message_id"] is None
         assert bot.messages.in_thread(1, note["id"], 100) == [10, saved["transcript_message_id"]]
-        assert bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"][0][0]["text"] == "Опции"
+        assert bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"][0][-1]["text"] == "Опции"
     asyncio.run(run())
 
 

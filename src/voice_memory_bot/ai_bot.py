@@ -98,6 +98,7 @@ class AIBotMixin:
             folder = self.store.create_folder(owner, name)
             self.ai_state.mode(owner, folder["id"], "chat")
         target = await self.ensure_topic(owner, folder["id"])
+        await self.ensure_record_panel(owner, target)
         conversation = self.ai_state.active(owner, folder["id"])
         response = await self.show(owner, f"🤖 Папка «{folder['name']}» — диалог с ИИ.\n"
                                    "Отправь текст или голосовое. Можно попросить найти, создать или изменить заметку.",

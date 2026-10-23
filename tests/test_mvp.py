@@ -319,7 +319,7 @@ def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_pat
         payload = bot.telegram.sent[-1][1]
         assert payload["text"] == saved["transcript"] and payload["thread"] == 100
         assert payload["reply_to"] is None
-        assert payload["keyboard"]["inline_keyboard"][0][0]["text"] == "Опции"
+        assert payload["keyboard"]["inline_keyboard"][0][-1]["text"] == "Опции"
     asyncio.run(run())
 
 def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store):
@@ -338,7 +338,7 @@ def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store):
         assert all(len(p["text"].encode("utf-16-le")) <= 7800 for p in messages)
         assert all(p["reply_to"] is None for p in messages)
         assert all(p["keyboard"] is None for p in messages[:-1])
-        assert messages[-1]["keyboard"]["inline_keyboard"][0][0]["text"] == "Опции"
+        assert messages[-1]["keyboard"]["inline_keyboard"][0][-1]["text"] == "Опции"
         assert all(method != "sendDocument" for method, _ in bot.telegram.sent)
     asyncio.run(run())
 
