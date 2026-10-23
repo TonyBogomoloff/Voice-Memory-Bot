@@ -94,8 +94,10 @@ async def generate_image(config, prompt, model, job, maximum, source=None):
         (work / "schema.json").write_text(json.dumps(IMAGE_SCHEMA), encoding="utf-8")
         (work / "instructions.txt").write_text(IMAGE_INSTRUCTIONS, encoding="utf-8")
         args = provider.command(work)
-        args[-1:-1] = ["-c", "features.image_generation=true", "-c", "features.code_mode_host=true",
-                       "-c", "features.use_legacy_landlock=true"]
+        # Explicitly authorized image executor. The CLI's filesystem helper cannot re-exec
+        # itself under this server's systemd isolation. Text calls keep their read-only sandbox.
+        args[args.index("--sandbox") + 1] = "danger-full-access"
+        args[-1:-1] = ["-c", "features.image_generation=true", "-c", "features.code_mode_host=true"]
         payload = {"prompt": prompt}
         if source:
             reference = work / "reference.png"

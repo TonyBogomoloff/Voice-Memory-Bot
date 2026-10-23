@@ -270,7 +270,8 @@ class AIBotMixin:
             text = (str(exc) if isinstance(exc, ValueError) else
                     "ИИ сейчас не смог завершить запрос. Текст сохранён; можно повторить.")
             self.ai_state.update_request(owner, identity, state="failed", error=type(exc).__name__, response=text)
-            log.warning("AI request failed request=%s type=%s", identity, type(exc).__name__)
+            log.warning("AI request failed request=%s type=%s code=%s", identity, type(exc).__name__,
+                        str(exc) if isinstance(exc, ProviderError) else "-")
         self.flush_ai_archive()
         await self.deliver_ai(self.ai_state.request(owner, identity))
 

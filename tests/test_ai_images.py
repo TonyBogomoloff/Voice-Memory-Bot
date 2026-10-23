@@ -76,7 +76,8 @@ def test_create_and_edit_save_media_once_keep_source_and_export(bot, image_cli, 
         assert bot.archive.audio(source).read_bytes() == before
         assert bot.ai_state.request(1, note["id"])["state"] == "ready" and not bot.telegram.sent
         assert bot.assistant.calls[1][0]["image_generation"]
-        assert "--image" in image_cli[0][0] and "features.use_legacy_landlock=true" in image_cli[0][0]
+        assert "--image" in image_cli[0][0]
+        assert image_cli[0][0][image_cli[0][0].index("--sandbox") + 1] == "danger-full-access"
         assert "features.shell_tool=false" in image_cli[0][0] and image_cli[0][1]["timeout"] == 600
         assert not image_cli[0][2].exists()  # CLI scratch, login link and reference are removed.
         await bot.ai_engine.run(request)
