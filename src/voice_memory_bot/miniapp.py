@@ -217,6 +217,10 @@ class MiniApp:
         result["ai_generated"] = bool(note.get("ai_generated_from"))
         job = self.bot.ai_state.request(note["owner"], note["id"])
         result["ai"] = ({k: job[k] for k in ("state", "result_note_id")} if job else None)
+        if job and job["state"] == "running":
+            steps = self.bot.ai_state.steps(note["owner"], note["id"])
+            if steps and steps[-1]["command"]["action"] in {"create_image", "edit_image"} and not steps[-1]["result"]:
+                result["ai"]["phase"] = "image"
         if job and job["state"] == "failed":
             result["ai"]["error"] = job["response"]
         result["can_execute"] = (note["kind"] in {"voice", "audio", "text"} and note["state"] == "ready"

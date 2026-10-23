@@ -203,7 +203,8 @@ function noteCard(note) {
   if (note.ai) {
     const running = ["queued", "running"].includes(note.ai.state), failed = note.ai.state === "failed";
     card.append(element("div", "ai-status" + (running ? " running" : failed ? " error" : ""),
-      running ? "✦ ИИ выполняет команду…" : failed ? note.ai.error || "Не удалось выполнить. Можно повторить через ⋯." : "✓ Выполнено · ответ добавлен"));
+      running ? (note.ai.phase === "image" ? "✦ Готовлю изображение… Это может занять несколько минут." : "✦ ИИ выполняет команду…") :
+      failed ? note.ai.error || "Не удалось выполнить. Можно повторить через ⋯." : "✓ Выполнено · ответ добавлен"));
   }
   return card;
 }

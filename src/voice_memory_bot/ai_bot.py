@@ -227,7 +227,7 @@ class AIBotMixin:
         conversation = self.ai_state.conversation(owner, current["conversation_id"])
         rows, changes = [], []
         for receipt in self.ai_engine.receipts(owner, identity):
-            label = "Создано" if receipt["action"] == "create_note" else "Изменено"
+            label = "Изменено" if receipt["action"] == "update_note" else "Создано"
             changes.append(f"{label}: {receipt['title']}")
             rows.append([key(receipt["title"][:45], f"note:{receipt['id']}")])
             if receipt["action"] == "update_note":
@@ -263,7 +263,7 @@ class AIBotMixin:
         owner, identity = request["owner"], request["note_id"]
         try:
             await self.ai_engine.run(request)
-        except (ProviderError, ValueError) as exc:
+        except (ProviderError, ValueError, OSError) as exc:
             note = self.store.one("SELECT deleted FROM notes WHERE id=? AND owner=?", (identity, owner))
             if not note or note["deleted"]:
                 return
