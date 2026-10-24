@@ -27,6 +27,11 @@ def migrate_ai(db):
             id TEXT PRIMARY KEY, owner INTEGER NOT NULL REFERENCES users(id),
             folder_id TEXT NOT NULL REFERENCES folders(id), created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS ai_note_context (
+            conversation_id TEXT PRIMARY KEY REFERENCES ai_conversations(id),
+            owner INTEGER NOT NULL, note_id TEXT NOT NULL REFERENCES notes(id),
+            title TEXT NOT NULL, content TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS ai_active (
             owner INTEGER NOT NULL, folder_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
             PRIMARY KEY(owner, folder_id)
@@ -119,6 +124,24 @@ class AIStore:
                 self.db.execute("INSERT INTO ai_active VALUES (?,?,?) ON CONFLICT(owner,folder_id) "
                                 "DO UPDATE SET conversation_id=excluded.conversation_id", (owner, folder_id, identity))
         return identity
+
+    def note_context(self, owner, conversation):
+        self.conversation(owner, conversation)
+        return self.store.one("SELECT * FROM ai_note_context WHERE owner=? AND conversation_id=?",
+                              (owner, conversation))
+
+    def start_note_conversation(self, owner, note_id):
+        note = self.store.note(owner, note_id)
+        content = note["content"] if note["content"] is not None else note["transcript"]
+        if not content:
+            raise ValueError("Дождись текста записи, затем обратись к ИИ")
+        if len(content) > 40000:
+            raise ValueError("Текст слишком длинный для ИИ. Раздели запись на части до 40000 символов")
+        conversation = self.new_conversation(owner, note["folder_id"], active=False)
+        with self.db:
+            self.db.execute("INSERT INTO ai_note_context VALUES (?,?,?,?,?)",
+                            (conversation, owner, note_id, note["title"] or "Запись", content))
+        return conversation
 
     def active(self, owner, folder_id):
         self.store.folder(owner, folder_id)
@@ -229,6 +252,10 @@ class AIStore:
             try:
                 if access == "none" or (command["action"] in {"create_note", "update_note"} and access != "write"):
                     raise ValueError("Доступ к заметкам выключен в настройках ИИ")
+                context = self.note_context(owner, self.request(owner, note_id)["conversation_id"])
+                if context and (command["action"] not in {"read_note", "update_note"}
+                                or command["note_id"] != context["note_id"]):
+                    raise ValueError("Этот диалог относится только к выбранной записи")
                 result = self._operation(owner, note_id, command)
             except ValueError as exc:
                 result = {"error": str(exc)}

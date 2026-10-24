@@ -291,7 +291,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             if text.startswith("/"):
                 command, _, argument = text.partition(" ")
                 return await self.command(owner, thread, command.split("@")[0].lower(), argument.strip())
-            if self.store.action(owner):
+            if self.store.action(owner) and not self.store.action(owner).startswith("ai_note:"):
                 if text:
                     return await self.input_action(owner, thread, text)
                 if self.store.action(owner) == "create" and any(message.get(k) for k in ("voice", "audio", "video_note")):
@@ -338,7 +338,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                         return await self.photo_controls(note)
                     if note["kind"] == "text":
                         self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
-                        self.capture_ai_input(note, message)
+                        self.capture_ai_input(note, message, scoped=True)
                         await self.deliver_transcript(note)
                         return
                     status = "Конвертирую в текст…" if note["file_id"] and note['kind'] not in {"file", "video"} else "Сохраняю…"
@@ -347,7 +347,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                     self.store.update_note(owner, note["id"], status_message_id=response["message_id"])
                     note = self.adopt_source_topic(note, response)
                     if note['kind'] not in {'file', 'video'}:
-                        self.capture_ai_input(note, {**message, "message_thread_id": note["source_thread"]})
+                        self.capture_ai_input(note, {**message, "message_thread_id": note["source_thread"]}, scoped=True)
                     log.info("note accepted note_id=%s source_thread=%s", note["id"], note["source_thread"])
         except ValueError as exc:
             if move_callback:

@@ -30,15 +30,24 @@ class AIBotMixin:
     def check_ai_capacity(self, owner, folder_id, message):
         folder = self.store.folder(owner, folder_id)
         reply = self.ai_state.reply_conversation(owner, message.get("reply_to_message", {}).get("message_id"))
-        if folder["mode"] == "chat" or reply:
+        action = self.store.action(owner) or ""
+        if action.startswith("ai_note:"):
+            context = self.ai_state.note_context(owner, action.split(":", 1)[1])
+            self.store.note(owner, context["note_id"])
+        if folder["mode"] == "chat" or reply or (self.store.action(owner) or "").startswith("ai_note:"):
             pending = self.store.one("SELECT count(*) AS n FROM ai_requests WHERE owner=? "
                                      "AND state IN ('queued','running')", (owner,))["n"]
             if pending >= self.store.limits.max_pending_per_user:
                 raise ValueError("Очередь ИИ заполнена; дождись предыдущих ответов")
 
-    def capture_ai_input(self, note, message):
+    def capture_ai_input(self, note, message, *, scoped=False):
         owner = note["owner"]
         conversation = self.ai_state.reply_conversation(owner, message.get("reply_to_message", {}).get("message_id"))
+        action = self.store.action(owner) or ""
+        if scoped and action.startswith("ai_note:"):
+            conversation = action.split(":", 1)[1]
+            context = self.ai_state.note_context(owner, conversation)
+            self.store.note(owner, context["note_id"])
         if conversation or note["input_mode"] == "chat":
             trigger = "reply" if conversation else "folder"
             if not conversation and not self.ai_state.request(owner, note["id"]):
@@ -108,6 +117,7 @@ class AIBotMixin:
         self.ai_state.link(owner, response["message_id"], conversation)
 
     async def new_ai_conversation(self, owner, thread, folder_id):
+        self.store.set_action(owner, None)
         folder = self.store.folder(owner, folder_id)
         conversation = self.ai_state.new_conversation(owner, folder_id)
         text = "Новый разговор. Предыдущая история сохранена."
@@ -173,14 +183,18 @@ class AIBotMixin:
         elif action == "ailist":
             await self.ai_history(owner, thread, identity, int(parts[2]), message_id)
         elif action == "aiask":
-            note = self.store.note(owner, identity)
-            request = self.ai_state.enqueue(owner, identity, "button", thread, message_id)
-            if note["state"] == "ready":
-                # A request may be queued while classification is still finishing; route_ai rechecks it.
-                self.store.update_note(owner, identity, routing="ai", requested_folder=None)
-            await self.edit_note_buttons(owner, message_id, keys(
-                [key("Открыть ответ ИИ" if request["response"] else "Запрос отправлен ИИ", f"aiview:{identity}")],
-                [key("← Опции", f"options:{identity}")]))
+            conversation = self.ai_state.start_note_conversation(owner, identity)
+            self.store.set_action(owner, f"ai_note:{conversation}")
+            response = await self.show(owner,
+                "Хорошо, отправь инструкцию для ИИ.\n"
+                "Следующие сообщения будут относиться только к выбранной записи.\n"
+                "Чтобы вернуться к заметкам, нажми «Завершить» или выбери папку.", thread,
+                keys([key("Завершить", f"aiend:{conversation}")]))
+            self.ai_state.link(owner, response["message_id"], conversation)
+        elif action == "aiend":
+            if self.store.action(owner) == f"ai_note:{identity}":
+                self.store.set_action(owner, None)
+            await self.edit_note_buttons(owner, message_id, keys())
         elif action in {"aiview", "airetry"}:
             request = self.ai_state.request(owner, identity)
             if not request:
@@ -235,7 +249,10 @@ class AIBotMixin:
                 rows[-1].append(key("Отменить правку", f"aiundo:{receipt['id']}:{receipt['revision']}"))
         if current["state"] == "failed":
             rows.append([key("Повторить запрос", f"airetry:{identity}")])
-        rows.append([key("Исходное сообщение", f"note:{identity}")])
+        context = self.ai_state.note_context(owner, current["conversation_id"])
+        if context:
+            rows.append([key("Завершить", f"aiend:{current['conversation_id']}")])
+        rows.append([key("Исходное сообщение", f"note:{context['note_id'] if context else identity}")])
         rows.append([key("Новый разговор", f"ainew:{conversation['folder_id']}"), key("Настройки ИИ", "aisettings")])
         text = "🤖 " + current["response"]
         if changes:

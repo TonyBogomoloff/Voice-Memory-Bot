@@ -131,16 +131,36 @@ def test_name_toggle_edges_false_mention_and_nonsticky_reply(bot):
     asyncio.run(run())
 
 
-def test_button_converts_existing_voice_without_repeating_asr_or_request(bot):
+def test_button_waits_for_instruction_and_keeps_selected_note_context(bot):
     async def run():
         note = await receive(bot, voice=True)
-        await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
-        await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
-        assert bot.store.notes(1) == []
-        assert bot.store.one("SELECT count(*) AS n FROM ai_requests")["n"] == 1
-        await bot.process_ai(bot.ai_state.claim())
-        await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
-        assert bot.ai_state.claim() is None and bot.groq.calls == 1 and len(bot.assistant.calls) == 1
+        original = bot.store.note(1, note['id'])
+        await bot.callback(1, None, note['transcript_message_id'], f"aiask:{note['id']}")
+        assert bot.ai_state.claim() is None
+        assert bot.store.note(1, note['id']) == original
+        assert 'отправь инструкцию' in bot.telegram.sent[-1][1]['text']
+        first = await receive(bot, 'Сделай краткое резюме', 201)
+        request = bot.ai_state.claim()
+        assert request['note_id'] == first['id']
+        await bot.process_ai(request)
+        payload = bot.assistant.calls[-1][0]
+        assert payload['request'] == 'Сделай краткое резюме'
+        assert payload['selected_note']['id'] == original['id']
+        assert payload['selected_note']['content'] == original['transcript']
+        bot.init_ai(bot.assistant)
+        await receive(bot, 'Теперь переведи на английский', 202)
+        continuation = bot.ai_state.claim()
+        assert continuation['conversation_id'] == request['conversation_id']
+        await bot.process_ai(continuation)
+        assert bot.assistant.calls[-1][0]['selected_note'] == payload['selected_note']
+        assert bot.assistant.calls[-1][0]['history'][0]['user'] == 'Сделай краткое резюме'
+        assert bot.store.note(1, note['id']) == original
+        assert bot.groq.calls == 1
+        await bot.callback(1, None, 500, f"aiend:{request['conversation_id']}")
+        plain = await receive(bot, 'Обычная заметка', 203)
+        assert plain['entry_type'] == 'note' and bot.ai_state.claim() is None
+        bot.cleanup.begin(1)
+        assert bot.store.all('SELECT * FROM ai_note_context WHERE owner=1') == []
     asyncio.run(run())
 
 
@@ -159,8 +179,8 @@ def test_button_during_address_detection_uses_the_same_note(bot):
         await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
         finish.set()
         processed = await task
-        assert processed["routing"] == "ai" and processed["state"] == "ready"
-        assert bot.ai_state.claim()["note_id"] == note["id"]
+        assert processed["routing"] == "manual" and processed["state"] == "ready"
+        assert bot.ai_state.claim() is None
     asyncio.run(run())
 
 
@@ -356,4 +376,31 @@ def test_ai_queue_rejects_new_input_before_archiving_and_context_is_bounded(bot)
         payload = bot.ai_engine.payload(bot.ai_state.request(1, second["id"]), [])
         assert payload["history_truncated"] and payload["history"] == []
         assert len(bot.ai_state.history(1, bot.ai_state.request(1, first["id"])["conversation_id"])) == 1
+    asyncio.run(run())
+
+
+def test_selected_note_scope_isolated_and_cleared_by_folder_switch(bot):
+    async def run():
+        first = await receive(bot, 'Исходник A', 301)
+        second = await receive(bot, 'Исходник B', 302)
+        await bot.callback(1, None, first['transcript_message_id'], f"aiask:{first['id']}")
+        instruction = await receive(bot, 'Сократи', 303)
+        request = bot.ai_state.claim()
+        denied = tool(bot, instruction['id'], step('read_note', note_id=second['id']))
+        assert 'error' in denied
+        bot.ai_state.set_settings(1, notes_access='none')
+        payload = bot.ai_engine.payload(request, [])
+        assert payload['request'] == 'Сократи'
+        assert payload['selected_note']['content'] == 'Исходник A'
+        await bot.process_ai(request)
+        await bot.show_notes(1, None, first['folder_id'])
+        assert bot.store.action(1) is None
+        plain = await receive(bot, 'Обычная заметка', 304)
+        assert plain['entry_type'] == 'note'
+        await bot.callback(1, None, second['transcript_message_id'], f"aiask:{second['id']}")
+        await receive(bot, 'Переведи', 305)
+        next_request = bot.ai_state.claim()
+        payload = bot.ai_engine.payload(next_request, [])
+        assert payload['selected_note']['content'] == 'Исходник B'
+        assert payload['history'] == []
     asyncio.run(run())

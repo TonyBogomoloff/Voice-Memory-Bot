@@ -102,7 +102,7 @@ class CleanupStore:
             for table in ("record_prompts", "record_panels", "note_moves", "note_messages", "folder_name_inputs", "folder_options"):
                 if table in tables:
                     self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
-            for table in ("ai_requests", "ai_links", "ai_active", "ai_conversations", "notes", "folders", "implicit_topics",
+            for table in ("ai_requests", "ai_links", "ai_note_context", "ai_active", "ai_conversations", "notes", "folders", "implicit_topics",
                           "telegram_messages"):
                 self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
             if self.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='folder_views'"):
