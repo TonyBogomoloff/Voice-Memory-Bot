@@ -24,14 +24,39 @@ class FolderMenuMixin:
     def note_controls(self, note, thread):
         return {"inline_keyboard": [[{"text": "Опции", "callback_data": f"options:{note['id']}"}]]}
 
+    def folder_keyboard_pages(self, owner):
+        pinned = self.store.pinned_folders(owner)
+        pinned_ids = {folder["id"] for folder in pinned}
+        others = [folder for folder in self.store.folders(owner) if folder["id"] not in pinned_ids]
+        # Keep pinned shortcuts on their own first page, including intentional empty slots.
+        return ([pinned] if pinned else []) + [others[i:i + 4] for i in range(0, len(others), 4)] or [[]]
+
     def folder_keyboard(self, owner):
         active = self.store.current_folder(owner)
+        pages = self.folder_keyboard_pages(owner)
+        page = min(max(self.folder_pages.get(owner, 0), 0), len(pages) - 1)
+        self.folder_pages[owner] = page
         buttons = [{"text": ("✓ " if folder["id"] == active else "") + f"📌 {folder['name']}"}
-                   for folder in self.store.pinned_folders(owner)]
-        return {"keyboard": [buttons[i:i + 2] for i in range(0, len(buttons), 2)] + [
-                    [{"text": "📂 Все папки"}, {"text": "☰ Меню"}]],
+                   for folder in pages[page]]
+        rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+        if len(pages) > 1:
+            while len(rows) < 2:
+                rows.append([])
+            if page > 0:
+                rows[1].insert(0, {"text": "⬅️"})
+            if page < len(pages) - 1:
+                rows[1].append({"text": "➡️"})
+        return {"keyboard": rows + [[{"text": "📂 Все папки"}, {"text": "☰ Меню"}]],
                 "resize_keyboard": True, "is_persistent": True,
-                "input_field_placeholder": "Голосовое, текст или фото в выбранную папку"}
+                "input_field_placeholder": "Голосовое, кружок, текст или фото"}
+
+    async def turn_folder_page(self, owner, thread, text):
+        pages = self.folder_keyboard_pages(owner)
+        page = min(self.folder_pages.get(owner, 0), len(pages) - 1)
+        self.folder_pages[owner] = min(max(page + (1 if text == "➡️" else -1), 0), len(pages) - 1)
+        self.store.set_action(owner, None)
+        self.folder_delete_confirmations.pop(owner, None)
+        await self.refresh_folder_keyboard(owner, thread, force=True)
 
     @staticmethod
     def is_folder_button(text):
@@ -40,7 +65,7 @@ class FolderMenuMixin:
     async def select_folder_button(self, owner, thread, text):
         # Reply keyboards send text. Use full names, never truncated labels or a reused slot number.
         # Stale or unpinned names refresh navigation instead of becoming notes.
-        for folder in self.store.pinned_folders(owner):
+        for folder in self.store.folders(owner):
             if text in {prefix + folder["name"] for prefix in FOLDER_PREFIXES}:
                 self.store.select(owner, folder["id"])
                 self.store.set_action(owner, None)
@@ -68,7 +93,7 @@ class FolderMenuMixin:
     async def show_home(self, owner, thread=None):
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
-        hint = "Переключай папки внизу. Остальные — в «Все папки», действия — в «Меню»."
+        hint = "Переключай папки внизу. Стрелки листают страницы, действия — в «Меню»."
         if self.config.web_url:
             hint += "\nMini App: /app"
         await self.refresh_folder_keyboard(owner, thread, force=True, notice=hint)

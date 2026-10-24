@@ -152,3 +152,38 @@ def test_menu_keeps_all_actions_and_long_folder_names_are_distinct(bot):
         assert hidden["name"] in str(bot.telegram.sent[-1])
         assert bot.store.notes(1) == []
     asyncio.run(run())
+
+
+def test_pages_reach_every_folder_and_arrows_never_become_notes(bot):
+    async def run():
+        for n in range(10):
+            bot.store.create_folder(1, f"Проект {n}")
+        await receive(bot, "/start")
+        initial = bot.store.current_folder(1)
+        seen = set()
+        for page in range(3):
+            keys = reply_keyboard(bot)["keyboard"]
+            folder_labels = [b["text"] for row in keys for b in row if "📌 " in b["text"]]
+            assert len(folder_labels) <= 4
+            seen.update(label.removeprefix("✓ ").removeprefix("📌 ") for label in folder_labels)
+            if page < 2:
+                assert keys[1][-1]["text"] == "➡️"
+                await receive(bot, "➡️", 10 + page)
+        assert seen == {f["name"] for f in bot.store.folders(1)}
+        assert "➡️" not in labels(bot)
+        assert bot.store.current_folder(1) == initial
+        target = next(f for f in bot.store.folders(1) if "📌 " + f["name"] in labels(bot))
+        await receive(bot, "📌 " + target["name"], 20)
+        assert bot.store.current_folder(1) == target["id"]
+        await receive(bot, "⬅️", 21)
+        assert bot.folder_pages[1] == 1
+        # Deleting folders clamps a stale final page; another owner is independent.
+        bot.folder_pages[1] = 99
+        for f in list(bot.store.folders(1)):
+            if not f["is_inbox"]:
+                bot.store.delete_folder(1, f["id"])
+        await receive(bot, "➡️", 22)
+        assert bot.folder_pages[1] == 0
+        assert bot.store.notes(1) == []
+        assert bot.store.all("SELECT * FROM ai_requests") == []
+    asyncio.run(run())

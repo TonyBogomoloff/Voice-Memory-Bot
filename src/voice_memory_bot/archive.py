@@ -18,7 +18,7 @@ def is_audio(note):
 
 
 def media_label(note):
-    return "Исходное аудио" if is_audio(note) else {"photo": "Фото", "video": "Видео"}.get(note["kind"], "Файл")
+    return "Исходное аудио" if is_audio(note) else {"photo": "Фото", "video": "Видео", "video_note": "Видеокружок"}.get(note["kind"], "Файл")
 
 
 def atomic_write(path: Path, text: str):
@@ -141,7 +141,7 @@ class Archive:
                     raise ValueError("archive_audio_missing")
                 date = datetime.fromtimestamp(note["created_at"], UTC).strftime("%Y-%m-%d_%H-%M-%S")
                 media_dir = ("photos" if note["kind"] == "photo" else "audio" if is_audio(note)
-                             else "videos" if note["kind"] == "video" else "files")
+                             else "videos" if note["kind"] in {"video", "video_note"} else "files")
                 audio_names[note["id"]] = f"{media_dir}/{date}_{safe_component(note['title'])}_{note['id']}.{note['extension']}"
                 audio_paths[note["id"]] = original
         metadata = {

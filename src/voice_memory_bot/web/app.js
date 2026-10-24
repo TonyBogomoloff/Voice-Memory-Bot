@@ -4,7 +4,7 @@ const tg = window.Telegram?.WebApp;
 const state = {token: "", folders: [], folder: null, notes: [], more: false, loading: false,
   maxBytes: 20000000, maxSeconds: 1800, upload: false, failedUpload: null, recorder: null, starting: false, drafts: {}, saving: false};
 const types = {voice: ["≋", "Голосовая запись"], audio: ["♫", "Аудио"], photo: ["▧", "Фото"],
-  video: ["▷", "Видео"], document: ["▤", "Файл"], text: ["≡", "Заметка"]};
+  video_note: ["▷", "Видеокружок"], video: ["▷", "Видео"], document: ["▤", "Файл"], text: ["≡", "Заметка"]};
 let toastTimer, pollTimer;
 
 function element(tag, className, text) {
@@ -156,7 +156,7 @@ function noteCard(note) {
   });
   card.addEventListener("dragend", () => card.classList.remove("dragging"));
   const type = types[note.kind] || types.document;
-  const heading = note.ai_generated ? "Ответ ИИ" : ["voice", "audio", "text"].includes(note.kind) ? type[1] : note.original_name || type[1];
+  const heading = note.ai_generated ? "Ответ ИИ" : ["voice", "video_note", "audio", "text"].includes(note.kind) ? type[1] : note.original_name || type[1];
   const head = element("div", "note-head"), info = element("div", "note-info");
   info.append(element("div", "note-title", heading));
   const date = new Intl.DateTimeFormat("ru", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"}).format(new Date(note.created_at * 1000));
@@ -167,7 +167,7 @@ function noteCard(note) {
     more.setAttribute("aria-expanded", String(open));
   });
   more.setAttribute("aria-label", `Опции: ${heading}`); more.setAttribute("aria-expanded", "false");
-  if (["voice", "audio", "text"].includes(note.kind)) {
+  if (["voice", "video_note", "audio", "text"].includes(note.kind)) {
     const execute = action(note.ai?.state === "failed" ? "Повторить выполнение" : "Выполнить", "", async e => {
       e.stopPropagation(); e.currentTarget.disabled = true;
       try { await post(`/api/notes/${note.id}/execute`); closeMenus(); toast("Выполняю. Ответ появится в этой папке."); await loadNotes(); }
@@ -183,7 +183,7 @@ function noteCard(note) {
   head.append(element("div", "type-icon", note.ai_generated ? "✦" : type[0]), info, actions); card.append(head);
   if (note.has_file) {
     const media = element("div", "inline-media"); card.append(media);
-    if (["voice", "audio", "video", "photo"].includes(note.kind)) inlineMedia(note, media).catch(error => {
+    if (["voice", "video_note", "audio", "video", "photo"].includes(note.kind)) inlineMedia(note, media).catch(error => {
       media.replaceChildren(action("Загрузить файл", "media-button", () => inlineMedia(note, media).catch(fail)));
       media.append(element("p", "error", error.message));
     });
@@ -193,7 +193,7 @@ function noteCard(note) {
   if (["queued", "processing", "asr_failed"].includes(note.state)) {
     const error = note.state === "asr_failed";
     const status = element("div", "note-status" + (error ? " error" : ""), error ? "Не удалось обработать. Оригинал сохранён." :
-      ["voice", "audio"].includes(note.kind) ? "Расшифровываем голосовое…" : "Сохраняем файл…");
+      ["voice", "video_note", "audio"].includes(note.kind) ? "Расшифровываем голосовое…" : "Сохраняем файл…");
     if (note.can_retry) status.append(action("Повторить", "text-button", async e => {
       e.currentTarget.disabled = true;
       try { await post(`/api/notes/${note.id}/retry`); await loadNotes(); } catch (err) { fail(err); e.target.disabled = false; }
@@ -213,9 +213,9 @@ async function inlineMedia(note, host) {
   if (note.kind === "photo") {
     media = element("img", "note-photo"); media.alt = note.original_name || "Фото"; media.loading = "lazy";
   } else {
-    media = element(note.kind === "video" ? "video" : "audio", "player");
+    media = element(["video", "video_note"].includes(note.kind) ? "video" : "audio", "player");
     media.controls = true; media.preload = "none"; media.playsInline = true;
-    media.setAttribute("aria-label", note.kind === "video" ? "Видео" : "Прослушать голосовое");
+    media.setAttribute("aria-label", ["video", "video_note"].includes(note.kind) ? "Видео" : "Прослушать голосовое");
   }
   host.replaceChildren(media);
   const {url} = await api(`/api/notes/${note.id}/media`);

@@ -306,3 +306,6 @@ PYTHONPATH=src .venv/bin/python scripts/check_assistant.py --live
 [Groq Speech to Text](https://console.groq.com/docs/speech-to-text),
 [Codex non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode),
 [Codex authentication](https://learn.chatgpt.com/docs/auth).
+
+Видеокружки Telegram автоматически расшифровываются как голосовые; оригинальный MP4 сохраняется в архиве.
+Нижняя клавиатура показывает до четырёх папок: закреплённые на первой странице, остальные — по стрелкам ⬅️ / ➡️.

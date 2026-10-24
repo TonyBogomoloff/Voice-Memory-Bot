@@ -223,7 +223,7 @@ class MiniApp:
                 result["ai"]["phase"] = "image"
         if job and job["state"] == "failed":
             result["ai"]["error"] = job["response"]
-        result["can_execute"] = (note["kind"] in {"voice", "audio", "text"} and note["state"] == "ready"
+        result["can_execute"] = (note["kind"] in {"voice", "video_note", "audio", "text"} and note["state"] == "ready"
             and bool((result["text"] or "").strip()) and (not job or job["state"] == "failed"))
         return result
 
@@ -244,7 +244,7 @@ class MiniApp:
         owner, identity = request[OWNER], request.match_info["note"]
         note = self.store.note(owner, identity)
         text = note["content"] if note["content"] is not None else note["transcript"]
-        if (note["kind"] not in {"voice", "audio", "text"} or note["state"] != "ready"
+        if (note["kind"] not in {"voice", "video_note", "audio", "text"} or note["state"] != "ready"
                 or not text or not text.strip() or len(text) > 40000):
             raise web.HTTPConflict(text="Выполнить можно готовый текст или расшифрованное голосовое до 40000 символов.")
         try:
@@ -405,7 +405,7 @@ class MiniApp:
         path = self.bot.archive.audio(note)
         if not note["audio_bytes"] or not path.is_file():
             raise web.HTTPNotFound(text="Файл пока недоступен.")
-        mime = note["mime_type"] or ({"photo": "image/jpeg", "voice": "audio/ogg"}.get(note["kind"]))
+        mime = note["mime_type"] or ({"photo": "image/jpeg", "voice": "audio/ogg", "video_note": "video/mp4"}.get(note["kind"]))
         if not mime:
             mime = {"mp3": "audio/mpeg", "wav": "audio/wav", "m4a": "audio/mp4",
                     "webm": "audio/webm", "flac": "audio/flac", "ogg": "audio/ogg"}.get(note["extension"])

@@ -54,7 +54,7 @@ HELP = """🎙 Voice Memory Bot
 
 Выбери папку на нижней клавиатуре или через «📂 Все папки».
 Новые голосовые, тексты и фото сохраняются туда. Активная папка отмечена ✓.
-Внизу помещаются до 4 закреплённых папок. Закрепить или убрать папку можно в её карточке.
+Внизу — до 4 папок на странице. Стрелки листают страницы; закреплённые папки идут первыми.
 «☰ Меню» открывает записи, создание папки, поиск, ИИ, экспорт и настройки.
 Выбор и закрепления запоминаются. Без выбора записи попадают во «Входящие».
 Внутри папки можно изменить название, посмотреть записи, скачать архив или удалить папку.
@@ -77,7 +77,7 @@ HELP = """🎙 Voice Memory Bot
 /cancel — отменить ввод названия или поиск
 
 В карточке записи доступны текст, исходное аудио, перенос и удаление.
-Голосовые сразу расшифровываются в текст. Под расшифровкой: «Опции» → «Переместить» / «Обратиться к ИИ».
+Голосовые и видеокружки сразу расшифровываются в текст. Под расшифровкой: «Опции» → «Переместить» / «Обратиться к ИИ».
 В папке с режимом «Диалог с ИИ» все сообщения идут помощнику. Ответ на реплику ИИ продолжает разговор.
 Обращение по имени в начале или конце можно включить в настройках. По умолчанию оно выключено.
 ИИ умеет искать, создавать и менять заметки; исходная расшифровка сохраняется, правку можно отменить.
@@ -105,6 +105,7 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
         self.init_cleanup()
         self.folder_delete_confirmations = {}
         self.folder_keyboards = {}
+        self.folder_pages = {}
         self.web = None
 
     async def start(self):
@@ -257,6 +258,8 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
             if "forum_topic_created" in message or "forum_topic_edited" in message:
                 return
             text = message.get("text", "").strip()
+            if text in {"⬅️", "➡️"}:
+                return await self.turn_folder_page(owner, thread, text)
             if text in MENU_COMMANDS:
                 return await self.command(owner, thread, MENU_COMMANDS[text], "")
             if self.is_folder_button(text):
@@ -275,11 +278,11 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
             if text:
                 note, created = self.store.add_note(owner, folder, message, "text", transcript=text)
             else:
-                kind = next((k for k in ("voice", "audio", "document", "photo") if message.get(k)), None)
+                kind = next((k for k in ("voice", "video_note", "audio", "document", "photo") if message.get(k)), None)
                 if kind is None:
-                    return await self.show(owner, "Пришли голосовое, аудиофайл, фото или текстовую заметку.", thread, HOME)
+                    return await self.show(owner, "Пришли голосовое, кружок, аудиофайл, фото или текстовую заметку.", thread, HOME)
                 media = message[kind][-1] if kind == "photo" else message[kind]
-                extension = ("jpg" if kind == "photo" else "ogg" if kind == "voice"
+                extension = ("jpg" if kind == "photo" else "mp4" if kind == "video_note" else "ogg" if kind == "voice"
                              else Path(media.get("file_name", "")).suffix.lower().lstrip("."))
                 if kind != "photo" and extension not in {"ogg", "mp3", "mp4", "mpeg", "mpga", "m4a", "flac", "wav", "webm"}:
                     raise ValueError("Поддерживаются OGG, MP3, MP4, M4A, FLAC, WAV и WebM")
@@ -489,7 +492,7 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
         identity = note["id"]
         rows = [[button("📄 Текст", f"text:{identity}"), button("📁 Переместить", f"choose:{identity}:0")]]
         if note["audio_bytes"]:
-            rows.append([button("📷 Фото" if note["kind"] == "photo" else "🎙 Аудио", f"audio:{identity}")])
+            rows.append([button("📷 Фото" if note["kind"] == "photo" else "📹 Кружок" if note["kind"] == "video_note" else "🎙 Аудио", f"audio:{identity}")])
         if note.get("content") is not None:
             rows.append([button("Исходная расшифровка", f"original:{identity}"),
                          button("Отменить правку", f"aiundo:{identity}:{note['revision']}")])
@@ -630,7 +633,7 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
             if not note["audio_bytes"] or not path.exists():
                 raise ValueError("Исходный файл пока недоступен")
             return await self.telegram.document(owner, path, thread,
-                                                "Фото" if note["kind"] == "photo" else "Исходное аудио без перекодирования")
+                                                "Фото" if note["kind"] == "photo" else "Исходный видеокружок" if note["kind"] == "video_note" else "Исходное аудио без перекодирования")
         if action == "delete":
             return await self.show(owner, "Удалить запись и исходный файл из архива бота?\nСообщения в Telegram останутся.",
                 thread, keyboard([button("Удалить", f"confirmdelete:{identity}"), button("Отмена", f"note:{identity}")]))
