@@ -210,9 +210,17 @@ class AIBotMixin:
                 conversation = request["conversation_id"]
                 prompt = "Продолжаем общаться с ИИ. Отправь ещё одно сообщение."
             self.store.set_action(owner, f"ai_note:{conversation}")
-            response = await self.show_bottom(owner, prompt, thread, keys(),
-                screen=f"ai_note:{conversation}", back="root", keep=True)
+            if action == "aicontinue":
+                response = await self.view_send(self.telegram.text, owner, prompt, thread,
+                    keys([key("Отменить", f"aicancel:{conversation}")]))
+            else:
+                response = await self.show_bottom(owner, prompt, thread, keys(),
+                    screen=f"ai_note:{conversation}", back="root", keep=True)
             self.ai_state.link(owner, response["message_id"], conversation)
+        elif action == "aicancel":
+            if self.store.action(owner) == f"ai_note:{identity}":
+                self.store.set_action(owner, None)
+            await self.remove_menu_message(owner, message_id)
         elif action == "aiend":
             if self.store.action(owner) == f"ai_note:{identity}":
                 self.store.set_action(owner, None)

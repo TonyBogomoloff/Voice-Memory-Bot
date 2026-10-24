@@ -502,3 +502,31 @@ def test_continue_is_one_shot_and_keeps_more_than_twelve_turns(bot):
         assert plain['entry_type'] == 'note'
         assert bot.ai_state.request(1, plain['id']) is None
     asyncio.run(run())
+
+
+def test_cancel_continuation_deletes_prompt_and_restores_note_input(bot):
+    async def run():
+        note = await receive(bot, "Исходная заметка")
+        await bot.callback(1, None, 500, f"aiask:{note['id']}")
+        question = await receive(bot, "Вопрос", 201)
+        await bot.process_ai(bot.ai_state.claim())
+        request = bot.ai_state.request(1, question['id'])
+        await bot.callback(1, None, 500, f"aicontinue:{question['id']}")
+        prompt_id = bot.telegram.message_sequence
+        controls = bot.telegram.sent[-1][1]['keyboard']['inline_keyboard']
+        cancel = controls[0][0]
+        assert cancel['text'] == 'Отменить'
+        assert bot.store.action(1) == f"ai_note:{request['conversation_id']}"
+        before = len(bot.telegram.sent)
+        await bot.callback(1, None, prompt_id, cancel['callback_data'])
+        assert bot.store.action(1) is None
+        assert bot.telegram.sent[before:] == [
+            ('deleteMessage', {'chat_id': 1, 'message_id': prompt_id})]
+        plain = await receive(bot, "Обычная заметка", 202)
+        assert plain['entry_type'] == 'note'
+        assert bot.ai_state.claim() is None
+        # An old cancel button must not clear another pending action.
+        bot.store.set_action(1, 'search')
+        await bot.callback(1, None, prompt_id, cancel['callback_data'])
+        assert bot.store.action(1) == 'search'
+    asyncio.run(run())

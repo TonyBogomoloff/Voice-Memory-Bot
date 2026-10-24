@@ -611,7 +611,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         await self.edit_note_buttons(owner, message_id, keyboard(*rows))
 
     async def callback(self, owner, thread, message_id, data):
-        if data.split(":", 1)[0] not in {"aioptions", "aicollapse", "aiend"}:
+        if data.split(":", 1)[0] not in {"aioptions", "aicollapse", "aiend", "aicancel"}:
             self.store.set_action(owner, None)
         if await self.folder_menu_callback(owner, thread, message_id, data):
             return
