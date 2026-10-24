@@ -73,7 +73,7 @@ class FolderMenuMixin:
         await self.refresh_folder_keyboard(owner, thread, force=True,
             notice="Эта кнопка устарела. Выбери папку внизу или открой «Все папки».")
 
-    async def refresh_folder_keyboard(self, owner, thread=None, *, force=False, notice=None):
+    async def refresh_folder_keyboard(self, owner, thread=None, *, force=False, notice=None, transient=False):
         if not self.store.folders(owner):
             return await self.ask_first_folder(owner, thread)
         folder = self.store.folder(owner, self.store.current_folder(owner))
@@ -85,7 +85,13 @@ class FolderMenuMixin:
         text = f"📁 {folder['name']}\nРежим: {mode}\nСохраняю сообщения в эту папку."
         if notice:
             text = notice + "\n\n" + text
-        response = await self.view_send(self.telegram.text, owner, text, thread, keys)
+        response = await self.view_send(self.telegram.text, owner, "…" if transient else text, thread, keys)
+        if transient:
+            await self.view_send(self.telegram.call, "deleteMessage", chat_id=owner,
+                                 message_id=response["message_id"])
+            with self.store.db:
+                self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
+                                      (owner, response["message_id"]))
         self.folder_keyboards[owner] = signature
         return response
 

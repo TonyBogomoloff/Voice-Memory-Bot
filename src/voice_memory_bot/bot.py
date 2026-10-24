@@ -301,7 +301,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             if not message.get("photo"):
                 self.check_ai_capacity(owner, folder, message)
             if text:
-                note, created = self.store.add_note(owner, folder, message, "text", transcript=text)
+                note, created = self.store.add_note(owner, folder, message, "text", transcript=message["text"])
             else:
                 kind = next((k for k in ("voice", "video_note", "audio", "document", "photo") if message.get(k)), None)
                 if kind is None:
@@ -326,6 +326,11 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                 async with self.note_locks[note["id"]]:
                     if note["kind"] == "photo":
                         return await self.photo_controls(note)
+                    if note["kind"] == "text":
+                        self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
+                        self.capture_ai_input(note, message)
+                        await self.deliver_transcript(note)
+                        return
                     status = "Конвертирую в текст…" if note["file_id"] else "Сохраняю…"
                     response = await self.telegram.text(owner, status, thread,
                         reply_to=note["message_id"] if thread is None else None)
@@ -980,12 +985,24 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         self.store.update_note(owner, identity, transcript_delivery="sending", status_message_id=None)
         try:
             response, _ = await self.send_transcript(note, note["source_thread"], source=True, edit_id=edit_id,
-                reply_to=note["message_id"] if note["source_thread"] is None else None)
+                reply_to=note["message_id"] if note["source_thread"] is None and note["kind"] != "text" else None)
             self.store.update_note(owner, identity, transcript_delivery="sent",
                                    transcript_message_id=response["message_id"])
         except ProviderError as exc:
             self.store.update_note(owner, identity, transcript_delivery="unknown")
             log.warning("transcript delivery unknown note_id=%s error=%s", identity, exc)
+            return
+        if note["kind"] == "text":
+            try:
+                await self.telegram.call("deleteMessage", chat_id=owner, message_id=note["message_id"])
+            except ProviderError as exc:
+                if getattr(exc, "reason", None) != "delete_target_missing":
+                    log.warning("text source cleanup deferred note_id=%s error=%s", identity, exc)
+                    return
+            self.messages.removed(owner, identity, note["message_id"])
+            with self.store.db:
+                self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
+                                      (owner, note["message_id"]))
 
     async def deliver(self, note):
         owner, identity = note["owner"], note["id"]

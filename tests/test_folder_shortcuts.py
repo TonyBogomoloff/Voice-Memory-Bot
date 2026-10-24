@@ -89,7 +89,7 @@ def test_folder_keys_select_before_input_or_ai_and_plain_names_are_notes(bot):
         assert reply_keyboard(bot)["is_persistent"]
         await receive(bot, "📌 Диалог", 2)
         assert "✓ 📌 Диалог" in labels(bot)
-        assert "диалог с ИИ" in bot.telegram.sent[-1][1]["text"]
+        assert bot.telegram.sent[-1][0] == "deleteMessage"
         await receive(bot, "/new", 3)
         await receive(bot, "📌 Работа", 4)
         assert bot.store.action(1) is None
@@ -149,7 +149,7 @@ def test_menu_keeps_all_actions_and_long_folder_names_are_distinct(bot):
                      for button in row}
         assert {"folders", "create", "notes", "search", "aiopen", "export:all", "settings:all"} <= callbacks
         await bot.callback(1, None, 500, "notes")
-        assert second["name"] in bot.telegram.sent[-1][1]["text"]
+        assert bot.store.current_folder(1) == second["id"]
         await receive(bot, "📂 Все папки", 4)
         assert hidden["name"] in str(bot.telegram.sent[-1])
         assert bot.store.notes(1) == []

@@ -46,6 +46,7 @@ def test_switch_renders_only_selected_folder_and_preserves_archive(bot, tmp_path
 def test_renewal_uses_oldest_send_not_recent_activity_and_survives_restart(bot):
     async def run():
         inbox = bot.store.ensure_user(1)
+        saved(bot, inbox, 'Запись для обновления', 1001)
         await bot.show_notes(1, None, inbox)
         with bot.store.db:
             bot.store.db.execute('UPDATE telegram_messages SET sent_at=1000')
@@ -72,6 +73,7 @@ def test_processing_defers_deletion_but_selects_destination_immediately(bot):
         work = bot.store.create_folder(1, 'Работа')['id']
         await receive(bot, 'Ещё сохраняется', 1001)
         note = bot.store.notes(1)[0]
+        bot.telegram.sent.clear()
         await bot.show_notes(1, None, work)
         assert bot.store.current_folder(1) == work
         assert not any(m == 'deleteMessage' for m, _ in bot.telegram.sent)
@@ -186,7 +188,7 @@ def test_settings_without_prior_folder_visit_and_return_to_folder(bot):
         with bot.store.db:
             bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')
         await bot.refresh_due_views()
-        assert '📁 Входящие' in bot.telegram.sent[-1][1]['text']
+        assert not bot.telegram.sent  # An empty folder has no header to renew.
         await bot.settings_menu(1, None)
         bot.cleanup.begin(1)
         assert bot.store.all('SELECT * FROM folder_views WHERE owner=1') == []
@@ -216,7 +218,7 @@ def test_old_topic_cleanup_does_not_block_switch_and_clears_before_header(bot):
     asyncio.run(run())
 
 
-def test_switch_has_one_header_all_records_and_no_trailing_menu(bot):
+def test_switch_has_all_records_and_no_persistent_header_or_menu(bot):
     async def run():
         old = bot.store.ensure_user(1)
         work = bot.store.create_folder(1, 'Работа')['id']
@@ -228,7 +230,9 @@ def test_switch_has_one_header_all_records_and_no_trailing_menu(bot):
         await receive(bot, '📌 Работа', 2000)
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
         assert len(sent) == 11
-        assert sent[0]['text'].startswith('📁 Работа\nРежим: заметки')
+        assert sent[0]['text'] == '…'
+        assert bot.telegram.sent[next(i for i, (m, _) in enumerate(bot.telegram.sent)
+                                      if m == 'sendMessage') + 1][0] == 'deleteMessage'
         assert all('Входящие' not in p['text'] for p in sent)
         assert {p['text'] for p in sent[1:]} == {f'Запись {i}' for i in range(10)}
         for p in sent[1:]:

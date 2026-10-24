@@ -143,7 +143,7 @@ class FolderViewMixin:
             self.folder_keyboards.pop(owner, None)
             leftovers = await self.clear_folder_view(owner, thread, all_threads=True,
                                                       keep_ids=(view['command_message_id'],))
-            await self.refresh_folder_keyboard(owner, thread, notice=notice)
+            await self.refresh_folder_keyboard(owner, thread, notice=notice, transient=not notice)
             if restore_screen and view['screen']:
                 screen = json.loads(view['screen'])
                 await self.view_send(self.telegram.text, owner, screen['text'], thread, screen['keys'])
