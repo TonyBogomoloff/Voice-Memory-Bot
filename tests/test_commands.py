@@ -58,3 +58,21 @@ def test_folder_name_input_does_not_import_unknown_source_thread(bot):
         assert bot.store.folder_for_thread(1, 99) is None
         assert bot.store.notes(1) == []
     asyncio.run(run())
+
+
+def test_start_registers_only_three_commands(bot):
+    from unittest.mock import AsyncMock
+
+    async def run():
+        bot.telegram.call = AsyncMock(return_value={"id": 123})
+        for name in ("poll", "dispatch", "worker", "ai_worker", "folder_view_worker"):
+            setattr(bot, name, AsyncMock())
+        await bot.start()
+        commands = next(c.kwargs["commands"] for c in bot.telegram.call.call_args_list
+                        if c.args == ("setMyCommands",))
+        assert commands == [
+            {"command": "start", "description": "Start"},
+            {"command": "help", "description": "Help"},
+            {"command": "ai", "description": "Поговорить с ИИ"},
+        ]
+    asyncio.run(run())

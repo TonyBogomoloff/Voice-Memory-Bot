@@ -10,7 +10,7 @@ MENU_COMMANDS = {
     "🤖 ИИ": "/ai", "⚙️ Настройки": "/settings",
     "📂 Все папки": "/folders", "☰ Меню": "/menu",
     "⌂ Меню": "/menu", "✖️ Отмена": "/cancel",
-    "⚙️ Options": "/options",
+    "⚙️ Options": "/options", "📁 Папка": "/options",
 }
 FOLDER_PREFIXES = ("📌 ", "✓ 📌 ")
 OPTION_ACTIONS = {"✏️ Переименовать": "rename", "🗑 Удалить папку": "dropfolder",
@@ -54,7 +54,7 @@ class FolderMenuMixin:
         identity = self.options_folder(owner)
         if not identity:
             return await self.refresh_folder_keyboard(owner, thread, force=True,
-                notice='Открой Options выбранной папки заново.')
+                notice='Открой меню выбранной папки заново.')
         action = OPTION_ACTIONS[text]
         if action == 'back':
             return await self.show_notes(owner, thread, identity)
@@ -104,7 +104,7 @@ class FolderMenuMixin:
                 rows[1].insert(0, {"text": "⬅️"})
             if page < len(pages) - 1:
                 rows[1].append({"text": "➡️"})
-        return {"keyboard": rows + [[{"text": "＋"}, {"text": "⚙️ Options"}, {"text": "☰ Меню"}]],
+        return {"keyboard": rows + [[{"text": "＋"}, {"text": "📁 Папка"}, {"text": "☰ Меню"}]],
                 "resize_keyboard": True, "is_persistent": True,
                 "input_field_placeholder": ("📁 " + self.store.folder(owner, active)["name"] +
                                             " · голосовое, текст или фото")[:64]}
@@ -173,12 +173,10 @@ class FolderMenuMixin:
         self.folder_delete_confirmations.pop(owner, None)
         identity = self.store.current_folder(owner)
         folder = self.store.folder(owner, identity) if identity else None
-        rows = [[button("📂 Все папки", "folders"), button("＋ Новая папка", "create")],
-                ([button("⚙️ Эта папка", f"foldermenu:{identity}")] if folder else []) + [button("🔎 Поиск", "search")],
-                [button("🤖 ИИ", "aiopen"), button("📦 Экспорт всего", "export:all")],
-                [button("⚙️ Настройки", "settings:all"), button("ℹ️ Помощь", "help")]]
-        if self.config.web_url:
-            rows.append([{"text": "🌐 Mini App", "web_app": {"url": self.config.web_url}}])
+        enabled = self.store.message_buttons_enabled(owner)
+        rows = [[button(("Выключить" if enabled else "Включить") + " кнопки под сообщениями",
+                        f"menumessagebuttons:{0 if enabled else 1}")],
+                [button("ℹ️ Help", "help"), button("🤖 Поговорить с ИИ", "aiopen")]]
         await self.show_bottom(owner, "☰ Меню" + (f" · {folder['name']}" if folder else ""), thread, keyboard(*rows),
                                screen="home", back="root", edit_id=edit_id)
 

@@ -37,8 +37,8 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
         folder = bot.store.current_folder(1)
         await receive(bot, "/start", 1000)
         await receive(bot, "☰ Меню", 1001)
-        assert {"📂 Все папки", "⚙️ Эта папка", "⚙️ Настройки", BACK, ROOT} <= set(labels(bot))
-        await receive(bot, "⚙️ Настройки", 1002)
+        assert {"Включить кнопки под сообщениями", "ℹ️ Help", "🤖 Поговорить с ИИ", BACK, ROOT} == set(labels(bot))
+        await receive(bot, "/settings", 1002)
         export = next(label for label in labels(bot) if label.startswith("📦 Экспорт"))
         await receive(bot, export, 1003)
         await receive(bot, "Markdown", 1004)
@@ -89,7 +89,7 @@ def test_all_folders_are_reachable_and_stale_labels_never_archive(bot):
         assert "устарела" in last_message(bot)["text"]
         await receive(bot, ROOT, 1006)
         await receive(bot, "☰ Меню", 1007)
-        await receive(bot, "⚙️ Эта папка", 1008)
+        await receive(bot, "📁 Папка", 1008)
         await receive(bot, "✏️ Переименовать", 1009)
         await receive(bot, BACK, 1010)
         assert bot.store.action(1) is None
@@ -181,17 +181,18 @@ def test_note_options_remain_attached_and_do_not_change_bottom_screen(bot):
     asyncio.run(run())
 
 
-def test_miniapp_button_and_initial_folder_prompt_use_bottom_controls(bot):
+def test_minimal_menu_hides_miniapp_and_initial_folder_prompt_uses_bottom_controls(bot):
     async def run():
         bot.config = replace(bot.config, web_url="https://example.invalid")
         await receive(bot, "/menu", 1000)
-        web_button = next(b for row in reply_keyboard(bot)["keyboard"] for b in row if "web_app" in b)
-        assert web_button["web_app"]["url"] == bot.config.web_url
+        assert not any("web_app" in b for row in reply_keyboard(bot)["keyboard"] for b in row)
         bot.store.delete_folder(1, bot.store.current_folder(1))
         await receive(bot, "/start", 1001)
         assert bot.store.action(1) == "create" and BACK in labels(bot)
         await receive(bot, BACK, 1002)
-        assert bot.store.action(1) is None and "＋ Новая папка" in labels(bot)
+        assert bot.store.action(1) is None and "🤖 Поговорить с ИИ" in labels(bot)
+        await receive(bot, ROOT, 1003)
+        assert bot.store.action(1) == "create"
     asyncio.run(run())
 
 
@@ -235,12 +236,31 @@ def test_home_add_folder_and_options_back(bot):
         await receive(bot, "Новая с главной", 2004)
         folder = bot.store.current_folder(1)
         assert bot.store.folder(1, folder)["name"] == "Новая с главной"
-        await receive(bot, "⚙️ Options", 2005)
+        await receive(bot, "📁 Папка", 2005)
         assert set(labels(bot)) == {"✏️ Переименовать", "🗑 Удалить папку", "📦 Экспорт папки", BACK}
         assert bot.bottom_state(1)["actions"]["📦 Экспорт папки"] == f"export:{folder}"
         await receive(bot, BACK, 2006)
         assert bot.bottom_state(1)["screen"] == "root"
         assert bot.options_folder(1) is None
         assert bot.store.current_folder(1) == folder
+        assert bot.store.notes(1) == []
+    asyncio.run(run())
+
+
+def test_minimal_menu_toggle_help_and_ai(bot):
+    async def run():
+        await receive(bot, "☰ Меню", 3000)
+        assert not bot.store.message_buttons_enabled(1)
+        await receive(bot, "Включить кнопки под сообщениями", 3001)
+        assert bot.store.message_buttons_enabled(1)
+        assert bot.bottom_state(1)["screen"] == "home"
+        await receive(bot, "Выключить кнопки под сообщениями", 3002)
+        assert not bot.store.message_buttons_enabled(1)
+        await receive(bot, "ℹ️ Help", 3003)
+        assert bot.bottom_state(1)["screen"] == "help"
+        await receive(bot, BACK, 3004)
+        await receive(bot, "🤖 Поговорить с ИИ", 3005)
+        folder = bot.store.folder(1, bot.store.current_folder(1))
+        assert folder["mode"] == "chat"
         assert bot.store.notes(1) == []
     asyncio.run(run())
