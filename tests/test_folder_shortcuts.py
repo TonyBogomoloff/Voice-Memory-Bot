@@ -85,7 +85,7 @@ def test_folder_keys_select_before_input_or_ai_and_plain_names_are_notes(bot):
         chat = bot.store.create_folder(1, "Диалог")
         bot.ai_state.mode(1, chat["id"], "chat")
         await receive(bot, "/start")
-        assert labels(bot) == ["✓ 📌 Входящие", "📌 Работа", "📌 Диалог", "📂 Все папки", "☰ Меню"]
+        assert labels(bot) == ["✓ 📌 Входящие", "📌 Работа", "📌 Диалог", "📂 Все папки", "⚙️ Options"]
         assert reply_keyboard(bot)["is_persistent"]
         await receive(bot, "📌 Диалог", 2)
         assert "✓ 📌 Диалог" in labels(bot)
@@ -125,7 +125,7 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         token = bot.folder_delete_confirmations[1][0]
         await bot.callback(1, None, 500, f"confirmdrop:{token}")
         await receive(bot, "✓ 📌 Проекты", 4)
-        assert labels(bot) == ["✓ 📌 Входящие", "📂 Все папки", "☰ Меню"]
+        assert labels(bot) == ["✓ 📌 Входящие", "📂 Все папки", "⚙️ Options"]
         assert bot.store.notes(1) == []
     asyncio.run(run())
 

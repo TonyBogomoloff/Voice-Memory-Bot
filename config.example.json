@@ -4,6 +4,8 @@
   "groq_voice": "",
   "groq_model": "whisper-large-v3-turbo",
   "data_dir": "data",
+  "telegram_api_base": "https://api.telegram.org",
+  "telegram_file_root": "",
   "assistant_models": [],
   "llm": {
     "provider": "codex",

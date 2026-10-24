@@ -53,6 +53,7 @@ class FolderViewMixin:
 
     async def show_notes(self, owner, thread, identity, page=0, edit_id=None, notice=None, command_message_id=None):
         self.store.folder(owner, identity)
+        self.leave_folder_options(owner)
         self.store.set_action(owner, None)
         self.store.select(owner, identity)
         for index, folders in enumerate(self.folder_keyboard_pages(owner)):

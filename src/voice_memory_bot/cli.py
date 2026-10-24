@@ -23,7 +23,7 @@ async def check(config, live):
         router = CodexRouter(config.llm)
         await router.check_auth()
         result["llm_auth"] = "ChatGPT"
-        telegram = Telegram(config.bot_token)
+        telegram = Telegram(config.bot_token, api_base=config.telegram_api_base, file_root=config.telegram_file_root)
         try:
             me = await telegram.call("getMe")
             result["bot"] = me.get("username")
@@ -46,7 +46,8 @@ async def run(config):
         except BlockingIOError:
             raise ValueError("Для этого data_dir бот уже запущен") from None
         store = Store(config.data_dir / "archive.sqlite3", config.limits)
-        telegram, groq = Telegram(config.bot_token), Groq(config.groq_voice, config.groq_model)
+        telegram = Telegram(config.bot_token, api_base=config.telegram_api_base, file_root=config.telegram_file_root)
+        groq = Groq(config.groq_voice, config.groq_model)
         try:
             await Bot(config, store, telegram, groq, CodexRouter(config.llm)).start()
         finally:

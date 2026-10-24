@@ -12,10 +12,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .ai_bot import AIBotMixin
-from .archive import Archive
+from .archive import Archive, is_audio
 from .cleanup import CleanupMixin
 from .config import Config
-from .folder_menu import MENU_COMMANDS, FolderMenuMixin
+from .folder_menu import MENU_COMMANDS, OPTION_ACTIONS, FolderMenuMixin
 from .folder_naming import FolderNamingMixin
 from .folder_view import FolderViewMixin
 from .message_store import MessageStore
@@ -58,14 +58,16 @@ HELP = """🎙 Voice Memory Bot
 Выбери папку на нижней клавиатуре или через «📂 Все папки».
 Новые голосовые, тексты и фото сохраняются туда. Активная папка отмечена ✓.
 Внизу — до 4 папок на странице. Стрелки листают страницы; закреплённые папки идут первыми.
-«☰ Меню» открывает записи, создание папки, поиск, ИИ, экспорт и настройки.
+«⚙️ Options» меняет нижнюю клавиатуру: переименовать папку, удалить её или скачать исходники.
+«← К папке» возвращает выбор папок, «☰ Меню» открывает общие действия.
 Выбор и закрепления запоминаются. Без выбора записи попадают во «Входящие».
 Внутри папки можно изменить название, посмотреть записи, скачать архив или удалить папку.
-При удалении папки записи сохраняются во «Входящих»; сначала бот попросит подтверждение.
+При удалении папки записи сохраняются в архиве без папки; сначала бот попросит подтверждение.
 Расшифровка появится рядом с голосовым. Для переноса: «Опции» → «Переместить».
 Папки общие с Mini App; темы Telegram больше не используются для выбора папки.
 /start — показать папки внизу
 /menu — открыть меню действий
+/options — действия с выбранной папкой
 /app — открыть Mini App
 
 /folders — записи и управление папками
@@ -109,6 +111,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         self.folder_delete_confirmations = {}
         self.folder_keyboards = {}
         self.folder_pages = {}
+        self.init_folder_options()
         self.web = None
         self.init_folder_view()
         self.folder_namer = CodexRouter(replace(config.llm, model=config.folder_name_model or config.llm.model, effort="low"))
@@ -122,6 +125,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         await self.telegram.call("setMyCommands", commands=[
             {"command": "start", "description": "Показать папки внизу"},
             {"command": "menu", "description": "Меню действий"},
+            {"command": "options", "description": "Настройки выбранной папки"},
             *([{"command": "app", "description": "Открыть Mini App"}] if self.config.web_url else []),
             {"command": "folders", "description": "Записи и папки"},
             {"command": "new", "description": "Создать папку"},
@@ -247,7 +251,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         if callback and not move_callback:
             await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
         navigation = message.get("text", "").strip()
-        if (callback or navigation.startswith("/") or navigation in MENU_COMMANDS
+        if (callback or navigation.startswith("/") or navigation in MENU_COMMANDS or navigation in OPTION_ACTIONS
                 or self.is_folder_button(navigation)) and not self.rate_allowed(owner):
             if move_callback:
                 await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
@@ -276,6 +280,8 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             if "forum_topic_created" in message or "forum_topic_edited" in message:
                 return
             text = message.get("text", "").strip()
+            if text in OPTION_ACTIONS:
+                return await self.folder_option_button(owner, thread, text)
             if text in {"⬅️", "➡️"}:
                 return await self.turn_folder_page(owner, thread, text)
             if text in MENU_COMMANDS:
@@ -303,23 +309,27 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             if text:
                 note, created = self.store.add_note(owner, folder, message, "text", transcript=message["text"])
             else:
-                kind = next((k for k in ("voice", "video_note", "audio", "document", "photo") if message.get(k)), None)
+                kind = next((k for k in ("voice", "video_note", "video", "audio", "document", "photo") if message.get(k)), None)
                 if kind is None:
-                    return await self.show(owner, "Пришли голосовое, кружок, аудиофайл, фото или текстовую заметку.", thread, HOME)
+                    return await self.show(owner, "Пришли голосовое, кружок, видео, файл, фото или текстовую заметку.", thread, HOME)
                 media = message[kind][-1] if kind == "photo" else message[kind]
-                extension = ("jpg" if kind == "photo" else "mp4" if kind == "video_note" else "ogg" if kind == "voice"
+                extension = ("jpg" if kind == "photo" else "mp4" if kind in {"video_note", "video"} else "ogg" if kind == "voice"
                              else Path(media.get("file_name", "")).suffix.lower().lstrip("."))
-                if kind != "photo" and extension not in {"ogg", "mp3", "mp4", "mpeg", "mpga", "m4a", "flac", "wav", "webm"}:
+                audio_extensions = {"ogg", "mp3", "mp4", "mpeg", "mpga", "m4a", "flac", "wav", "webm"}
+                if kind == "document" and extension not in audio_extensions:
+                    kind = "file"
+                    extension = extension if extension.isascii() and extension.isalnum() and len(extension) <= 12 else "bin"
+                if kind not in {"photo", "file"} and extension not in audio_extensions:
                     raise ValueError("Поддерживаются OGG, MP3, MP4, M4A, FLAC, WAV и WebM")
                 size, duration = media.get("file_size", 0), media.get("duration", 0)
                 if size <= 0 or size > self.config.limits.max_file_bytes:
-                    raise ValueError("Для MVP нужен файл размером до 20 MB")
+                    raise ValueError(f"Пришли файл размером до {self.config.limits.max_file_bytes // 1_000_000} MB")
                 if duration > self.config.limits.max_audio_seconds:
                     raise ValueError(f"Максимальная длительность — {self.config.limits.max_audio_seconds // 60} минут")
                 # Uploaded documents lack reliable duration; probe the saved file before calling Groq.
                 note, created = self.store.add_note(owner, folder, message, kind, media["file_id"],
                                                     extension, size, duration,
-                                                    transcript=message.get("caption", "") if kind == "photo" else None)
+                                                    transcript=message.get("caption", "") if kind in {"photo", "file", "video"} else None)
             if created:
                 self.messages.record(note, message["message_id"], thread, "source")
                 # The worker uses the same lock, so a quick ASR cannot outrun the status checkpoint.
@@ -331,12 +341,13 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                         self.capture_ai_input(note, message)
                         await self.deliver_transcript(note)
                         return
-                    status = "Конвертирую в текст…" if note["file_id"] else "Сохраняю…"
+                    status = "Конвертирую в текст…" if note["file_id"] and note['kind'] not in {"file", "video"} else "Сохраняю…"
                     response = await self.telegram.text(owner, status, thread,
                         reply_to=note["message_id"] if thread is None else None)
                     self.store.update_note(owner, note["id"], status_message_id=response["message_id"])
                     note = self.adopt_source_topic(note, response)
-                    self.capture_ai_input(note, {**message, "message_thread_id": note["source_thread"]})
+                    if note['kind'] not in {'file', 'video'}:
+                        self.capture_ai_input(note, {**message, "message_thread_id": note["source_thread"]})
                     log.info("note accepted note_id=%s source_thread=%s", note["id"], note["source_thread"])
         except ValueError as exc:
             if move_callback:
@@ -381,6 +392,8 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             return await self.show_home(owner, thread)
         if command == "/menu":
             return await self.show_main_menu(owner, thread)
+        if command == "/options":
+            return await self.show_folder_options(owner, thread)
         if command in {"/help", "/privacy"}:
             return await self.show(owner, HELP, thread, HOME)
         if command == "/cancel":
@@ -423,7 +436,10 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             name = clean_name(text)
             self.store.check_names(owner, [name, *json.loads(folder["aliases"])], identity)
             self.store.rename_folder(owner, identity, name)
-            await self.show_notes(owner, thread, identity)
+            if self.options_folder(owner) == identity:
+                await self.show_folder_options(owner, thread, identity)
+            else:
+                await self.show_notes(owner, thread, identity)
         elif action.startswith("aliases:"):
             identity = action.split(":")[1]
             aliases = [] if text == "-" else [s.strip() for s in text.split(",") if s.strip()]
@@ -438,6 +454,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         await self.show_notes(owner, thread, folder["id"], notice=f"✅ Папка «{folder['name']}» создана.")
 
     async def show_folders(self, owner, thread=None, edit_id=None, page=0, note_id=None):
+        self.leave_folder_options(owner)
         if not self.store.folders(owner):
             return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
@@ -466,9 +483,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         await self.show(owner, text, thread, keyboard(*rows), edit_id)
 
     async def show_notes_menu(self, owner, thread, identity, page=0, edit_id=None):
-        folder = self.store.folder(owner, identity)
-        self.store.set_action(owner, None)
-        self.store.select(owner, identity)
+        folder = self.enter_folder_options(owner, identity)
         await self.refresh_folder_keyboard(owner, thread)
         page = max(0, page)
         notes = self.store.notes(owner, identity, offset=page * 8, limit=9)
@@ -485,6 +500,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         if nav:
             rows.append(nav)
         rows.append([button("📦 Экспорт", f"export:{identity}")])
+        rows.append([button("📦 Скачать исходники", f"zip:{identity}:raw")])
         rows[-1].append(button("✏️ Название", f"rename:{identity}"))
         rows.append([button("🗑 Удалить папку", f"dropfolder:{identity}")])
         pin_action = "unpin" if folder["pin_slot"] is not None else "pin"
@@ -507,13 +523,15 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         if note["state"] in {"queued", "processing"}:
             text += "\n⏳ Обрабатываю запись."
         elif note["state"] == "asr_failed":
-            if note["kind"] == "photo":
-                text += "\nНе удалось сохранить фото. Попробуй ещё раз."
+            if note["kind"] in {"photo", "file", "video"}:
+                text += "\nНе удалось сохранить файл. Попробуй ещё раз."
             else:
                 text += "\nНе удалось получить расшифровку."
                 text += " Аудио сохранено." if note["audio_bytes"] else " Загрузка аудио пока не завершена."
             if note["error"] == "daily_asr_limit":
                 text += " Достигнут лимит распознавания за последние 24 часа."
+            elif note["error"] == "asr_file_too_large":
+                text += " Файл слишком большой для распознавания; оригинал доступен в выгрузке исходников."
         if note["routing"] == "unavailable":
             text += "\nВыбор проекта недоступен. Сохранил во «Входящие» — папку можно выбрать вручную."
         elif note["routing"] == "review":
@@ -526,7 +544,9 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         identity = note["id"]
         rows = [[button("📄 Текст", f"text:{identity}"), button("📁 Переместить", f"choose:{identity}:0")]]
         if note["audio_bytes"]:
-            rows.append([button("📷 Фото" if note["kind"] == "photo" else "📹 Кружок" if note["kind"] == "video_note" else "🎙 Аудио", f"audio:{identity}")])
+            label = ("📷 Фото" if note['kind'] == 'photo' else "📹 Кружок" if note['kind'] == 'video_note'
+                     else "🎙 Аудио" if is_audio(note) else "📎 Файл")
+            rows.append([button(label, f"audio:{identity}")])
         if note.get("content") is not None:
             rows.append([button("Исходная расшифровка", f"original:{identity}"),
                          button("Отменить правку", f"aiundo:{identity}:{note['revision']}")])
@@ -616,7 +636,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             self.store.set_export_format(owner, identity)
             return await self.export_settings(owner, thread, scope, message_id)
         if action == "zip":
-            if len(pieces) != 3 or pieces[2] not in {"all", "text", "voice", "audio"}:
+            if len(pieces) != 3 or pieces[2] not in {"all", "text", "voice", "audio", "raw"}:
                 raise ValueError("Выбери вид экспорта в меню /export")
             folder_id = None if identity == "all" else identity
             if folder_id:
@@ -673,7 +693,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             if not note["audio_bytes"] or not path.exists():
                 raise ValueError("Исходный файл пока недоступен")
             return await self.telegram.document(owner, path, thread,
-                                                "Фото" if note["kind"] == "photo" else "Исходный видеокружок" if note["kind"] == "video_note" else "Исходное аудио без перекодирования")
+                                                "Исходный файл без изменений")
         if action == "delete":
             return await self.show(owner, "Удалить запись и исходный файл из архива бота?\nСообщения в Telegram останутся.",
                 thread, keyboard([button("Удалить", f"confirmdelete:{identity}"), button("Отмена", f"note:{identity}")]))
@@ -724,6 +744,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                         f"Тексты: {text_format}, вся история папки в одном файле. Папки проектов сохранятся.\n"
                         "Всё будет в одном ZIP. Если он больше лимита Telegram — в нескольких частях.",
                         thread, keyboard(
+                            [button("Исходники: медиа, тексты и файлы", f"zip:{identity}:raw")],
                             [button(f"Всё: {text_format} + файлы", f"zip:{identity}:all")],
                             [button(f"Только тексты · {text_format}", f"zip:{identity}:text"),
                              button("Только аудио", f"zip:{identity}:voice")],
@@ -737,7 +758,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             return await self.show(owner, "Предыдущий экспорт ещё готовится. Дождись его завершения.", thread)
         async with self.export_locks[owner]:
             try:
-                if content not in {"all", "text", "voice"}:
+                if content not in {"all", "text", "voice", "raw"}:
                     raise ValueError("invalid_export_format")
                 # Snapshot all metadata and the preference before yielding to other handlers.
                 notes = self.store.export_notes(owner, identity)
@@ -745,7 +766,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                 text_format = self.store.export_format(owner)
                 preferences = self.store.export_preferences(owner)
                 if content == "voice" and not any(
-                        n["kind"] != "photo" and (n["file_id"] or n["audio_bytes"]) for n in notes):
+                        is_audio(n) and (n["file_id"] or n["audio_bytes"]) for n in notes):
                     return await self.show(owner, "В выбранном архиве пока нет аудиозаписей.", thread)
                 await self.show(owner, "Готовлю ZIP…", thread)
                 export_root = self.config.data_dir / "exports"
@@ -754,7 +775,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                     build = asyncio.create_task(asyncio.to_thread(
                         self.archive.export, notes, folders, Path(directory), content != "text",
                         self.config.limits.export_part_bytes, text_format=text_format, audio_only=content == "voice",
-                        settings=preferences))
+                        raw_only=content == "raw", settings=preferences))
                     try:
                         paths = await asyncio.shield(build)
                     except asyncio.CancelledError:
@@ -765,13 +786,16 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                         await self.show(owner, f"Архив большой: отправляю {len(paths)} ZIP-частей.\n"
                                         "Распакуй их в одну папку — файлы распределены между частями.", thread)
                     for i, path in enumerate(paths):
-                        label = "Аудио" if content == "voice" else "PDF" if text_format == "pdf" else "Markdown"
+                        label = ("Исходники" if content == "raw" else "Аудио" if content == "voice"
+                                 else "PDF" if text_format == "pdf" else "Markdown")
                         if content == "all":
                             label += " + файлы"
                         caption = f"{label} · ZIP" if len(paths) == 1 else f"{label} · часть {i + 1} из {len(paths)}"
                         await self.telegram.document(owner, path, thread, caption)
             except ProviderError as exc:
                 log.warning("export delivery error=%s", exc)
+                await self.show(owner, "Не удалось подтвердить отправку ZIP. Если файл не пришёл, "
+                                "повтори выгрузку. Исходники сохранены.", thread)
             except Exception as exc:
                 log.warning("export failed type=%s", type(exc).__name__)
                 if isinstance(exc, ValueError) and str(exc) == "archive_audio_pending":
@@ -852,6 +876,8 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                 return await process_web_note(self, note)
             if note["kind"] == "photo":
                 return await self.process_photo(note)
+            if note["kind"] in {"file", "video"}:
+                return await self.process_file(note)
             try:
                 if note["file_id"] and note["transcript"] is None:
                     path = self.archive.audio(note)
@@ -863,6 +889,8 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                         with path.open("rb") as handle:
                             checksum = hashlib.file_digest(handle, "sha256").hexdigest()
                     self.store.update_note(owner, identity, audio_bytes=size, sha256=checksum)
+                    if size > 24_000_000:
+                        raise ProviderError("asr_file_too_large")
                     duration = await self.probe_duration(path)
                     self.store.reserve_asr(owner, duration)
                     transcript = await self.groq.transcribe(path)
@@ -890,6 +918,39 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                 self.store.update_note(owner, identity, state="asr_failed", error=error)
                 note = self.store.note(owner, identity)
             await self.deliver(note)
+
+    async def process_file(self, note):
+        owner, identity = note['owner'], note['id']
+        try:
+            path = self.archive.audio(note)
+            if path.is_file():
+                size = path.stat().st_size
+                with path.open('rb') as handle:
+                    checksum = hashlib.file_digest(handle, 'sha256').hexdigest()
+            else:
+                size, checksum = await self.telegram.download(note['file_id'], path, self.config.limits.max_file_bytes)
+            title = note.get('original_name') or ('Видео' if note['kind'] == 'video' else 'Файл')
+            self.store.update_note(owner, identity, audio_bytes=size, sha256=checksum,
+                                   state='ready', title=title[:80], routing='manual', error=None)
+            note = self.store.note(owner, identity)
+            self.archive.persist_text(note, self.store.folder(owner, note['folder_id']))
+            text = f"📎 {title}\nФайл сохранён." + (f"\n\n{note['transcript']}" if note['transcript'] else '')
+            keys = self.note_controls(note, note['source_thread'])
+        except (ProviderError, OSError, ValueError) as exc:
+            self.store.update_note(owner, identity, state='asr_failed', error=type(exc).__name__)
+            text = 'Не удалось сохранить файл. Оригинал в чате остаётся; попробуй ещё раз.'
+            keys = keyboard([button('Повторить', f'retry:{identity}')])
+        self.store.update_note(owner, identity, delivery='sending', transcript_delivery='sending')
+        edit_id = note['status_message_id']
+        self.store.update_note(owner, identity, status_message_id=None)
+        try:
+            response = await self.show(owner, text, note['source_thread'], keys, edit_id)
+            self.messages.record(note, response['message_id'], note['source_thread'], 'file_controls')
+            self.store.update_note(owner, identity, delivery='sent', transcript_delivery='sent',
+                                   transcript_message_id=response['message_id'])
+        except ProviderError:
+            self.store.update_note(owner, identity, delivery='unknown', transcript_delivery='unknown')
+            raise
 
     async def photo_controls(self, note, error=False):
         note = self.store.note(note["owner"], note["id"])

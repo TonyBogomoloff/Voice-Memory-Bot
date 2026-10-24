@@ -13,6 +13,7 @@ def migrate_web(db):
             "upload_key": "TEXT",
             "ai_context": "TEXT",
             "ai_generated_from": "TEXT",
+            "source_json": "TEXT",
         }.items():
             if name not in columns:
                 db.execute(f"ALTER TABLE notes ADD COLUMN {name} {declaration}")

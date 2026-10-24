@@ -324,13 +324,21 @@ class Store:
         if counters["bytes"] + size > self.limits.max_user_storage_bytes:
             raise ValueError("Достигнут лимит хранения аудио")
         identity = new_id()
+        media = message.get("document" if kind == "file" else kind)
+        media = media if isinstance(media, dict) else {}
         with self.db if commit else nullcontext():
             self.db.execute("""INSERT INTO notes(id,owner,folder_id,source_folder,message_id,source_thread,
-                kind,file_id,extension,declared_bytes,duration,created_at,transcript,input_mode,reply_message_id)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                kind,file_id,extension,declared_bytes,duration,created_at,transcript,input_mode,reply_message_id,
+                source_json,original_name,mime_type)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (identity, owner, folder, folder, message["message_id"], message.get("message_thread_id"),
                  kind, file_id, extension, size, duration, time.time(), transcript, source_folder["mode"],
-                 message.get("reply_to_message", {}).get("message_id")))
+                 message.get("reply_to_message", {}).get("message_id"),
+                 json.dumps({key: message[key] for key in (
+                     "message_id", "date", "text", "entities", "caption", "caption_entities",
+                     "voice", "video_note", "video", "audio", "document", "photo") if key in message},
+                     ensure_ascii=False),
+                 media.get("file_name"), media.get("mime_type")))
         return self.note(owner, identity), True
 
     def note(self, owner, identity):
@@ -440,7 +448,8 @@ class Store:
         self.note(owner, identity)
         with self.db:
             self.db.execute("UPDATE notes SET deleted=1,transcript=NULL,title='',file_id=NULL,"
-                            "content=NULL,requested_folder=NULL,error=NULL WHERE owner=? AND id=?", (owner, identity))
+                            "content=NULL,source_json=NULL,original_name=NULL,mime_type=NULL,"
+                            "requested_folder=NULL,error=NULL WHERE owner=? AND id=?", (owner, identity))
             self.db.execute("DELETE FROM note_revisions WHERE note_id=?", (identity,))
             self.db.execute("DELETE FROM ai_steps WHERE note_id=?", (identity,))
             self.db.execute("UPDATE ai_requests SET state='deleted',response=NULL,input_text=NULL,error=NULL WHERE note_id=?", (identity,))

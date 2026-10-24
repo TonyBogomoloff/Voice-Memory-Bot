@@ -42,10 +42,12 @@ class TelegramError(ProviderError):
 
 
 class Telegram:
-    def __init__(self, token: str, client=None):
+    def __init__(self, token: str, client=None, *, api_base="https://api.telegram.org", file_root=None):
         self.on_message = None
-        self._base = f"https://api.telegram.org/bot{token}/"
-        self._files = f"https://api.telegram.org/file/bot{token}/"
+        self._base = f"{api_base.rstrip('/')}/bot{token}/"
+        self._files = f"{api_base.rstrip('/')}/file/bot{token}/"
+        self.local = api_base.rstrip('/') != "https://api.telegram.org"
+        self.file_root = Path(file_root).resolve() if file_root else None
         self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10),
                                                 follow_redirects=False, trust_env=False)
 
@@ -90,7 +92,8 @@ class Telegram:
         try:
             with path.open("rb") as handle:
                 response = await self.client.post(self._base + "sendDocument", data=data,
-                                                 files={"document": (path.name, handle)}, timeout=120)
+                                                 files={"document": (path.name, handle)},
+                                                 timeout=httpx.Timeout(1800 if self.local else 120, connect=10))
             body = response.json()
         except (httpx.HTTPError, ValueError):
             raise ProviderError("telegram_transport_unknown") from None
@@ -102,6 +105,18 @@ class Telegram:
     async def download(self, file_id, destination: Path, max_bytes):
         info = await self.call("getFile", file_id=file_id)
         path = info.get("file_path", "")
+        if self.local and PurePosixPath(path).is_absolute():
+            source = Path(path).resolve()
+            if self.file_root is None or not source.is_relative_to(self.file_root):
+                raise ProviderError("telegram_invalid_file_path")
+            # Copy into our durable archive; Telegram's cache can be removed independently.
+            task = asyncio.create_task(asyncio.to_thread(self.copy_local, source, destination, max_bytes,
+                                                         info.get("file_size")))
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task
+                raise
         if not path or PurePosixPath(path).is_absolute() or any(p in {"..", "."} for p in path.split("/")):
             raise ProviderError("telegram_invalid_file_path")
         if "?" in path or "#" in path or "\\" in path:
@@ -129,6 +144,32 @@ class Telegram:
             partial.replace(destination)
             return total, digest.hexdigest()
         except httpx.HTTPError:
+            raise ProviderError("audio_download_failed") from None
+        finally:
+            partial.unlink(missing_ok=True)
+
+    @staticmethod
+    def copy_local(source, destination, max_bytes, expected_size=None):
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        partial = destination.with_suffix(".part")
+        total, digest = 0, hashlib.sha256()
+        try:
+            if source.stat().st_size > max_bytes or (expected_size or 0) > max_bytes:
+                raise ProviderError("audio_too_large")
+            with source.open("rb") as original, partial.open("wb") as target:
+                while chunk := original.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise ProviderError("audio_too_large")
+                    digest.update(chunk)
+                    target.write(chunk)
+                target.flush()
+                os.fsync(target.fileno())
+            if not total or expected_size and total != expected_size:
+                raise ProviderError("audio_incomplete")
+            partial.replace(destination)
+            return total, digest.hexdigest()
+        except OSError:
             raise ProviderError("audio_download_failed") from None
         finally:
             partial.unlink(missing_ok=True)

@@ -10,11 +10,64 @@ MENU_COMMANDS = {
     "🤖 ИИ": "/ai", "⚙️ Настройки": "/settings",
     "📂 Все папки": "/folders", "☰ Меню": "/menu",
     "⌂ Меню": "/menu", "✖️ Отмена": "/cancel",
+    "⚙️ Options": "/options",
 }
 FOLDER_PREFIXES = ("📌 ", "✓ 📌 ")
+OPTION_ACTIONS = {"✏️ Переименовать": "rename", "🗑 Удалить папку": "dropfolder",
+                  "📦 Скачать исходники": "raw", "← К папке": "back"}
 
 
 class FolderMenuMixin:
+    def init_folder_options(self):
+        self.store.db.execute("CREATE TABLE IF NOT EXISTS folder_options ("
+                              "owner INTEGER PRIMARY KEY, folder_id TEXT NOT NULL)")
+        self.store.db.commit()
+
+    def options_folder(self, owner):
+        row = self.store.one("SELECT folder_id FROM folder_options WHERE owner=?", (owner,))
+        if row and row['folder_id'] == self.store.current_folder(owner):
+            return row['folder_id']
+        return None
+
+    def leave_folder_options(self, owner):
+        with self.store.db:
+            self.store.db.execute("DELETE FROM folder_options WHERE owner=?", (owner,))
+
+    def enter_folder_options(self, owner, identity):
+        folder = self.store.folder(owner, identity)
+        if folder['removed']:
+            raise ValueError('Папка удалена. Выбери другую')
+        self.store.select(owner, identity)
+        self.store.set_action(owner, None)
+        with self.store.db:
+            self.store.db.execute("INSERT INTO folder_options VALUES (?,?) ON CONFLICT(owner) "
+                                  "DO UPDATE SET folder_id=excluded.folder_id", (owner, identity))
+        return folder
+
+    async def show_folder_options(self, owner, thread=None, identity=None):
+        identity = identity or self.store.current_folder(owner)
+        if not identity:
+            return await self.ask_first_folder(owner, thread)
+        folder = self.enter_folder_options(owner, identity)
+        await self.refresh_folder_keyboard(owner, thread, force=True)
+        from .bot import button, keyboard
+        await self.show(owner, f"⚙️ Options · {folder['name']}\n"
+                        "Действия с выбранной папкой — на клавиатуре внизу.\n"
+                        "Исходники: голосовые, кружочки, фото, тексты и файлы в ZIP.", thread,
+                        keyboard([button("Ещё настройки папки", f"foldermenu:{identity}")]))
+
+    async def folder_option_button(self, owner, thread, text):
+        identity = self.options_folder(owner)
+        if not identity:
+            return await self.refresh_folder_keyboard(owner, thread, force=True,
+                notice='Открой Options выбранной папки заново.')
+        action = OPTION_ACTIONS[text]
+        if action == 'back':
+            return await self.show_notes(owner, thread, identity)
+        if action == 'raw':
+            return await self.callback(owner, thread, None, f'zip:{identity}:raw')
+        return await self.callback(owner, thread, None, f'{action}:{identity}')
+
     async def configure_menu(self):
         # Clear both the default Mini App button and existing per-chat overrides.
         await self.telegram.call("setChatMenuButton", menu_button={"type": "commands"})
@@ -32,6 +85,12 @@ class FolderMenuMixin:
         return ([pinned] if pinned else []) + [others[i:i + 4] for i in range(0, len(others), 4)] or [[]]
 
     def folder_keyboard(self, owner):
+        if self.options_folder(owner):
+            return {"keyboard": [[{"text": "✏️ Переименовать"}, {"text": "🗑 Удалить папку"}],
+                                 [{"text": "📦 Скачать исходники"}],
+                                 [{"text": "← К папке"}, {"text": "☰ Меню"}]],
+                    "resize_keyboard": True, "is_persistent": True,
+                    "input_field_placeholder": "Действия с выбранной папкой"}
         active = self.store.current_folder(owner)
         pages = self.folder_keyboard_pages(owner)
         page = min(max(self.folder_pages.get(owner, 0), 0), len(pages) - 1)
@@ -46,11 +105,12 @@ class FolderMenuMixin:
                 rows[1].insert(0, {"text": "⬅️"})
             if page < len(pages) - 1:
                 rows[1].append({"text": "➡️"})
-        return {"keyboard": rows + [[{"text": "📂 Все папки"}, {"text": "☰ Меню"}]],
+        return {"keyboard": rows + [[{"text": "📂 Все папки"}, {"text": "⚙️ Options"}]],
                 "resize_keyboard": True, "is_persistent": True,
                 "input_field_placeholder": "Голосовое, кружок, текст или фото"}
 
     async def turn_folder_page(self, owner, thread, text):
+        self.leave_folder_options(owner)
         pages = self.folder_keyboard_pages(owner)
         page = min(self.folder_pages.get(owner, 0), len(pages) - 1)
         self.folder_pages[owner] = min(max(page + (1 if text == "➡️" else -1), 0), len(pages) - 1)
@@ -96,17 +156,19 @@ class FolderMenuMixin:
         return response
 
     async def show_home(self, owner, thread=None):
+        self.leave_folder_options(owner)
         if not self.store.folders(owner):
             return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
-        hint = "Переключай папки внизу. Стрелки листают страницы, действия — в «Меню»."
+        hint = "Переключай папки внизу. Стрелки листают страницы, действия с папкой — в Options."
         if self.config.web_url:
             hint += "\nMini App: /app"
         await self.refresh_folder_keyboard(owner, thread, force=True, notice=hint)
         self.remember_screen(owner, thread, hint, self.folder_keyboard(owner))
 
     async def show_main_menu(self, owner, thread=None, edit_id=None):
+        self.leave_folder_options(owner)
         from .bot import HOME, button, keyboard
         if not self.store.folders(owner):
             return await self.ask_first_folder(owner, thread)
@@ -147,13 +209,17 @@ class FolderMenuMixin:
             folder = self.store.folder(owner, folder_id)
             if action == "canceldrop":
                 self.folder_delete_confirmations.pop(owner, None)
-                await self.show_notes(owner, thread, folder_id, edit_id=message_id)
+                if self.options_folder(owner) == folder_id:
+                    await self.show_folder_options(owner, thread, folder_id)
+                else:
+                    await self.show_notes(owner, thread, folder_id, edit_id=message_id)
                 return True
             if folder["name"] != name:
                 raise ValueError("Название папки изменилось. Открой её заново перед удалением")
             if self.deletion_busy(owner):
                 raise ValueError("Дождись завершения обработки или экспорта, затем удали папку")
             selected = self.store.delete_folder(owner, folder_id)
+            self.leave_folder_options(owner)
             self.folder_delete_confirmations.pop(owner, None)
             if selected:
                 await self.show_notes(owner, thread, selected,

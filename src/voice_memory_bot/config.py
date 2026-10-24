@@ -41,6 +41,8 @@ class Config:
     web_url: str = ""
     web_port: int = 18767
     folder_name_model: str = ""
+    telegram_api_base: str = "https://api.telegram.org"
+    telegram_file_root: Path | None = None
 
     @classmethod
     def load(cls, path: Path, secrets_path: Path | None = None) -> Config:
@@ -72,7 +74,20 @@ class Config:
         limits = Limits(**raw.get("limits", {}))
         if any(type(v) is not int or v <= 0 for v in vars(limits).values()):
             raise ValueError("Все limits должны быть положительными целыми числами")
-        if limits.max_file_bytes > 20_000_000 or not 21_000_000 <= limits.export_part_bytes <= 45_000_000:
+        api_base = os.environ.get("VOICE_MEMORY_TELEGRAM_API_BASE", raw.get("telegram_api_base", "https://api.telegram.org")).rstrip("/")
+        api = urlsplit(api_base)
+        local_api = api_base != "https://api.telegram.org"
+        if (api.scheme not in {"http", "https"} or not api.hostname or api.username or api.password
+                or api.path or api.query or api.fragment
+                or local_api and api.hostname not in {"localhost", "127.0.0.1", "::1"}):
+            raise ValueError("telegram_api_base: нужен облачный API или локальный адрес loopback")
+        file_root = os.environ.get("VOICE_MEMORY_TELEGRAM_FILE_ROOT", raw.get("telegram_file_root", ""))
+        if local_api and (not file_root or not Path(file_root).is_absolute()):
+            raise ValueError("telegram_file_root: нужен абсолютный каталог локального Bot API")
+        if local_api:
+            if limits.max_file_bytes > 1_900_000_000 or not 21_000_000 <= limits.export_part_bytes <= 1_950_000_000:
+                raise ValueError("Локальный Bot API: файл до 1900 MB, часть экспорта 21–1950 MB")
+        elif limits.max_file_bytes > 20_000_000 or not 21_000_000 <= limits.export_part_bytes <= 45_000_000:
             raise ValueError("Для облачного Bot API: файл до 20 MB, часть экспорта 21–45 MB")
         directory = Path(raw.get("data_dir", "data"))
         if not directory.is_absolute():
@@ -86,4 +101,5 @@ class Config:
         if not 1024 <= web_port <= 65535:
             raise ValueError("web_port: допустимо 1024–65535")
         return cls(token, frozenset(ids), key, directory.resolve(),
-                   raw.get("groq_model", "whisper-large-v3-turbo"), llm, limits, tuple(models), web_url, web_port, name_model)
+                   raw.get("groq_model", "whisper-large-v3-turbo"), llm, limits, tuple(models), web_url, web_port,
+                   name_model, api_base, Path(file_root).resolve() if local_api else None)

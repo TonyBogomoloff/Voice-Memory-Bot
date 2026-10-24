@@ -14,7 +14,9 @@ from .store import safe_component
 
 
 def is_audio(note):
-    return note["kind"] in {"voice", "audio"} or (note["kind"] == "document" and note.get("origin") != "web")
+    return note["kind"] in {"voice", "audio"} or (
+        note["kind"] == "document" and note.get("origin") != "web"
+        and note["extension"] in {"ogg", "mp3", "mp4", "mpeg", "mpga", "m4a", "flac", "wav", "webm"})
 
 
 def media_label(note):
@@ -44,7 +46,7 @@ class Archive:
         return self.root / str(owner) / identity
 
     def audio(self, note):
-        if note.get("origin") == "web":
+        if note.get("origin") == "web" or note["kind"] == "file":
             extension = note["extension"]
             if not extension.isascii() or not extension.isalnum() or not 1 <= len(extension) <= 12:
                 raise ValueError("invalid_upload_extension")
@@ -92,6 +94,8 @@ class Archive:
 
     def persist_text(self, note, folder):
         directory = self.directory(note)
+        if note.get("source_json"):
+            atomic_write(directory / "source.json", note["source_json"])
         if note["transcript"] is not None:
             atomic_write(directory / "transcript.txt", note["transcript"])
         atomic_write(directory / "note.md", self.markdown(note, folder))
@@ -109,15 +113,17 @@ class Archive:
             shutil.rmtree(directory)
 
     def export(self, notes, folders, output: Path, include_audio: bool, part_bytes: int,
-               *, text_format="pdf", audio_only=False, settings=None):
+               *, text_format="pdf", audio_only=False, raw_only=False, settings=None):
         """One complete history document per folder, plus optional unmodified audio.
 
         Split ZIPs at file boundaries, never split or truncate a topic's document.
         Audio checksums describe the bytes actually copied into the archive.
         """
-        if text_format not in {"pdf", "markdown"} or audio_only and not include_audio:
+        if text_format not in {"pdf", "markdown"} or (audio_only or raw_only) and not include_audio:
             raise ValueError("invalid_export_format")
         notes = sorted(notes, key=lambda n: (n["created_at"], n["id"]))
+        if raw_only:
+            notes = [note for note in notes if not note.get("ai_generated_from")]
         folders = list(folders)
         if audio_only:
             notes = [note for note in notes
@@ -143,11 +149,18 @@ class Archive:
                 media_dir = ("photos" if note["kind"] == "photo" else "audio" if is_audio(note)
                              else "videos" if note["kind"] in {"video", "video_note"} else "files")
                 audio_names[note["id"]] = f"{media_dir}/{date}_{safe_component(note['title'])}_{note['id']}.{note['extension']}"
+                if raw_only:
+                    # Keep the filename (including extension) under a unique note directory.
+                    original_name = (note.get("original_name") or original.name).replace("\\", "/").split("/")[-1]
+                    original_name = "".join(c for c in original_name if c.isprintable())[:180]
+                    if original_name in {"", ".", ".."}:
+                        original_name = "original." + note["extension"]
+                    audio_names[note["id"]] = f"{date}_{note['id']}/media/{original_name}"
                 audio_paths[note["id"]] = original
         metadata = {
             "schema_version": 3, "exported_at": datetime.now(UTC).isoformat(),
-            "content": "audio" if audio_only else "all" if include_audio else "text",
-            "text_format": None if audio_only else text_format,
+            "content": "raw" if raw_only else "audio" if audio_only else "all" if include_audio else "text",
+            "text_format": None if audio_only or raw_only else text_format,
             "folders": [{"id": f["id"], "name": f["name"], "path": folder_paths[f["id"]],
                          "aliases": json.loads(f["aliases"]), "is_inbox": bool(f["is_inbox"]),
                          "mode": f.get("mode", "notes")} for f in folders],
@@ -156,7 +169,7 @@ class Archive:
         prefix = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))[:-1].encode() + b',"files":['
         suffix = b"]}\n"
         directories = [path + "/" for path in folder_paths.values()]
-        part_digits = max(3, len(str(max(1, len(notes) + len(folders)))))
+        part_digits = max(3, len(str(max(1, len(notes) * (4 if raw_only else 1) + len(folders)))))
         manifest_name = "manifest-" + "0" * part_digits + ".json"
 
         def entry_size(name, size):
@@ -190,7 +203,7 @@ class Archive:
                 if not grouped:
                     continue
                 folder_path, folder = folder_paths[folder_id], by_id[folder_id]
-                if not audio_only:
+                if not audio_only and not raw_only:
                     if text_format == "pdf":
                         name, data = folder_path + "/history.pdf", history_pdf(grouped, folder, audio_names)
                     else:
@@ -202,6 +215,26 @@ class Archive:
                     details = [{k: n[k] for k in fields if k in n} for n in grouped]
                     yield name, data, {"kind": "history", "folder_id": folder_id, "notes": details}
                 for note in grouped:
+                    if raw_only:
+                        source = json.loads(note.get("source_json") or "{}")
+                        date = datetime.fromtimestamp(note["created_at"], UTC).strftime("%Y-%m-%d_%H-%M-%S")
+                        base = f"{folder_path}/{date}_{note['id']}"
+                        details = {"kind": note["kind"], "folder_id": folder_id, "note_id": note["id"],
+                                   "created_at": note["created_at"], "original_name": note.get("original_name"),
+                                   "mime_type": note.get("mime_type"), "source": source,
+                                   "legacy_source": not bool(source)}
+                        yield base + "/message.json", json.dumps(details, ensure_ascii=False, indent=2).encode(), {
+                            "kind": "source_metadata", "folder_id": folder_id, "note_id": note["id"]}
+                        original_text = source.get("text")
+                        if original_text is None and note["kind"] == "text":
+                            original_text = note["transcript"]
+                        caption = source.get("caption")
+                        if caption is None and note["kind"] == "photo":
+                            caption = note["transcript"]
+                        for filename, value in (("text.txt", original_text), ("caption.txt", caption)):
+                            if value is not None:
+                                yield base + "/" + filename, value.encode("utf-8"), {
+                                    "kind": "source_text", "folder_id": folder_id, "note_id": note["id"]}
                     if note["id"] in audio_paths:
                         name = folder_path + "/" + audio_names[note["id"]]
                         yield name, audio_paths[note["id"]], {
