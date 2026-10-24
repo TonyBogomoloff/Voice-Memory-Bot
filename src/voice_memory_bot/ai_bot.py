@@ -106,7 +106,8 @@ class AIBotMixin:
         if request is None:
             return False
         current = self.store.note(owner, identity)
-        if request["trigger"] == "name" and current["transcript_message_id"]:
+        if (request["trigger"] == "name" and current["transcript_message_id"]
+                and current["transcript_message_id"] != current["message_id"]):
             await self.edit_note_buttons(owner, current["transcript_message_id"], keys())
         self.store.update_note(owner, identity, state="ready", routing="ai", requested_folder=None,
                                title=" ".join((note["transcript"] or "").split())[:80] or "Диалог с ИИ",

@@ -107,6 +107,7 @@ def test_full_cleanup_removes_only_owner_data_and_all_known_telegram_locations(b
         bot.cleanup.remember(1, 1105, 140)
         bot.cleanup.remember(2, 1105, 140)
         bot.store.set_export_format(1, "markdown")
+        bot.store.set_message_buttons(1, True)
         bot.ai_state.set_settings(1, model="saved-model")
         bot.store.reserve_asr(1, 20)
         bot.store.set_action(1, "create")
@@ -126,6 +127,7 @@ def test_full_cleanup_removes_only_owner_data_and_all_known_telegram_locations(b
         assert bot.store.one("SELECT * FROM telegram_messages WHERE owner=2 AND message_id=1105")
         assert bot.store.one("SELECT 1 FROM note_messages WHERE owner=2 AND message_id=2106")
         assert bot.store.export_format(1) == "pdf"
+        assert not bot.store.message_buttons_enabled(1)
         assert bot.store.one("SELECT model FROM ai_settings WHERE owner=1") is None
         assert bot.store.one("SELECT seconds FROM asr_usage WHERE owner=1") is None
         assert bot.store.one("SELECT * FROM updates WHERE id=5") is None

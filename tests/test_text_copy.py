@@ -10,6 +10,7 @@ from voice_memory_bot.providers import ProviderError
 @pytest.mark.parametrize("text", ["  Точный текст\nс переносом  ", "Длинный текст " * 400])
 def test_text_copy_is_immediate_standalone_and_deletes_original_after_all_chunks(bot, text):
     async def run():
+        bot.store.set_message_buttons(1, True)
         await receive(bot, text, 5001)
         sent = [p for m, p in bot.telegram.sent if m == "sendMessage"]
         assert ''.join(p['text'] for p in sent) == text
@@ -27,6 +28,7 @@ def test_text_copy_is_immediate_standalone_and_deletes_original_after_all_chunks
 @pytest.mark.parametrize('failed_method', ['sendMessage', 'deleteMessage'])
 def test_text_copy_failure_keeps_original_and_does_not_duplicate_copy(bot, failed_method):
     async def run():
+        bot.store.set_message_buttons(1, True)
         original_call = bot.telegram.call
 
         async def fail(method, **payload):

@@ -36,6 +36,7 @@ def photo_bot(tmp_path, store):
 @pytest.mark.parametrize("caption", ["", "Сохрани в проект Работа. Подпись к снимку."])
 def test_photo_controls_archive_and_move_delete_source_messages(tmp_path, store, caption):
     async def run():
+        store.set_message_buttons(1, True)
         game = store.create_folder(1, "Игра", thread=100)
         store.select(1, game["id"])
         work = store.create_folder(1, "Работа", thread=200)
@@ -87,6 +88,7 @@ def test_photo_controls_archive_and_move_delete_source_messages(tmp_path, store,
 
 def test_photo_failed_download_can_retry_without_losing_controls(tmp_path, store):
     async def run():
+        store.set_message_buttons(1, True)
         store.create_folder(1, "Игра", thread=100)
         bot = photo_bot(tmp_path, store)
         download = bot.telegram.download
@@ -136,6 +138,7 @@ def test_photo_move_works_without_telegram_delivery(tmp_path, store):
 @pytest.mark.parametrize("failure", ["sendPhoto", "deleteMessage"])
 def test_repost_failure_never_deletes_before_confirmed_delivery(tmp_path, store, failure):
     async def run():
+        store.set_message_buttons(1, True)
         store.create_folder(1, "Игра", thread=100)
         bot = photo_bot(tmp_path, store)
         call = bot.telegram.call

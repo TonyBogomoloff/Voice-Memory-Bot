@@ -58,10 +58,11 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
         # Every navigation send uses a reply keyboard, no buttons attached to chat messages.
         assert all("inline_keyboard" not in (p.get("keyboard") or {})
                    for m, p in bot.telegram.sent if m == "sendMessage")
+        sent_before = len(bot.telegram.sent)
         await receive(bot, "Это обычная заметка", 1011)
         note = bot.store.notes(1)[0]
         assert note["folder_id"] == folder and note["transcript"] == "Это обычная заметка"
-        assert [b["text"] for b in last_message(bot)["keyboard"]["inline_keyboard"][0]] == ["Переместить", "Удалить", "ИИ"]
+        assert len(bot.telegram.sent) == sent_before and note["transcript_message_id"] == 1011
     asyncio.run(run())
 
 
@@ -158,13 +159,14 @@ def test_duplicate_search_titles_resolve_exact_notes_and_paginate(bot):
         expected = bot.store.note(1, action.split(":")[1])["transcript"]
         await receive(bot, label, 3005)
         assert last_message(bot)["text"] == expected
-        assert [b["text"] for b in last_message(bot)["keyboard"]["inline_keyboard"][0]] == ["Переместить", "Удалить", "ИИ"]
+        assert last_message(bot)["keyboard"]["inline_keyboard"] == []
         assert len(bot.store.notes(1, limit=50)) == 12
     asyncio.run(run())
 
 
 def test_note_options_remain_attached_and_do_not_change_bottom_screen(bot):
     async def run():
+        bot.store.set_message_buttons(1, True)
         await receive(bot, "/settings", 1000)
         await receive(bot, "Запись", 1001)
         note = bot.store.notes(1)[0]

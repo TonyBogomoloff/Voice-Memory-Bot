@@ -225,6 +225,7 @@ def test_old_topic_cleanup_does_not_block_switch_and_clears_before_header(bot):
 
 def test_switch_has_all_records_and_no_persistent_header_or_menu(bot):
     async def run():
+        bot.store.set_message_buttons(1, True)
         old = bot.store.ensure_user(1)
         work = bot.store.create_folder(1, 'Работа')['id']
         await bot.show_notes(1, None, old)

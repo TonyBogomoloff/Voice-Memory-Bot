@@ -418,6 +418,7 @@ def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
     from test_photos import PHOTO, receive_photo
 
     async def run():
+        bot.store.set_message_buttons(1, True)
         bot.store.create_folder(1, "Фото", thread=100)
         async def download(file_id, path, maximum):
             path.parent.mkdir(parents=True, exist_ok=True)

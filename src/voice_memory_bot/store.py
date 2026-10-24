@@ -54,6 +54,10 @@ class Store:
                 owner INTEGER PRIMARY KEY REFERENCES users(id),
                 text_format TEXT NOT NULL DEFAULT 'pdf' CHECK(text_format IN ('pdf', 'markdown'))
             );
+            CREATE TABLE IF NOT EXISTS user_message_settings (
+                owner INTEGER PRIMARY KEY REFERENCES users(id),
+                buttons_enabled INTEGER NOT NULL DEFAULT 0 CHECK(buttons_enabled IN (0, 1))
+            );
             CREATE TABLE IF NOT EXISTS notes (
                 id TEXT PRIMARY KEY, owner INTEGER NOT NULL REFERENCES users(id),
                 folder_id TEXT NOT NULL REFERENCES folders(id), source_folder TEXT NOT NULL,
@@ -169,6 +173,19 @@ class Store:
                     raise ValueError("Внизу уже 4 папки. Открой одну из них и нажми «Убрать снизу», "
                                      "затем закрепи нужную.")
             self.db.execute("UPDATE folders SET pin_slot=? WHERE owner=? AND id=?", (slot, owner, identity))
+
+    def message_buttons_enabled(self, owner: int) -> bool:
+        row = self.one("SELECT buttons_enabled FROM user_message_settings WHERE owner=?", (owner,))
+        return bool(row and row["buttons_enabled"])
+
+    def set_message_buttons(self, owner: int, enabled: bool):
+        if type(enabled) is not bool:
+            raise ValueError("Выбери, показывать ли кнопки у сообщений")
+        self.register_user(owner)
+        with self.db:
+            self.db.execute("INSERT INTO user_message_settings(owner,buttons_enabled) VALUES (?,?) "
+                            "ON CONFLICT(owner) DO UPDATE SET buttons_enabled=excluded.buttons_enabled",
+                            (owner, int(enabled)))
 
     def export_format(self, owner: int) -> str:
         row = self.one("SELECT text_format FROM user_export_settings WHERE owner=?", (owner,))

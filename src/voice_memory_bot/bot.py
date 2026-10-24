@@ -660,6 +660,11 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             return await self.export_menu(owner, thread, identity, message_id)
         if action == "settings":
             return await self.settings_menu(owner, thread, message_id)
+        if action == "messagebuttons":
+            if identity not in {"0", "1"}:
+                raise ValueError("Открой настройки заново")
+            self.store.set_message_buttons(owner, identity == "1")
+            return await self.settings_menu(owner, thread, message_id)
         if action == "exportsettings":
             return await self.export_settings(owner, thread, identity or "all", message_id)
         if action == "exportformat":
@@ -782,11 +787,18 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
 
     async def settings_menu(self, owner, thread, edit_id=None):
         label = "PDF" if self.store.export_format(owner) == "pdf" else "Markdown"
-        rows = [[button(f"📦 Экспорт · {label}", "exportsettings:all")]]
+        enabled = self.store.message_buttons_enabled(owner)
+        rows = [[button("Кнопки у сообщений: " + ("вкл" if enabled else "выкл"),
+                        f"messagebuttons:{0 if enabled else 1}")],
+                [button(f"📦 Экспорт · {label}", "exportsettings:all")]]
         if hasattr(self, "ai_settings"):
             rows.append([button("🤖 Настройки ИИ", "aisettings")])
         rows.append([button("🗑 Удалить всё", "deleteall")])
-        await self.show_bottom(owner, "⚙️ Настройки", thread, keyboard(*rows), screen="settings:all",
+        text = ("⚙️ Настройки\n\n"
+                "Кнопки у сообщений: «Переместить», «Удалить», «ИИ».\n"
+                "Когда выключены, новые текстовые сообщения и фото остаются как есть, без замены копией.\n"
+                "Архив и расшифровка работают в обоих режимах.")
+        await self.show_bottom(owner, text, thread, keyboard(*rows), screen="settings:all",
                                back="home", edit_id=edit_id)
 
     async def export_settings(self, owner, thread, scope="all", edit_id=None):
@@ -1030,6 +1042,12 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         note = self.store.note(note["owner"], note["id"])
         if note["transcript_delivery"] in {"sending", "unknown"}:
             return
+        if not error and not self.store.message_buttons_enabled(note["owner"]):
+            message_id = note["result_message_id"] or note["message_id"]
+            self.store.update_note(note["owner"], note["id"], transcript_delivery="sent",
+                                   transcript_message_id=message_id, result_message_id=message_id,
+                                   result_thread=note["source_thread"])
+            return
         edit_id = note["transcript_message_id"] if note["transcript_delivery"] == "sent" else None
         text = "Не удалось сохранить фото. Попробуй ещё раз." if error else "📷 Фото"
         keys = keyboard([button("Повторить", f"retry:{note['id']}")]) if error else self.note_controls(note, note["source_thread"])
@@ -1038,7 +1056,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             if error:
                 response = await self._show(note["owner"], text, note["source_thread"], keys, edit_id)
                 self.messages.record(note, response["message_id"], note["source_thread"], "photo_controls")
-            elif note["result_message_id"]:
+            elif note["result_message_id"] and note["result_message_id"] != note["message_id"]:
                 await self.telegram.call("editMessageReplyMarkup", chat_id=note["owner"],
                     message_id=note["result_message_id"], reply_markup=keys)
                 response = {"message_id": note["result_message_id"]}
@@ -1058,6 +1076,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             log.warning("photo delivery unknown note_id=%s", note["id"])
 
     async def cleanup_photo_source(self, note):
+        if not self.store.message_buttons_enabled(note["owner"]):
+            return
         if note["transcript_delivery"] != "sent" or not self.store.one(
             "SELECT 1 FROM note_messages WHERE owner=? AND note_id=? AND kind='photo_repost' AND deleted=0",
             (note["owner"], note["id"])):
@@ -1145,6 +1165,12 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         note = self.store.note(owner, identity)
         if not note["transcript"] or note["transcript_delivery"] != "pending":
             return
+        if note["kind"] == "text" and not self.store.message_buttons_enabled(owner):
+            # The original is the visible text and the reply target; persist it so
+            # retries, AI replies and later moves use the same exact Telegram ID.
+            self.store.update_note(owner, identity, transcript_delivery="sent",
+                                   transcript_message_id=note["message_id"])
+            return
         edit_id = note["status_message_id"]
         # The status becomes archive text: never let later cleanup delete it, even
         # if Telegram accepts the edit but its response is lost or the process exits.
@@ -1157,7 +1183,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             self.store.update_note(owner, identity, transcript_delivery="unknown")
             log.warning("transcript delivery unknown note_id=%s error=%s", identity, exc)
             return
-        if note["kind"] == "text":
+        if note["kind"] == "text" and self.store.message_buttons_enabled(owner):
             try:
                 await self.telegram.call("deleteMessage", chat_id=owner, message_id=note["message_id"])
             except ProviderError as exc:
@@ -1221,7 +1247,9 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                 else:
                     photo = self.store.one("SELECT n.* FROM notes n JOIN note_messages m ON m.note_id=n.id "
                         "WHERE n.kind='photo' AND n.deleted=0 AND n.transcript_delivery='sent' "
-                        "AND m.kind='source' AND m.deleted=0 AND EXISTS (SELECT 1 FROM note_messages r "
+                        "AND m.kind='source' AND m.deleted=0 "
+                        "AND EXISTS (SELECT 1 FROM user_message_settings s WHERE s.owner=n.owner AND s.buttons_enabled=1) "
+                        "AND EXISTS (SELECT 1 FROM note_messages r "
                         "WHERE r.note_id=n.id AND r.kind='photo_repost' AND r.deleted=0) LIMIT 1")
                     if photo:
                         await self.cleanup_photo_source(photo)

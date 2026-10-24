@@ -309,6 +309,7 @@ async def receive_voice(bot, message_id=10, thread=100):
 @pytest.mark.parametrize("thread", [None, 100])
 def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_path, store, thread):
     async def run():
+        store.set_message_buttons(1, True)
         game = store.create_folder(1, "Игра", thread=100)
         store.select(1, game["id"])
         bot = make_bot(tmp_path, store)
@@ -335,6 +336,7 @@ def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_pat
 @pytest.mark.parametrize("thread", [None, 100])
 def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store, thread):
     async def run():
+        store.set_message_buttons(1, True)
         store.create_folder(1, "Игра", thread=100)
         bot = make_bot(tmp_path, store)
         raw = "Сохрани в проект Игра.\n" + "Идея 🚀 <текст> & ещё одна.\n" * 400
@@ -357,6 +359,7 @@ def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store, thre
 
 def test_voice_options_move_changes_archive_and_removes_source(tmp_path, store):
     async def run():
+        store.set_message_buttons(1, True)
         store.create_folder(1, "Игра", thread=100)
         work = store.create_folder(1, "Работа", thread=200)
         bot = make_bot(tmp_path, store)
@@ -609,6 +612,7 @@ def test_config_reads_only_named_bot_from_shared_secrets(tmp_path):
 @pytest.mark.parametrize("fallback", ["missing_status", "edit_refused"])
 def test_voice_transcript_fallback_is_standalone_with_options(tmp_path, store, fallback):
     async def run():
+        store.set_message_buttons(1, True)
         bot = make_bot(tmp_path, store)
         await receive_voice(bot, thread=None)
         note = store.notes(1)[0]

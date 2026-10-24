@@ -69,6 +69,8 @@ class FolderMenuMixin:
             await self.telegram.call("setChatMenuButton", chat_id=owner, menu_button={"type": "commands"})
 
     def note_controls(self, note, thread):
+        if not self.store.message_buttons_enabled(note["owner"]):
+            return {"inline_keyboard": []}
         if note.get("entry_type") == "ai" or self.ai_state.request(note["owner"], note["id"]):
             return {"inline_keyboard": []}
         rows = [[
