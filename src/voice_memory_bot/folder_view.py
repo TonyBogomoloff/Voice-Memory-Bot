@@ -29,6 +29,9 @@ class FolderViewMixin:
         if "screen" not in {r[1] for r in self.store.db.execute("PRAGMA table_info(folder_views)")}:
             self.store.db.execute("ALTER TABLE folder_views ADD COLUMN screen TEXT")
 
+        if "command_message_id" not in {r[1] for r in self.store.db.execute("PRAGMA table_info(folder_views)")}:
+            self.store.db.execute("ALTER TABLE folder_views ADD COLUMN command_message_id INTEGER")
+
     def remember_screen(self, owner, thread, text, keys):
         if (owner in self.view_rendering or owner in self.deleting_owners or (self.cleanup.job(owner) or {}).get("files_pending")):
             return
@@ -48,7 +51,7 @@ class FolderViewMixin:
             self.store.one("SELECT 1 FROM ai_requests WHERE owner=? AND "
                            "(state IN ('queued','running') OR delivery='pending') LIMIT 1", (owner,)))
 
-    async def show_notes(self, owner, thread, identity, page=0, edit_id=None, notice=None):
+    async def show_notes(self, owner, thread, identity, page=0, edit_id=None, notice=None, command_message_id=None):
         self.store.folder(owner, identity)
         self.store.set_action(owner, None)
         self.store.select(owner, identity)
@@ -60,6 +63,9 @@ class FolderViewMixin:
             self.store.db.execute("INSERT INTO folder_views(owner,folder_id,thread_id,page,dirty) VALUES (?,?,?,?,1) ON CONFLICT(owner) "
                                   "DO UPDATE SET folder_id=excluded.folder_id,thread_id=excluded.thread_id,"
                                   "page=excluded.page,dirty=1,screen=NULL", (owner, identity, thread, max(0, page)))
+        with self.store.db:
+            self.store.db.execute("UPDATE folder_views SET command_message_id=? WHERE owner=?",
+                                  (command_message_id, owner))
         if self.view_busy(owner):
             return await self.refresh_folder_keyboard(owner, thread, force=True,
                 notice="Папка выбрана. Обновлю сообщения, когда завершу текущую обработку.")
@@ -135,7 +141,8 @@ class FolderViewMixin:
         token = silent_delivery.set(True)
         try:
             self.folder_keyboards.pop(owner, None)
-            leftovers = await self.clear_folder_view(owner, thread, all_threads=True)
+            leftovers = await self.clear_folder_view(owner, thread, all_threads=True,
+                                                      keep_ids=(view['command_message_id'],))
             await self.refresh_folder_keyboard(owner, thread, notice=notice)
             if restore_screen and view['screen']:
                 screen = json.loads(view['screen'])
@@ -196,11 +203,11 @@ class FolderViewMixin:
                     self.store.db.execute('DELETE FROM folder_views WHERE owner=?', (owner,))
                 continue
             oldest = self.store.one('SELECT min(coalesce(sent_at,0)) AS age FROM telegram_messages '
-                                    "WHERE owner=? AND view_blocked=0 AND NOT EXISTS ("
+                                    "WHERE owner=? AND view_blocked=0 AND message_id IS NOT ? AND NOT EXISTS ("
                                     "SELECT 1 FROM notes n WHERE n.owner=telegram_messages.owner AND "
                                     "n.message_id=telegram_messages.message_id AND n.deleted=0 "
                                     "AND n.file_id IS NOT NULL AND n.audio_bytes=0)",
-                                    (owner,))['age']
+                                    (owner, view['command_message_id']))['age']
             changed = not view['screen'] and (self.store.current_folder(owner) or '') != view['folder_id']
             if not view['dirty'] and not changed and (oldest is None or now - oldest < RENEW_AFTER):
                 continue

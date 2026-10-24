@@ -241,3 +241,31 @@ def test_switch_has_one_header_all_records_and_no_trailing_menu(bot):
         await bot.callback(1, None, 5000, f'foldermenu:{work}')
         assert 'Удалить папку' in str(bot.telegram.sent[-1])
     asyncio.run(run())
+
+
+def test_switch_keeps_latest_user_command_including_deferred_render_and_restart(bot):
+    async def run():
+        inbox = bot.store.ensure_user(1)
+        work = bot.store.create_folder(1, 'Работа')['id']
+        await receive(bot, '📌 Работа', 7001)
+        assert not any(m == 'deleteMessage' and p['message_id'] == 7001 for m, p in bot.telegram.sent)
+        note = saved(bot, work, 'Обработка', 8001)
+        bot.store.update_note(1, note['id'], state='processing')
+        await receive(bot, '📌 Входящие', 7002)
+        assert bot.store.current_folder(1) == inbox
+        bot.init_folder_view()
+        bot.store.update_note(1, note['id'], state='ready')
+        bot.telegram.sent.clear()
+        await bot.refresh_due_views()
+        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        assert 7001 in deleted and 7002 not in deleted
+        assert bot.store.one('SELECT * FROM telegram_messages WHERE message_id=7002')
+        with bot.store.db:
+            bot.store.db.execute('UPDATE telegram_messages SET sent_at=1 WHERE message_id=7002')
+        bot.telegram.sent.clear()
+        await bot.refresh_due_views()
+        assert not bot.telegram.sent  # The retained command must not trigger an endless renewal loop.
+        await receive(bot, '📌 Работа', 7003)
+        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        assert 7002 in deleted and 7003 not in deleted
+    asyncio.run(run())

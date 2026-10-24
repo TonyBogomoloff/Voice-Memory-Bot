@@ -281,7 +281,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             if text in MENU_COMMANDS:
                 return await self.command(owner, thread, MENU_COMMANDS[text], "")
             if self.is_folder_button(text):
-                return await self.select_folder_button(owner, thread, text)
+                return await self.select_folder_button(owner, thread, text, message["message_id"])
             if text.startswith("/"):
                 command, _, argument = text.partition(" ")
                 return await self.command(owner, thread, command.split("@")[0].lower(), argument.strip())

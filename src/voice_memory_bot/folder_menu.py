@@ -62,13 +62,13 @@ class FolderMenuMixin:
     def is_folder_button(text):
         return text.startswith(FOLDER_PREFIXES) and "\n" not in text
 
-    async def select_folder_button(self, owner, thread, text):
+    async def select_folder_button(self, owner, thread, text, message_id=None):
         # Reply keyboards send text. Use full names, never truncated labels or a reused slot number.
         # Stale or unpinned names refresh navigation instead of becoming notes.
         for folder in self.store.folders(owner):
             if text in {prefix + folder["name"] for prefix in FOLDER_PREFIXES}:
                 self.folder_delete_confirmations.pop(owner, None)
-                return await self.show_notes(owner, thread, folder["id"])
+                return await self.show_notes(owner, thread, folder["id"], command_message_id=message_id)
         self.store.set_action(owner, None)
         await self.refresh_folder_keyboard(owner, thread, force=True,
             notice="Эта кнопка устарела. Выбери папку внизу или открой «Все папки».")
