@@ -34,7 +34,7 @@ def photo_bot(tmp_path, store):
 
 
 @pytest.mark.parametrize("caption", ["", "Сохрани в проект Работа. Подпись к снимку."])
-def test_photo_controls_archive_and_move_preserve_source_messages(tmp_path, store, caption):
+def test_photo_controls_archive_and_move_delete_source_messages(tmp_path, store, caption):
     async def run():
         game = store.create_folder(1, "Игра", thread=100)
         store.select(1, game["id"])
@@ -73,10 +73,11 @@ def test_photo_controls_archive_and_move_preserve_source_messages(tmp_path, stor
         await bot.callback(1, 100, control_id, f"pick:{note['id']}:0")
         bot.telegram.sent.clear()
         notification = await bot.callback(1, 100, control_id, f"place:{note['id']}:{work['id']}")
-        assert bot.telegram.sent == []
+        assert [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"] == [note["result_message_id"], control_id]
         assert notification == "Перенесено в «Работа»."
         assert store.note(1, note["id"])["folder_id"] == work["id"]
-        assert bot.messages.in_thread(1, note["id"], 100) == [note["result_message_id"], control_id]
+        assert bot.messages.in_thread(1, note["id"], 100) == []
+        bot.telegram.sent.clear()
         await bot.move(1, note["id"], game["id"], 200)
         assert bot.telegram.sent == []
         assert store.note(1, note["id"])["folder_id"] == game["id"]
@@ -125,9 +126,9 @@ def test_photo_move_works_without_telegram_delivery(tmp_path, store):
         bot.telegram.call = fail_photo
         bot.telegram.sent.clear()
         await bot.move(1, note["id"], work["id"], 100)
-        assert all(m != "deleteMessage" for m, _ in bot.telegram.sent)
+        assert all(m == "deleteMessage" for m, _ in bot.telegram.sent)
         assert store.note(1, note["id"])["folder_id"] == work["id"]
-        assert bot.messages.in_thread(1, note["id"], 100) == [note["result_message_id"], note["transcript_message_id"]]
+        assert bot.messages.in_thread(1, note["id"], 100) == []
     asyncio.run(run())
 
 

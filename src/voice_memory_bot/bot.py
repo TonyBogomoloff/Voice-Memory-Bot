@@ -476,6 +476,9 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
         folders = self.store.folders(owner)
+        if note_id:
+            source = self.store.note(owner, note_id)["folder_id"]
+            folders = [folder for folder in folders if folder["id"] != source]
         active = self.store.current_folder(owner)
         rows = []
         page = max(0, min(page, (len(folders) - 1) // 4))
@@ -592,7 +595,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             self.remember_screen(owner, receipt['thread_id'], text, keys)
 
     async def choose_note_folder(self, owner, identity, message_id, page):
-        folders = self.store.folders(owner)
+        source = self.store.note(owner, identity)["folder_id"]
+        folders = [folder for folder in self.store.folders(owner) if folder["id"] != source]
         page = max(0, min(page, (len(folders) - 1) // 8))
         rows = [[button(f"📁 {folder['name']}", f"place:{identity}:{folder['id']}")]
                 for folder in folders[page * 8:(page + 1) * 8]]
@@ -844,13 +848,17 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         async with self.note_locks[identity]:
             if folder_id == note["folder_id"]:
                 return "Запись уже в этой папке."
-            self.store.update_note(owner, identity, folder_id=folder_id, routing="manual",
-                                   requested_folder=None, archive_dirty=1)
-            return f"Перенесено в «{folder['name']}»."
+            if note["file_id"] and not note["audio_bytes"]:
+                raise ValueError("Сначала повтори сохранение файла, затем перенеси запись")
+            move = self.messages.move_archive(note, folder_id)
+            result = await self.cleanup_move(move)
+            return f"Перенесено в «{folder['name']}»." if result == "Запись перенесена." else result
 
     async def cleanup_move(self, move):
         owner, identity = move["owner"], move["note_id"]
-        remaining = set(self.messages.in_thread(owner, identity, move["source_thread"]))
+        remaining = {row["message_id"] for row in self.store.all(
+            "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0",
+            (owner, identity))}
         transient, forbidden = False, False
         for message_id in json.loads(move["source_ids"]):
             if message_id not in remaining:
@@ -866,6 +874,9 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                     transient = True
                     continue
             self.messages.removed(owner, identity, message_id)
+            with self.store.db:
+                self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
+                                      (owner, message_id))
         if transient:
             self.messages.state(owner, identity, "cleanup")
             return "Запись перенесена. Удаляю исходные сообщения…"
@@ -1149,7 +1160,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             self.store.update_note(owner, identity, delivery=saved["transcript_delivery"],
                                    result_message_id=saved["transcript_message_id"],
                                    result_thread=saved["source_thread"])
-            # Moving a note only changes its archive folder; Telegram history stays in place.
+            # Explicit moves separately clean up the saved Telegram representations.
         except ProviderError as exc:
             self.store.update_note(owner, identity, delivery="unknown")
             log.warning("note delivery unknown note_id=%s error=%s method=%s reason=%s", identity, exc,

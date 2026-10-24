@@ -355,7 +355,7 @@ def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store, thre
     asyncio.run(run())
 
 
-def test_voice_options_move_changes_archive_with_only_toast(tmp_path, store):
+def test_voice_options_move_changes_archive_and_removes_source(tmp_path, store):
     async def run():
         store.create_folder(1, "Игра", thread=100)
         work = store.create_folder(1, "Работа", thread=200)
@@ -378,7 +378,9 @@ def test_voice_options_move_changes_archive_with_only_toast(tmp_path, store):
             "message": {"message_id": message_id, "message_thread_id": 100,
                         "chat": {"id": 1, "type": "private"}}}})
         assert store.note(1, note["id"])["folder_id"] == work["id"]
-        assert not any(method.startswith("send") or method == "deleteMessage" for method, _ in bot.telegram.sent)
+        assert not any(method.startswith("send") for method, _ in bot.telegram.sent)
+        assert any(method == "deleteMessage" and payload["message_id"] == message_id
+                   for method, payload in bot.telegram.sent)
         assert bot.telegram.sent[-1] == ("answerCallbackQuery", {
             "callback_query_id": "move-click", "text": "Перенесено в «Работа»."})
     asyncio.run(run())
@@ -479,14 +481,17 @@ def test_move_does_not_contact_deleted_telegram_topics(tmp_path, store, kind):
     async def run():
         target = store.create_folder(1, "Игра", thread=100)
         bot = make_bot(tmp_path, store)
-        note = add(store, kind=kind, file_id="voice-id" if kind == "voice" else None,
-                   transcript="Длинная идея. " * 700)
+        if kind == "voice":
+            await receive_voice(bot)
+            note = store.notes(1)[0]
+        else:
+            note = add(store, kind=kind, transcript="Длинная идея. " * 700)
         await bot.process(store.claim_note())
         bot.telegram.sent.clear()
         bot.telegram.fail_delivery = True
         await bot.move(1, note["id"], target["id"], None)
         assert store.note(1, note["id"])["folder_id"] == target["id"]
-        assert bot.telegram.sent == []
+        assert all(method == "deleteMessage" for method, _ in bot.telegram.sent)
     asyncio.run(run())
 
 

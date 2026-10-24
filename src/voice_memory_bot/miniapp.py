@@ -378,8 +378,7 @@ class MiniApp:
         previous = self.bot.messages.get(owner, identity)
         if previous and previous["state"] not in {"done", "blocked"}:
             raise web.HTTPConflict(text="Сначала заверши перенос этой записи в боте.")
-        async with self.bot.note_locks[identity]:
-            self.store.update_note(owner, identity, folder_id=folder["id"], routing="manual", archive_dirty=1)
+        await self.bot.move(owner, identity, folder["id"], note["source_thread"])
         return web.json_response(self.public_note(self.store.note(owner, identity)))
 
     async def retry(self, request):

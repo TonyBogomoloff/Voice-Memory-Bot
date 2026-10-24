@@ -60,6 +60,30 @@ class MessageStore:
             "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND thread_id IS ? "
             "AND deleted=0 ORDER BY message_id", (owner, identity, thread))]
 
+    def move_archive(self, note, folder_id):
+        """Commit the destination and cleanup receipt before deleting messages.
+
+        Folders are archive views; opening the target renders the note there.
+        """
+        owner, identity = note["owner"], note["id"]
+        current = self.store.note(owner, identity)
+        if self.store.folder(owner, folder_id)["removed"]:
+            raise ValueError("Папка удалена. Выбери другую")
+        source_ids = [row["message_id"] for row in self.store.all(
+            "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0 ORDER BY message_id",
+            (owner, identity))]
+        with self.db:
+            self.db.execute("UPDATE notes SET folder_id=?,routing='manual',requested_folder=NULL,archive_dirty=1,"
+                            "revision=revision+? WHERE owner=? AND id=? AND deleted=0",
+                            (folder_id, int(current["state"] == "ready" and current["folder_id"] != folder_id),
+                             owner, identity))
+            self.db.execute("INSERT INTO note_moves VALUES (?,?,?,?,?,'cleanup',NULL,?) "
+                            "ON CONFLICT(note_id) DO UPDATE SET target_folder=excluded.target_folder,"
+                            "source_thread=excluded.source_thread,source_ids=excluded.source_ids,"
+                            "state='cleanup',error=NULL,updated_at=excluded.updated_at",
+                            (identity, owner, folder_id, current["source_thread"], json.dumps(source_ids), time.time()))
+        return self.get(owner, identity)
+
     def begin(self, note, folder_id, thread):
         source_ids = self.in_thread(note["owner"], note["id"], thread)
         with self.db:
