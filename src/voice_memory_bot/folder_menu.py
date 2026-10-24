@@ -95,6 +95,7 @@ class FolderMenuMixin:
         if self.config.web_url:
             hint += "\nMini App: /app"
         await self.refresh_folder_keyboard(owner, thread, force=True, notice=hint)
+        self.remember_screen(owner, thread, hint, self.folder_keyboard(owner))
 
     async def show_main_menu(self, owner, thread=None, edit_id=None):
         from .bot import HOME

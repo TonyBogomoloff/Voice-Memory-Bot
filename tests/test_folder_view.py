@@ -143,3 +143,51 @@ def test_rate_limit_retries_only_refused_send_and_keeps_unsaved_source(bot, monk
         await bot.refresh_due_views()
         assert bot.store.action(1) == 'create'
     asyncio.run(run())
+
+
+def test_daily_cleanup_restores_settings_after_restart_and_cleans_all_known_threads(bot):
+    async def run():
+        assert RENEW_AFTER == 24 * 3600
+        inbox = bot.store.ensure_user(1)
+        old_note = saved(bot, inbox, 'Архивная запись', 1001)
+        await bot.show_notes(1, None, inbox)
+        await receive(bot, '/settings', 2001)
+        bot.cleanup.remember(1, 3001, 99, sent_at=1000)
+        bot.cleanup.remember(2, 3002, 99, sent_at=1000)
+        bot.messages.record(old_note, 3003, 98, 'source')
+        before = bot.store.all('SELECT * FROM notes')
+        bot.init_folder_view()
+        bot.telegram.sent.clear()
+        await bot.refresh_due_views(now=1000 + RENEW_AFTER - 1)
+        assert not bot.telegram.sent
+        await bot.refresh_due_views(now=1000 + RENEW_AFTER)
+        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        assert {3001, 3003} <= deleted and 3002 not in deleted
+        assert bot.telegram.sent[-1][1]['text'] == '⚙️ Настройки'
+        assert not any(p.get('text') == 'Архивная запись' for _, p in bot.telegram.sent)
+        assert bot.store.all('SELECT * FROM notes') == before
+        assert bot.store.current_folder(1) == inbox
+        assert not any(m == 'deleteForumTopic' for m, _ in bot.telegram.sent)
+    asyncio.run(run())
+
+
+def test_settings_without_prior_folder_visit_and_return_to_folder(bot):
+    async def run():
+        await receive(bot, '/settings', 1001)
+        assert bot.store.one('SELECT screen FROM folder_views WHERE owner=1')['screen']
+        with bot.store.db:
+            bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')
+        await bot.refresh_due_views()
+        assert bot.telegram.sent[-1][1]['text'] == '⚙️ Настройки'
+        inbox = bot.store.current_folder(1)
+        await bot.show_notes(1, None, inbox)
+        assert bot.store.one('SELECT screen FROM folder_views WHERE owner=1')['screen'] is None
+        bot.telegram.sent.clear()
+        with bot.store.db:
+            bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')
+        await bot.refresh_due_views()
+        assert '📁 Входящие' in bot.telegram.sent[-1][1]['text']
+        await bot.settings_menu(1, None)
+        bot.cleanup.begin(1)
+        assert bot.store.all('SELECT * FROM folder_views WHERE owner=1') == []
+    asyncio.run(run())

@@ -204,6 +204,11 @@ class Bot(FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
                     self.store.fail_update(update["update_id"])
 
     async def show(self, owner, text, thread=None, keys=None, edit_id=None):
+        result = await self._show(owner, text, thread, keys, edit_id)
+        self.remember_screen(owner, thread, text, keys)
+        return result
+
+    async def _show(self, owner, text, thread=None, keys=None, edit_id=None):
         if edit_id:
             try:
                 return await self.telegram.call("editMessageText", chat_id=owner, message_id=edit_id,
@@ -526,6 +531,12 @@ class Bot(FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
         except ProviderError as exc:
             if getattr(exc, "reason", None) != "not_modified":
                 raise
+        receipt = self.store.one("SELECT note_id,thread_id FROM note_messages "
+                                 "WHERE owner=? AND message_id=?", (owner, message_id))
+        if receipt:
+            note = self.store.note(owner, receipt['note_id'])
+            text, _ = self.note_card(note)
+            self.remember_screen(owner, receipt['thread_id'], text, keys)
 
     async def choose_note_folder(self, owner, identity, message_id, page):
         folders = self.store.folders(owner)
