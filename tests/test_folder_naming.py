@@ -18,7 +18,7 @@ def test_first_folder_voice_name_statuses_keyboard_and_original_survive(tmp_path
             await receive(bot, '/start')
             assert store.folders(1) == [] and store.action(1) == 'create'
             assert 'первую папку' in bot.telegram.sent[-1][1]['text']
-            assert bot.telegram.sent[-1][1]['keyboard'] == {'remove_keyboard': True}
+            assert bot.telegram.sent[-1][1]['keyboard']['is_persistent']
 
             async def transcribe(path, *, prompt=None):
                 assert path.exists() and 'папок' in prompt
@@ -35,10 +35,9 @@ def test_first_folder_voice_name_statuses_keyboard_and_original_survive(tmp_path
             assert store.action(1) is None and store.notes(1) == []
             assert any('Папка «Test 2» создана' in p.get('text', '') for _, p in bot.telegram.sent)
             assert any('✓ 📌 Test 2' in str(p.get('keyboard')) for _, p in bot.telegram.sent)
-            changes = [p for m, p in bot.telegram.sent if m == 'editMessageText']
+            changes = [p for m, p in bot.telegram.sent if m == 'sendMessage' and p['text'].startswith(('✨ ', '📁 Создаю'))]
             assert [p['text'] for p in changes] == ['✨ Выделяю название папки…', '📁 Создаю папку «Test 2»…']
-            assert changes[0]['message_id'] == changes[1]['message_id']
-            assert all(p['reply_markup'] == {'inline_keyboard': []} for p in changes)
+            assert all('keyboard' in p['keyboard'] for p in changes)
             assert (bot.archive.root / '1/folder-names/1001/source.ogg').is_file()
             assert (bot.archive.root / '1/folder-names/1001/transcript.txt').read_text() == 'Давай назовём папку Test 2'
             await bot.create_folder_from_voice(1, None, {'message_id': 1001})
@@ -105,7 +104,7 @@ def test_voice_name_failure_keeps_create_prompt_and_does_not_create_note(tmp_pat
     asyncio.run(run())
 
 
-def test_ambiguous_voice_explains_what_was_heard_without_cancel(tmp_path):
+def test_ambiguous_voice_explains_what_was_heard_with_bottom_cancel(tmp_path):
     async def run():
         store = Store(tmp_path / 'db', Limits())
         bot = make_bot(tmp_path, store)
@@ -114,11 +113,11 @@ def test_ambiguous_voice_explains_what_was_heard_without_cancel(tmp_path):
                 raise ValueError('Скажи одно название папки или напиши его текстом.')
             bot.folder_namer = SimpleNamespace(folder_name=ambiguous)
             await receive(bot, '/new')
-            assert bot.telegram.sent[-1][1]['keyboard'] == {'inline_keyboard': []}
+            assert bot.telegram.sent[-1][1]['keyboard']['is_persistent']
             await receive_voice(bot, 1001, None)
             result = bot.telegram.sent[-1][1]
             assert 'Расслышал:' in result['text'] and 'не удалось' in result['text'].lower()
-            assert result['reply_markup'] == {'inline_keyboard': []}
+            assert result['keyboard']['is_persistent']
             assert store.folders(1) == [] and store.action(1) == 'create'
         finally:
             store.close()

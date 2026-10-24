@@ -85,7 +85,7 @@ def test_folder_keys_select_before_input_or_ai_and_plain_names_are_notes(bot):
         chat = bot.store.create_folder(1, "Диалог")
         bot.ai_state.mode(1, chat["id"], "chat")
         await receive(bot, "/start")
-        assert labels(bot) == ["✓ 📌 Входящие", "📌 Работа", "📌 Диалог", "📂 Все папки", "⚙️ Options"]
+        assert labels(bot) == ["✓ 📌 Входящие", "📌 Работа", "📌 Диалог", "📂 Все папки", "⚙️ Options", "☰ Меню"]
         assert reply_keyboard(bot)["is_persistent"]
         await receive(bot, "📌 Диалог", 2)
         assert "✓ 📌 Диалог" in labels(bot)
@@ -110,14 +110,15 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         await receive(bot, "/start")
         await bot.callback(1, None, 500, f"unpin:{work['id']}")
         assert bot.store.folder(1, work['id'])['pin_slot'] is None
-        assert bot.folder_pages[1] == 1  # The selected folder remains visible on its unpinned page.
+        assert bot.bottom_state(1)["screen"] == f"foldermenu:{work['id']}"
         await bot.callback(1, None, 500, f"foldermenu:{work['id']}")
-        assert "Закрепить внизу" in str(bot.telegram.sent[-1])
+        assert "📌 Закрепить внизу" in labels(bot)
         await bot.callback(1, None, 500, f"pin:{work['id']}")
-        assert "✓ 📌 Работа" in labels(bot)
+        assert "📌 Убрать снизу" in labels(bot)
         await bot.callback(1, None, 500, f"rename:{work['id']}")
         await receive(bot, "Проекты", 2)
-        assert "✓ 📌 Проекты" in labels(bot) and "📌 Работа" not in labels(bot)
+        assert "Проекты" in reply_keyboard(bot)["input_field_placeholder"]
+        assert "📦 Скачать исходники" in labels(bot)
         await receive(bot, "📌 Работа", 3)
         assert "устарела" in bot.telegram.sent[-1][1]["text"]
         assert bot.store.current_folder(1) == work["id"]
@@ -125,7 +126,7 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         token = bot.folder_delete_confirmations[1][0]
         await bot.callback(1, None, 500, f"confirmdrop:{token}")
         await receive(bot, "✓ 📌 Проекты", 4)
-        assert labels(bot) == ["✓ 📌 Входящие", "📂 Все папки", "⚙️ Options"]
+        assert labels(bot) == ["✓ 📌 Входящие", "📂 Все папки", "⚙️ Options", "☰ Меню"]
         assert bot.store.notes(1) == []
     asyncio.run(run())
 
@@ -145,13 +146,14 @@ def test_menu_keeps_all_actions_and_long_folder_names_are_distinct(bot):
         await receive(bot, "📌 " + second["name"], 2)
         assert bot.store.current_folder(1) == second["id"]
         await receive(bot, "☰ Меню", 3)
-        callbacks = {button["callback_data"] for row in bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"]
-                     for button in row}
-        assert {"folders", "create", "notes", "search", "aiopen", "export:all", "settings:all"} <= callbacks
+        callbacks = set(bot.bottom_state(1)["actions"].values())
+        assert {"folders", "create", "search", "aiopen", "export:all", "settings:all"} <= callbacks
         await bot.callback(1, None, 500, "notes")
         assert bot.store.current_folder(1) == second["id"]
         await receive(bot, "📂 Все папки", 4)
-        assert hidden["name"] in str(bot.telegram.sent[-1])
+        first_page = str(reply_keyboard(bot))
+        await receive(bot, "Папки ➡️", 5)
+        assert hidden["name"] in first_page + str(reply_keyboard(bot))
         assert bot.store.notes(1) == []
     asyncio.run(run())
 

@@ -37,7 +37,7 @@ def test_bottom_buttons_create_rename_search_and_cancel_without_archiving_ui_inp
     async def run():
         bot = make_bot(tmp_path, store)
         await receive(bot, "/start")
-        assert bot.telegram.sent[-1][1]["keyboard"]["is_persistent"]
+        assert next(p for m, p in reversed(bot.telegram.sent) if m == "sendMessage")["keyboard"]["is_persistent"]
         await receive(bot, "＋ Новая папка", 2)
         await receive(bot, "Работа", 3)
         folder = next(f for f in store.folders(1) if f["name"] == "Работа")
@@ -55,7 +55,7 @@ def test_bottom_buttons_create_rename_search_and_cancel_without_archiving_ui_inp
         assert [n["transcript"] for n in store.notes(1)] == ["Идея"]
         await receive(bot, "🔎 Поиск", 9)
         await receive(bot, "идея", 10)
-        assert store.notes(1)[0]["id"] in str(bot.telegram.sent[-1])
+        assert store.notes(1)[0]["id"] in str(bot.bottom_state(1)["actions"])
         assert store.action(1) is None
         assert not any(m in {"createForumTopic", "editForumTopic"} for m, _ in bot.telegram.sent)
         for data in ("record:999", f"recordlink:999:{folder['id']}"):

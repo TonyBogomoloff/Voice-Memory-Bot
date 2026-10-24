@@ -20,8 +20,8 @@ class FolderNamingMixin:
         self.store.register_user(owner)
         self.store.set_action(owner, "create")
         self.folder_keyboards.pop(owner, None)
-        return await self.show(owner, "Как назовём нашу первую папку? Напиши название или пришли голосовое.",
-                               thread, {"remove_keyboard": True})
+        return await self.show_bottom(owner, "Как назовём нашу первую папку? Напиши название или пришли голосовое.",
+                                      thread, screen="create", back="home", keep=True)
 
     async def create_folder_from_voice(self, owner, thread, message):
         mid = message['message_id']

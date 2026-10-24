@@ -99,7 +99,8 @@ class CleanupStore:
                                 [(owner, mid, thread) for mid, thread in messages.items()])
             self.db.execute("DELETE FROM note_revisions WHERE note_id IN (SELECT id FROM notes WHERE owner=?)", (owner,))
             self.db.execute("DELETE FROM ai_steps WHERE note_id IN (SELECT note_id FROM ai_requests WHERE owner=?)", (owner,))
-            for table in ("record_prompts", "record_panels", "note_moves", "note_messages", "folder_name_inputs", "folder_options"):
+            for table in ("record_prompts", "record_panels", "note_moves", "note_messages", "folder_name_inputs",
+                          "bottom_menus", "bottom_menu_labels", "folder_options"):
                 if table in tables:
                     self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
             for table in ("ai_requests", "ai_links", "ai_note_context", "ai_active", "ai_conversations", "notes", "folders", "implicit_topics",
@@ -148,9 +149,9 @@ class CleanupMixin:
                 "а также темы и известные боту сообщения в этом чате Telegram.\n\n"
                 "Это нельзя отменить. Сообщения вне тем старше 48 часов и старые сообщения, "
                 "которые бот не сохранил, могут остаться в Telegram. Скачанные архивы останутся у тебя.")
-        await self.show(owner, text, thread, keyboard(
-            [button("Да, удалить всё", f"confirmdeleteall:{token}")],
-            [button("Отмена", f"canceldeleteall:{token}")]), edit_id)
+        await self.show_bottom(owner, text, thread, keyboard(
+            [button("🗑 Да, удалить всё", f"confirmdeleteall:{token}")]),
+            screen="deleteall", back="settings:all", keep=True, edit_id=edit_id)
 
     def deletion_busy(self, owner):
         notes = self.store.all("SELECT id,state,delivery,transcript_delivery FROM notes WHERE owner=? AND deleted=0",

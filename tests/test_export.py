@@ -215,12 +215,11 @@ def test_export_buttons_settings_scope_and_lowered_quota(tmp_path, store):
         add(store, message=2, kind="text", transcript="Second note despite lowered quota")
         add(store, owner=2, kind="text", transcript="OTHER USER")
         await bot.command(1, None, "/export", "")
-        menu = telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
-        assert {b["callback_data"] for row in menu for b in row} >= {
+        assert set(bot.bottom_state(1)["actions"].values()) >= {
             "zip:all:all", "zip:all:text", "zip:all:voice", "exportsettings:all"}
         await bot.callback(1, None, 50, "settings:all")
         await bot.callback(1, None, 50, "exportformat:markdown:all")
-        assert telegram.sent[-1][0] == "editMessageText"
+        assert bot.bottom_state(1)["screen"] == "exportsettings:all"
         assert store.export_format(1) == "markdown" and store.export_format(2) == "pdf"
         await bot.callback(1, None, 50, "zip:all:text")
         await asyncio.gather(*bot.export_tasks)

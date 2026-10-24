@@ -48,13 +48,7 @@ class FolderMenuMixin:
         identity = identity or self.store.current_folder(owner)
         if not identity:
             return await self.ask_first_folder(owner, thread)
-        folder = self.enter_folder_options(owner, identity)
-        await self.refresh_folder_keyboard(owner, thread, force=True)
-        from .bot import button, keyboard
-        await self.show(owner, f"⚙️ Options · {folder['name']}\n"
-                        "Действия с выбранной папкой — на клавиатуре внизу.\n"
-                        "Исходники: голосовые, кружочки, фото, тексты и файлы в ZIP.", thread,
-                        keyboard([button("Ещё настройки папки", f"foldermenu:{identity}")]))
+        return await self.show_notes_menu(owner, thread, identity)
 
     async def folder_option_button(self, owner, thread, text):
         identity = self.options_folder(owner)
@@ -85,12 +79,6 @@ class FolderMenuMixin:
         return ([pinned] if pinned else []) + [others[i:i + 4] for i in range(0, len(others), 4)] or [[]]
 
     def folder_keyboard(self, owner):
-        if self.options_folder(owner):
-            return {"keyboard": [[{"text": "✏️ Переименовать"}, {"text": "🗑 Удалить папку"}],
-                                 [{"text": "📦 Скачать исходники"}],
-                                 [{"text": "← К папке"}, {"text": "☰ Меню"}]],
-                    "resize_keyboard": True, "is_persistent": True,
-                    "input_field_placeholder": "Действия с выбранной папкой"}
         active = self.store.current_folder(owner)
         pages = self.folder_keyboard_pages(owner)
         page = min(max(self.folder_pages.get(owner, 0), 0), len(pages) - 1)
@@ -105,9 +93,10 @@ class FolderMenuMixin:
                 rows[1].insert(0, {"text": "⬅️"})
             if page < len(pages) - 1:
                 rows[1].append({"text": "➡️"})
-        return {"keyboard": rows + [[{"text": "📂 Все папки"}, {"text": "⚙️ Options"}]],
+        return {"keyboard": rows + [[{"text": "📂 Все папки"}, {"text": "⚙️ Options"}, {"text": "☰ Меню"}]],
                 "resize_keyboard": True, "is_persistent": True,
-                "input_field_placeholder": "Голосовое, кружок, текст или фото"}
+                "input_field_placeholder": ("📁 " + self.store.folder(owner, active)["name"] +
+                                            " · голосовое, текст или фото")[:64]}
 
     async def turn_folder_page(self, owner, thread, text):
         self.leave_folder_options(owner)
@@ -117,6 +106,7 @@ class FolderMenuMixin:
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
         await self.refresh_folder_keyboard(owner, thread, force=True)
+        self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
 
     @staticmethod
     def is_folder_button(text):
@@ -139,19 +129,16 @@ class FolderMenuMixin:
         folder = self.store.folder(owner, self.store.current_folder(owner))
         keys = self.folder_keyboard(owner)
         signature = (folder["id"], folder["name"], folder["mode"], keys)
-        if not force and self.folder_keyboards.get(owner) == signature:
+        if (not force and self.folder_keyboards.get(owner) == signature
+                and (self.bottom_state(owner) or {}).get("screen") == "root"):
             return
         mode = 'диалог с ИИ' if folder['mode'] == 'chat' else 'заметки'
         text = f"📁 {folder['name']}\nРежим: {mode}\nСохраняю сообщения в эту папку."
         if notice:
             text = notice + "\n\n" + text
-        response = await self.view_send(self.telegram.text, owner, "…" if transient else text, thread, keys)
-        if transient:
-            await self.view_send(self.telegram.call, "deleteMessage", chat_id=owner,
-                                 message_id=response["message_id"])
-            with self.store.db:
-                self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
-                                      (owner, response["message_id"]))
+        response = await self.send_bottom(owner, thread,
+            {"screen": "root", "back": "root", "text": text, "rows": [], "page": 0, "keep": bool(notice)},
+            raw_keys=keys)
         self.folder_keyboards[owner] = signature
         return response
 
@@ -161,24 +148,24 @@ class FolderMenuMixin:
             return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
-        hint = "Переключай папки внизу. Стрелки листают страницы, действия с папкой — в Options."
-        if self.config.web_url:
-            hint += "\nMini App: /app"
-        await self.refresh_folder_keyboard(owner, thread, force=True, notice=hint)
-        self.remember_screen(owner, thread, hint, self.folder_keyboard(owner))
+        await self.refresh_folder_keyboard(owner, thread, force=True)
+        self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
 
     async def show_main_menu(self, owner, thread=None, edit_id=None):
         self.leave_folder_options(owner)
-        from .bot import HOME, button, keyboard
-        if not self.store.folders(owner):
-            return await self.ask_first_folder(owner, thread)
+        from .bot import button, keyboard
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
-        await self.refresh_folder_keyboard(owner, thread)
-        folder = self.store.folder(owner, self.store.current_folder(owner))
-        await self.show(owner, f"☰ Меню\nВыбрана папка «{folder['name']}».", thread,
-                        keyboard([button("Настройки папки", f"foldermenu:{folder['id']}")],
-                                 *HOME["inline_keyboard"]), edit_id)
+        identity = self.store.current_folder(owner)
+        folder = self.store.folder(owner, identity) if identity else None
+        rows = [[button("📂 Все папки", "folders"), button("＋ Новая папка", "create")],
+                ([button("⚙️ Эта папка", f"foldermenu:{identity}")] if folder else []) + [button("🔎 Поиск", "search")],
+                [button("🤖 ИИ", "aiopen"), button("📦 Экспорт всего", "export:all")],
+                [button("⚙️ Настройки", "settings:all"), button("ℹ️ Помощь", "help")]]
+        if self.config.web_url:
+            rows.append([{"text": "🌐 Mini App", "web_app": {"url": self.config.web_url}}])
+        await self.show_bottom(owner, "☰ Меню" + (f" · {folder['name']}" if folder else ""), thread, keyboard(*rows),
+                               screen="home", back="root", edit_id=edit_id)
 
     async def folder_menu_callback(self, owner, thread, message_id, data):
         from .bot import button, keyboard
@@ -189,18 +176,19 @@ class FolderMenuMixin:
             await self.show_notes_menu(owner, thread, identity, edit_id=message_id)
         elif action in {"pin", "unpin"}:
             self.store.set_folder_pin(owner, identity, action == "pin")
-            await self.show_notes(owner, thread, identity, edit_id=message_id)
+            await self.show_notes_menu(owner, thread, identity, edit_id=message_id)
         elif action == "dropfolder":
             folder = self.store.folder(owner, identity)
             count = self.store.one("SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0",
                                    (owner, identity))["n"]
             token = new_id()
             self.folder_delete_confirmations[owner] = (token, identity, folder["name"], time.monotonic() + 600)
-            await self.show(owner, f"Удалить папку «{folder['name']}»?\n"
+            await self.show_bottom(owner, f"Удалить папку «{folder['name']}»?\n"
                             f"Все записи ({count}) и история ИИ останутся в архиве без папки.\n"
                             "Исходные файлы сохранятся; записи доступны через поиск и экспорт.", thread,
-                            keyboard([button("Удалить папку", f"confirmdrop:{token}")],
-                                     [button("Отмена", f"canceldrop:{token}")]), message_id)
+                            keyboard([button("🗑 Да, удалить папку", f"confirmdrop:{token}")]),
+                            screen=f"dropfolder:{identity}", back=f"foldermenu:{identity}",
+                            keep=True, edit_id=message_id)
         elif action in {"confirmdrop", "canceldrop"}:
             confirmation = self.folder_delete_confirmations.get(owner)
             if not confirmation or confirmation[0] != identity or confirmation[3] < time.monotonic():

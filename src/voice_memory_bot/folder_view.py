@@ -132,6 +132,7 @@ class FolderViewMixin:
             return await self.render_empty_view(owner, view)
         page = view['page'] if identity == view['folder_id'] else 0
         thread = view['thread_id']
+        bottom = self.bottom_state(owner) if restore_screen else None
         count = self.store.one('SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0',
                                (owner, identity))['n']
         page = min(page, max(0, (count - 1) // 8))
@@ -145,9 +146,10 @@ class FolderViewMixin:
             leftovers = await self.clear_folder_view(owner, thread, all_threads=True,
                                                       keep_ids=(view['command_message_id'],))
             await self.refresh_folder_keyboard(owner, thread, notice=notice, transient=not notice)
-            if restore_screen and view['screen']:
+            if restore_screen and view['screen'] and not bottom:
                 screen = json.loads(view['screen'])
-                await self.view_send(self.telegram.text, owner, screen['text'], thread, screen['keys'])
+                # Upgrade old saved inline menus through the same bottom navigation path.
+                await self.show(owner, screen['text'], thread, screen['keys'])
                 with self.store.db:
                     self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
                 return
@@ -167,6 +169,11 @@ class FolderViewMixin:
                     for chunk in transcript_chunks('🤖 ' + request['response']):
                         response = await self.view_send(self.telegram.text, owner, chunk, thread, self.note_controls(note, thread))
                         self.ai_state.link(owner, response['message_id'], request['conversation_id'])
+            if bottom and bottom['screen'] != 'root':
+                if self.store.action(owner):
+                    await self.send_bottom(owner, thread, bottom)
+                else:
+                    await self.open_bottom_screen(owner, thread, bottom['screen'])
             if leftovers:
                 await self.telegram.text(owner,
                     'Часть старых сообщений Telegram уже не разрешает удалить. '
@@ -181,6 +188,13 @@ class FolderViewMixin:
         self.view_rendering.add(owner)
         token = silent_delivery.set(True)
         try:
+            bottom = self.bottom_state(owner)
+            if bottom:
+                await self.clear_folder_view(owner, view['thread_id'], all_threads=True)
+                await self.send_bottom(owner, view['thread_id'], bottom)
+                with self.store.db:
+                    self.store.db.execute('UPDATE folder_views SET dirty=0,folder_id=? WHERE owner=?', ('', owner))
+                return
             screen = json.loads(view['screen']) if view['screen'] else {
                 'text': 'Как назовём нашу первую папку? Напиши название или пришли голосовое.',
                 'keys': {'remove_keyboard': True}}

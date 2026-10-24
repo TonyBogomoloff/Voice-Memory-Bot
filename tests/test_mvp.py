@@ -367,8 +367,10 @@ def test_voice_options_move_changes_archive_with_only_toast(tmp_path, store):
         bot.telegram.sent.clear()
         await bot.callback(1, 100, message_id, f"options:{note['id']}")
         keys = bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
-        assert [row[0]["text"] for row in keys] == ["Переместить", "Обратиться к ИИ", "← Назад"]
-        await bot.callback(1, 100, message_id, keys[0][0]["callback_data"])
+        assert {b["callback_data"] for row in keys for b in row} >= {
+            f"pick:{note['id']}:0", f"aiask:{note['id']}", f"collapse:{note['id']}"}
+        await bot.callback(1, 100, message_id, next(b["callback_data"] for row in keys for b in row
+                                                     if b["callback_data"].startswith("pick:")))
         keys = bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
         target = next(row[0]["callback_data"] for row in keys if row[0]["text"] == "📁 Работа")
         assert all(method == "editMessageReplyMarkup" for method, _ in bot.telegram.sent)

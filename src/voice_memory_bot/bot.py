@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .ai_bot import AIBotMixin
 from .archive import Archive, is_audio
+from .bottom_menu import BottomMenuMixin
 from .cleanup import CleanupMixin
 from .config import Config
 from .folder_menu import MENU_COMMANDS, OPTION_ACTIONS, FolderMenuMixin
@@ -58,11 +59,13 @@ HELP = """🎙 Voice Memory Bot
 Выбери папку на нижней клавиатуре или через «📂 Все папки».
 Новые голосовые, тексты и фото сохраняются туда. Активная папка отмечена ✓.
 Внизу — до 4 папок на странице. Стрелки листают страницы; закреплённые папки идут первыми.
-«⚙️ Options» меняет нижнюю клавиатуру: переименовать папку, удалить её или скачать исходники.
-«← К папке» возвращает выбор папок, «☰ Меню» открывает общие действия.
-Выбор и закрепления запоминаются. Без выбора записи попадают во «Входящие».
+«☰ Меню» открывает создание папки, поиск, ИИ, экспорт и настройки внизу.
+«⬅️ Назад» возвращает на предыдущий уровень и отменяет ввод; «🏠 Главная» — к папкам.
+В «⚙️ Эта папка» можно переименовать папку, закрепить её и выбрать режим.
+Кнопки навигации не засоряют чат. Под записями остаются только «Опции».
+Выбор и закрепления запоминаются. Если папок нет, создай первую.
 Внутри папки можно изменить название, посмотреть записи, скачать архив или удалить папку.
-При удалении папки записи сохраняются в архиве без папки; сначала бот попросит подтверждение.
+При удалении папки записи остаются в архиве без папки; сначала бот попросит подтверждение.
 Расшифровка появится рядом с голосовым. Для переноса: «Опции» → «Переместить».
 Папки общие с Mini App; темы Telegram больше не используются для выбора папки.
 /start — показать папки внизу
@@ -95,7 +98,7 @@ HELP = """🎙 Voice Memory Bot
 Автосинхронизация с другими сервисами пока не подключена."""
 
 
-class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
+class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
     def __init__(self, config: Config, store: Store, telegram: Telegram, groq: Groq, router: CodexRouter,
                  assistant=None):
         self.config, self.store = config, store
@@ -114,6 +117,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         self.init_folder_options()
         self.web = None
         self.init_folder_view()
+        self.init_bottom_menu()
         self.folder_namer = CodexRouter(replace(config.llm, model=config.folder_name_model or config.llm.model, effort="low"))
         self.init_folder_naming()
 
@@ -212,6 +216,11 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                     self.store.fail_update(update["update_id"])
 
     async def show(self, owner, text, thread=None, keys=None, edit_id=None):
+        if keys and "inline_keyboard" in keys:
+            state = self.bottom_state(owner) or {}
+            return await self.show_bottom(owner, text, thread, keys, screen="notice",
+                                          back=state.get("back" if state.get("screen") == "notice" else "screen", "home"),
+                                          keep=True, edit_id=edit_id)
         result = await self._show(owner, text, thread, keys, edit_id)
         self.remember_screen(owner, thread, text, keys)
         return result
@@ -251,7 +260,8 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         if callback and not move_callback:
             await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
         navigation = message.get("text", "").strip()
-        if (callback or navigation.startswith("/") or navigation in MENU_COMMANDS or navigation in OPTION_ACTIONS
+        if (callback or navigation.startswith("/") or navigation in MENU_COMMANDS
+                or navigation in OPTION_ACTIONS or navigation in {"⬅️", "➡️"} or self.is_bottom_control(owner, navigation)
                 or self.is_folder_button(navigation)) and not self.rate_allowed(owner):
             if move_callback:
                 await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
@@ -261,6 +271,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             if owner not in self.deleting_owners and (
                 callback and callback.get("data") == "retrydeleteall"
                 or message.get("text", "").split("@", 1)[0] == "/delete_all"
+                or (self.bottom_state(owner) or {}).get("actions", {}).get(navigation) == "retrydeleteall"
             ):
                 return await self.resume_delete_all(owner)
             return await self.show(owner, "Очистка ещё не завершена. Повтори её перед отправкой новых заметок.",
@@ -280,6 +291,10 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             if "forum_topic_created" in message or "forum_topic_edited" in message:
                 return
             text = message.get("text", "").strip()
+            if await self.bottom_input(owner, thread, text, message["message_id"]):
+                return
+            if text in MENU_COMMANDS or text in OPTION_ACTIONS or text in {"⬅️", "➡️"} or self.is_folder_button(text) or text.startswith("/"):
+                await self.remove_menu_message(owner, message["message_id"])
             if text in OPTION_ACTIONS:
                 return await self.folder_option_button(owner, thread, text)
             if text in {"⬅️", "➡️"}:
@@ -396,7 +411,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         if command == "/options":
             return await self.show_folder_options(owner, thread)
         if command in {"/help", "/privacy"}:
-            return await self.show(owner, HELP, thread, HOME)
+            return await self.show_bottom(owner, HELP, thread, screen="help", back="home", keep=True)
         if command == "/cancel":
             self.delete_confirmations.pop(owner, None)
             return await self.show_home(owner, thread)
@@ -406,16 +421,16 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             if argument:
                 return await self.create_folder(owner, thread, argument)
             self.store.set_action(owner, "create")
-            return await self.show(owner, "Как назовём папку? Напиши название или пришли голосовое.", thread,
-                                   {"inline_keyboard": []})
+            return await self.show_bottom(owner, "Как назовём папку? Напиши название или пришли голосовое.",
+                                          thread, screen="create", back="folders", keep=True)
         if command == "/notes":
             return await self.show_notes(owner, thread, self.store.current_folder(owner, thread))
         if command == "/search":
             if argument:
                 return await self.search(owner, thread, argument)
             self.store.set_action(owner, "search")
-            return await self.show(owner, "Что найти в твоих заметках? Пришли слова текстом.", thread,
-                                   keyboard([button("Отмена", "home")]))
+            return await self.show_bottom(owner, "Что найти в твоих заметках? Пришли слова текстом.",
+                                          thread, screen="search", back="home", keep=True)
         if command == "/export":
             return await self.export_menu(owner, thread, "all")
         if command == "/settings":
@@ -426,6 +441,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         action = self.store.action(owner)
         if action == "ai_names":
             self.ai_state.set_settings(owner, names=[n.strip() for n in text.split(",") if n.strip()])
+            self.store.set_action(owner, None)
             await self.ai_settings(owner, thread)
         elif action == "create":
             await self.create_folder(owner, thread, text)
@@ -461,49 +477,38 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         self.store.set_action(owner, None)
         folders = self.store.folders(owner)
         active = self.store.current_folder(owner)
-        await self.refresh_folder_keyboard(owner, thread)
         rows = []
-        page = max(0, min(page, (len(folders) - 1) // 8))
-        for folder in folders[page * 8:(page + 1) * 8]:
+        page = max(0, min(page, (len(folders) - 1) // 4))
+        for folder in folders[page * 4:(page + 1) * 4]:
             action = f"move:{note_id}:{folder['id']}" if note_id else f"folder:{folder['id']}:0"
             marker = "✓" if folder["id"] == active else "📁"
             rows.append([button(f"{marker} {folder['name']} · {folder['count']}", action)])
         nav = []
         mode = f"choose:{note_id}" if note_id else "folders"
         if page:
-            nav.append(button("←", f"{mode}:{page - 1}"))
-        if len(folders) > (page + 1) * 8:
-            nav.append(button("→", f"{mode}:{page + 1}"))
+            nav.append(button("⬅️ Папки", f"{mode}:{page - 1}"))
+        if len(folders) > (page + 1) * 4:
+            nav.append(button("Папки ➡️", f"{mode}:{page + 1}"))
         if nav:
             rows.append(nav)
         rows.append([button("＋ Новая папка", "create"), button("🔎 Поиск", "search")])
         rows.append([button("⌂ Меню", "home")])
         name = self.store.folder(owner, active)["name"]
         text = "Куда переместить запись?" if note_id else (
-            f"📁 Твои папки\nСейчас сохраняю в «{name}».\nОткрой папку, чтобы выбрать её для новых записей.")
-        await self.show(owner, text, thread, keyboard(*rows), edit_id)
+            f"📁 Все папки · {page + 1}/{(len(folders) - 1) // 4 + 1}\nСейчас сохраняю в «{name}».\n"
+            "Открой папку, чтобы выбрать её для новых записей.")
+        await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"folders:{page}",
+                               back="home", edit_id=edit_id)
 
     async def show_notes_menu(self, owner, thread, identity, page=0, edit_id=None):
         folder = self.enter_folder_options(owner, identity)
-        await self.refresh_folder_keyboard(owner, thread)
-        page = max(0, page)
-        notes = self.store.notes(owner, identity, offset=page * 8, limit=9)
         text = f"📁 {folder['name']}"
         text += "\nРежим: " + ("диалог с ИИ" if folder["mode"] == "chat" else "заметки")
         text += "\n✓ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
-        text += "\nЗаписи:" if notes else "\nПока нет записей."
-        rows = [[button(n["title"][:55], f"note:{n['id']}")] for n in notes[:8]]
-        nav = []
-        if page:
-            nav.append(button("←", f"folder:{identity}:{page - 1}"))
-        if len(notes) > 8:
-            nav.append(button("→", f"folder:{identity}:{page + 1}"))
-        if nav:
-            rows.append(nav)
-        rows.append([button("📦 Экспорт", f"export:{identity}")])
-        rows.append([button("📦 Скачать исходники", f"zip:{identity}:raw")])
-        rows[-1].append(button("✏️ Название", f"rename:{identity}"))
-        rows.append([button("🗑 Удалить папку", f"dropfolder:{identity}")])
+        rows = [[button("📝 Показать записи", f"folder:{identity}:0"),
+                 button("✏️ Название", f"rename:{identity}")],
+                [button("📦 Скачать исходники", f"zip:{identity}:raw"),
+                 button("📦 Экспорт папки", f"export:{identity}")]]
         pin_action = "unpin" if folder["pin_slot"] is not None else "pin"
         rows.append([button("📌 Убрать снизу" if pin_action == "unpin" else "📌 Закрепить внизу",
                             f"{pin_action}:{identity}")])
@@ -513,8 +518,9 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         if folder["mode"] == "chat":
             rows.append([button("Новый разговор", f"ainew:{identity}"),
                          button("История ИИ", f"ailist:{identity}:0")])
-        rows.append([button("← Папки", "folders"), button("⌂ Меню", "home")])
-        await self.show(owner, text, thread, keyboard(*rows), edit_id)
+        rows.append([button("🗑 Удалить папку", f"dropfolder:{identity}")])
+        await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"foldermenu:{identity}",
+                               back="home", edit_id=edit_id)
 
     def note_card(self, note):
         folder = self.store.folder(note["owner"], note["folder_id"])
@@ -562,8 +568,10 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
 
     async def show_note(self, owner, identity, thread, edit_id=None):
         note = self.store.note(owner, identity)
-        text, keys = self.note_card(note)
-        await self.show(owner, text, thread, keys, edit_id)
+        content = note.get("content") if note.get("content") is not None else note["transcript"]
+        for chunk in transcript_chunks(content or note["title"] or "Запись без расшифровки"):
+            response = await self._show(owner, chunk, thread, self.note_controls(note, thread))
+            self.messages.record(note, response["message_id"], thread, "view")
 
     async def edit_note_buttons(self, owner, message_id, keys):
         try:
@@ -595,7 +603,8 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         await self.edit_note_buttons(owner, message_id, keyboard(*rows))
 
     async def callback(self, owner, thread, message_id, data):
-        self.store.set_action(owner, None)
+        if data.split(":", 1)[0] not in {"aioptions", "aicollapse", "aiend"}:
+            self.store.set_action(owner, None)
         if await self.folder_menu_callback(owner, thread, message_id, data):
             return
         if await self.cleanup_callback(owner, thread, message_id, data):
@@ -608,7 +617,8 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             # Retired keyboards lead to custom folders, never reconnect Telegram topics.
             return await self.show_folders(owner, thread)
         if action == "help":
-            return await self.show(owner, HELP, thread, HOME, message_id)
+            return await self.show_bottom(owner, HELP, thread, screen="help", back="home", keep=True,
+                                          edit_id=message_id)
         if action in {"create", "search"}:
             return await self.command(owner, thread, "/new" if action == "create" else "/search", "")
         if action == "folders":
@@ -623,7 +633,8 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             self.store.folder(owner, identity)
             self.store.set_action(owner, data)
             prompt = "Пришли новое название." if action == "rename" else "Пришли названия через запятую. «-» удалит псевдонимы."
-            return await self.show(owner, prompt, thread, keyboard([button("Отмена", f"folder:{identity}:0")]))
+            return await self.show_bottom(owner, prompt, thread, screen=data, back=f"foldermenu:{identity}",
+                                          keep=True, edit_id=message_id)
         if action == "export":
             return await self.export_menu(owner, thread, identity, message_id)
         if action == "settings":
@@ -650,9 +661,13 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             return
         note = self.store.note(owner, identity)
         if action == "options":
-            rows = [[button("Переместить", f"pick:{identity}:0")]]
-            if note["kind"] != "photo":
-                rows.append([button("Обратиться к ИИ", f"aiask:{identity}")])
+            _, controls = self.note_card(note)
+            rows = [[b for b in row if b.get("callback_data") != "folders"]
+                    for row in controls["inline_keyboard"]]
+            for row in rows:
+                for item in row:
+                    if item["callback_data"].startswith("choose:"):
+                        item["callback_data"] = f"pick:{identity}:0"
             rows.append([button("← Назад", f"collapse:{identity}")])
             return await self.edit_note_buttons(owner, message_id, keyboard(*rows))
         if action == "collapse":
@@ -696,25 +711,29 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             return await self.telegram.document(owner, path, thread,
                                                 "Исходный файл без изменений")
         if action == "delete":
-            return await self.show(owner, "Удалить запись и исходный файл из архива бота?\nСообщения в Telegram останутся.",
-                thread, keyboard([button("Удалить", f"confirmdelete:{identity}"), button("Отмена", f"note:{identity}")]))
+            return await self.show_bottom(owner,
+                "Удалить запись и исходный файл из архива бота?\nСообщения в Telegram останутся.", thread,
+                keyboard([button("🗑 Да, удалить запись", f"confirmdelete:{identity}")]),
+                screen=f"delete:{identity}", back="root", keep=True)
         if action == "confirmdelete":
             if note["state"] == "processing" or self.note_locks[identity].locked():
                 raise ValueError("Дождись завершения обработки, затем удали запись")
             self.store.delete(owner, identity)
             self.archive.delete(note)
+            self.folder_keyboards.pop(owner, None)
             return await self.show(owner, "Запись удалена из архива.", thread, HOME, message_id)
 
     async def search(self, owner, thread, query):
         if not 1 <= len(query) <= 200:
             raise ValueError("Поисковый запрос должен содержать от 1 до 200 символов")
         matches = self.store.notes(owner, query=query, limit=21)
-        rows = [[button(n["title"][:60], f"note:{n['id']}")] for n in matches[:20]]
+        rows = [[button("📝 " + n["title"][:60], f"note:{n['id']}")] for n in matches[:20]]
         text = "Ничего не нашёл." if not matches else "Найденные записи:"
         if len(matches) > 20:
             text += "\nПоказаны первые 20. Уточни запрос для остальных."
-        rows.append([button("Папки", "folders")])
-        await self.show(owner, text, thread, keyboard(*rows))
+        rows.append([button("🔎 Другой поиск", "search")])
+        await self.show_bottom(owner, text, thread, keyboard(*rows), screen="search_results", back="home",
+                               keep=not matches)
 
     async def settings_menu(self, owner, thread, edit_id=None):
         label = "PDF" if self.store.export_format(owner) == "pdf" else "Markdown"
@@ -722,26 +741,27 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         if hasattr(self, "ai_settings"):
             rows.append([button("🤖 Настройки ИИ", "aisettings")])
         rows.append([button("🗑 Удалить всё", "deleteall")])
-        rows.append([button("📁 Папки", "folders"), button("⌂ Меню", "home")])
-        await self.show(owner, "⚙️ Настройки", thread, keyboard(*rows), edit_id)
+        await self.show_bottom(owner, "⚙️ Настройки", thread, keyboard(*rows), screen="settings:all",
+                               back="home", edit_id=edit_id)
 
     async def export_settings(self, owner, thread, scope="all", edit_id=None):
         if scope != "all":
             self.store.folder(owner, scope)
         selected = self.store.export_format(owner)
         label = "PDF" if selected == "pdf" else "Markdown"
-        await self.show(owner, f"⚙️ Настройки\n\nФормат экспорта текста: {label}.\n"
+        await self.show_bottom(owner, f"Формат текста: {label}\n"
                         "Вся история папки — один файл внутри папки проекта.\n"
                         "Выбор сохраняется для следующих выгрузок.", thread, keyboard(
                             [button(("✓ " if selected == "pdf" else "") + "PDF", f"exportformat:pdf:{scope}"),
                              button(("✓ " if selected == "markdown" else "") + "Markdown",
                                     f"exportformat:markdown:{scope}")],
-                            [button("📦 К экспорту", f"export:{scope}"), button("← Настройки", "settings:all")]), edit_id)
+                            [button("📦 К экспорту", f"export:{scope}")]), screen=f"exportsettings:{scope}",
+                            back=f"export:{scope}" if scope != "all" else "settings:all", edit_id=edit_id)
 
     async def export_menu(self, owner, thread, identity, edit_id=None):
         label = "всего архива" if identity == "all" else "папки «" + self.store.folder(owner, identity)["name"] + "»"
         text_format = "PDF" if self.store.export_format(owner) == "pdf" else "Markdown"
-        await self.show(owner, f"📦 Экспорт {label}\n\n"
+        await self.show_bottom(owner, f"📦 Экспорт {label}\n\n"
                         f"Тексты: {text_format}, вся история папки в одном файле. Папки проектов сохранятся.\n"
                         "Всё будет в одном ZIP. Если он больше лимита Telegram — в нескольких частях.",
                         thread, keyboard(
@@ -749,7 +769,8 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                             [button(f"Всё: {text_format} + файлы", f"zip:{identity}:all")],
                             [button(f"Только тексты · {text_format}", f"zip:{identity}:text"),
                              button("Только аудио", f"zip:{identity}:voice")],
-                            [button("⚙️ Формат текста", f"exportsettings:{identity}"), button("← Папки", "folders")]), edit_id)
+                            [button("⚙️ Формат текста", f"exportsettings:{identity}")]), screen=f"export:{identity}",
+                            back="home" if identity == "all" else f"foldermenu:{identity}", edit_id=edit_id)
 
     async def send_export(self, owner, thread, identity, content):
         job = self.cleanup.job(owner)
@@ -945,7 +966,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         edit_id = note['status_message_id']
         self.store.update_note(owner, identity, status_message_id=None)
         try:
-            response = await self.show(owner, text, note['source_thread'], keys, edit_id)
+            response = await self._show(owner, text, note['source_thread'], keys, edit_id)
             self.messages.record(note, response['message_id'], note['source_thread'], 'file_controls')
             self.store.update_note(owner, identity, delivery='sent', transcript_delivery='sent',
                                    transcript_message_id=response['message_id'])
@@ -963,7 +984,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         self.store.update_note(note["owner"], note["id"], transcript_delivery="sending")
         try:
             if edit_id:
-                response = await self.show(note["owner"], text, note["source_thread"], keys, edit_id)
+                response = await self._show(note["owner"], text, note["source_thread"], keys, edit_id)
             else:
                 response = await self.telegram.text(note["owner"], text, note["source_thread"], keys,
                     reply_to=note["message_id"] if note["source_thread"] is None else None)

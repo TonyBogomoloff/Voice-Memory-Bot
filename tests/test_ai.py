@@ -325,10 +325,10 @@ def test_real_address_adapter_rejects_invented_evidence_and_middle_names():
 def test_settings_controls_and_ownership(bot):
     async def run():
         await bot.ai_settings(1, None)
-        text = json.dumps(bot.telegram.sent[-1], ensure_ascii=False)
+        text = json.dumps(bot.bottom_state(1), ensure_ascii=False)
         assert "Изменить имена" not in text
         await bot.callback(1, None, 1, "aiwake:1")
-        assert "Изменить имена" in json.dumps(bot.telegram.sent[-1], ensure_ascii=False)
+        assert "Изменить имена" in json.dumps(bot.bottom_state(1), ensure_ascii=False)
         await bot.callback(1, None, 1, "ainames")
         await bot.input_action(1, None, "Помощник, Luna")
         assert bot.ai_state.settings(1)["names"] == ["помощник", "luna"]

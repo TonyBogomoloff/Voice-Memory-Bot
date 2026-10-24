@@ -64,7 +64,8 @@ def test_photo_controls_archive_and_move_preserve_source_messages(tmp_path, stor
                                   100000, audio_only=True) == []
         control_id = note["transcript_message_id"]
         await bot.callback(1, 100, control_id, f"options:{note['id']}")
-        assert bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Переместить"
+        assert any(b["callback_data"].startswith("pick:")
+                       for row in bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"] for b in row)
         await bot.callback(1, 100, control_id, f"pick:{note['id']}:0")
         bot.telegram.sent.clear()
         notification = await bot.callback(1, 100, control_id, f"place:{note['id']}:{work['id']}")

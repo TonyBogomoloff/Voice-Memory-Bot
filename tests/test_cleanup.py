@@ -51,7 +51,7 @@ def test_menu_requires_confirmation_and_cancel_expiry_replay_are_safe(bot):
         old = note(bot)
         assert any(b["callback_data"] == "deleteall" for row in HOME["inline_keyboard"] for b in row)
         await bot.settings_menu(1, None)
-        assert "deleteall" in str(bot.telegram.sent[-1])
+        assert "deleteall" in bot.bottom_state(1)["actions"].values()
         await bot.callback(1, None, 500, "deleteall")
         token = bot.delete_confirmations[1][0]
         assert bot.store.note(1, old["id"]) and bot.archive.directory(old).exists()

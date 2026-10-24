@@ -165,8 +165,9 @@ def test_daily_cleanup_restores_settings_after_restart_and_cleans_all_known_thre
         await bot.refresh_due_views(now=1000 + RENEW_AFTER)
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert {3001, 3003} <= deleted and 3002 not in deleted
-        assert bot.telegram.sent[-1][1]['text'] == '⚙️ Настройки'
-        assert not any(p.get('text') == 'Архивная запись' for _, p in bot.telegram.sent)
+        assert bot.bottom_state(1)['screen'] == 'settings:all'
+        assert any(p.get('keyboard', {}).get('keyboard') for m, p in bot.telegram.sent if m == 'sendMessage')
+        assert any(p.get('text') == 'Архивная запись' for _, p in bot.telegram.sent)
         assert bot.store.all('SELECT * FROM notes') == before
         assert bot.store.current_folder(1) == inbox
         assert not any(m == 'deleteForumTopic' for m, _ in bot.telegram.sent)
@@ -180,7 +181,8 @@ def test_settings_without_prior_folder_visit_and_return_to_folder(bot):
         with bot.store.db:
             bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')
         await bot.refresh_due_views()
-        assert bot.telegram.sent[-1][1]['text'] == '⚙️ Настройки'
+        assert bot.bottom_state(1)['screen'] == 'settings:all'
+        assert any(p.get('keyboard', {}).get('keyboard') for m, p in bot.telegram.sent if m == 'sendMessage')
         inbox = bot.store.current_folder(1)
         await bot.show_notes(1, None, inbox)
         assert bot.store.one('SELECT screen FROM folder_views WHERE owner=1')['screen'] is None
@@ -230,7 +232,7 @@ def test_switch_has_all_records_and_no_persistent_header_or_menu(bot):
         await receive(bot, '📌 Работа', 2000)
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
         assert len(sent) == 11
-        assert sent[0]['text'] == '…'
+        assert 'Работа' in sent[0]['keyboard']['input_field_placeholder']
         assert bot.telegram.sent[next(i for i, (m, _) in enumerate(bot.telegram.sent)
                                       if m == 'sendMessage') + 1][0] == 'deleteMessage'
         assert all('Входящие' not in p['text'] for p in sent)
@@ -243,33 +245,30 @@ def test_switch_has_all_records_and_no_persistent_header_or_menu(bot):
         assert previous <= deleted
         await bot.show_main_menu(1)
         await bot.callback(1, None, 5000, f'foldermenu:{work}')
-        assert 'Удалить папку' in str(bot.telegram.sent[-1])
+        assert '🗑 Удалить папку' in bot.bottom_state(1)['actions']
     asyncio.run(run())
 
 
-def test_switch_keeps_latest_user_command_including_deferred_render_and_restart(bot):
+def test_switch_removes_navigation_commands_including_deferred_render_and_restart(bot):
     async def run():
         inbox = bot.store.ensure_user(1)
         work = bot.store.create_folder(1, 'Работа')['id']
         await receive(bot, '📌 Работа', 7001)
-        assert not any(m == 'deleteMessage' and p['message_id'] == 7001 for m, p in bot.telegram.sent)
+        assert any(m == 'deleteMessage' and p['message_id'] == 7001 for m, p in bot.telegram.sent)
         note = saved(bot, work, 'Обработка', 8001)
         bot.store.update_note(1, note['id'], state='processing')
         await receive(bot, '📌 Входящие', 7002)
         assert bot.store.current_folder(1) == inbox
+        assert not bot.store.one('SELECT * FROM telegram_messages WHERE message_id=7002')
         bot.init_folder_view()
         bot.store.update_note(1, note['id'], state='ready')
         bot.telegram.sent.clear()
         await bot.refresh_due_views()
-        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
-        assert 7001 in deleted and 7002 not in deleted
-        assert bot.store.one('SELECT * FROM telegram_messages WHERE message_id=7002')
-        with bot.store.db:
-            bot.store.db.execute('UPDATE telegram_messages SET sent_at=1 WHERE message_id=7002')
+        assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
         bot.telegram.sent.clear()
         await bot.refresh_due_views()
-        assert not bot.telegram.sent  # The retained command must not trigger an endless renewal loop.
+        assert not bot.telegram.sent
         await receive(bot, '📌 Работа', 7003)
-        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
-        assert 7002 in deleted and 7003 not in deleted
+        assert any(m == 'deleteMessage' and p['message_id'] == 7003 for m, p in bot.telegram.sent)
+        assert bot.store.note(1, note['id'])['transcript'] == 'Обработка'
     asyncio.run(run())

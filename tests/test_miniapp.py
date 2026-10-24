@@ -226,9 +226,9 @@ def test_app_command_opens_registered_url_but_home_keeps_folder_keyboard(tmp_pat
         bot = make_bot(tmp_path, store)
         bot.config = replace(bot.config, web_url="https://audio-notes.example.test")
         await bot.command(1, None, "/app", "")
-        assert bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"][0][0]["web_app"]["url"] == bot.config.web_url
+        assert bot.telegram.sent[-1][1]["keyboard"]["keyboard"][0][0]["web_app"]["url"] == bot.config.web_url
         await bot.command(1, None, "/start", "")
-        menu = bot.telegram.sent[-1][1]["keyboard"]
+        menu = next(p for m, p in reversed(bot.telegram.sent) if m == "sendMessage")["keyboard"]
         assert menu["is_persistent"] and menu["keyboard"][0][0]["text"] == "✓ 📌 Входящие"
         assert "web_app" not in str(menu)
         await bot.configure_menu()

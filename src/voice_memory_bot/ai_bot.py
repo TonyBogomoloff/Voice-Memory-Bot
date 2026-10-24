@@ -90,11 +90,12 @@ class AIBotMixin:
         if settings["wake_enabled"]:
             text += "\nИмена: " + ", ".join(settings["names"])
             rows.append([key("Изменить имена", "ainames")])
-        rows.extend([[key("Доступ к заметкам", "aiaccessmenu")],
-                     [key("Выбрать модель", "aimodels")], [key("Открыть ИИ", "aiopen"), key("Папки", "folders")]])
+        rows.extend([[key("Доступ: " + access_labels[settings['notes_access']], "aiaccessmenu")],
+                     [key("Модель: " + selected, "aimodels")]])
         text += "\n\nВ ИИ-папке все сообщения идут в диалог. Ответ на реплику ИИ продолжает разговор."
         text += "\nПри доступе к заметкам модель получает найденные записи по мере запроса."
-        await self.show(owner, text, thread, keys(*rows), edit_id)
+        await self.show_bottom(owner, text, thread, keys(*rows), screen="aisettings",
+                               back="settings:all", edit_id=edit_id)
 
     async def open_ai(self, owner, thread):
         folders = self.store.folders(owner)
@@ -107,14 +108,13 @@ class AIBotMixin:
             folder = self.store.create_folder(owner, name)
             self.ai_state.mode(owner, folder["id"], "chat")
         self.store.select(owner, folder["id"])
-        await self.refresh_folder_keyboard(owner, thread)
         self.store.set_action(owner, None)
-        conversation = self.ai_state.active(owner, folder["id"])
-        response = await self.show(owner, f"🤖 Папка «{folder['name']}» — диалог с ИИ.\n"
+        self.ai_state.active(owner, folder["id"])
+        await self.show_bottom(owner, f"🤖 Папка «{folder['name']}» — диалог с ИИ.\n"
                                    "Отправь текст или голосовое. Можно попросить найти, создать или изменить заметку.",
                                    thread, keys([key("Новый разговор", f"ainew:{folder['id']}")],
-                                   [key("История разговоров", f"ailist:{folder['id']}:0"), key("Настройки", "aisettings")]))
-        self.ai_state.link(owner, response["message_id"], conversation)
+                                   [key("История разговоров", f"ailist:{folder['id']}:0"), key("Настройки", "aisettings")]),
+                                   screen=f"foldermenu:{folder['id']}", back="home")
 
     async def new_ai_conversation(self, owner, thread, folder_id):
         self.store.set_action(owner, None)
@@ -133,7 +133,7 @@ class AIBotMixin:
                                  "JOIN ai_conversations c ON c.id=a.conversation_id JOIN notes n ON n.id=a.note_id "
                                  "WHERE a.owner=? AND c.folder_id=? AND n.deleted=0 "
                                  "ORDER BY a.created_at DESC LIMIT 9 OFFSET ?", (owner, folder_id, page * 8))
-        rows = [[key((n["transcript"] or "Голосовое обрабатывается")[:55], f"aiview:{n['note_id']}")]
+        rows = [[key("🤖 " + (n["transcript"] or "Голосовое обрабатывается")[:55], f"aiview:{n['note_id']}")]
                 for n in history[:8]]
         nav = []
         if page:
@@ -143,8 +143,9 @@ class AIBotMixin:
         if nav:
             rows.append(nav)
         rows.append([key("← К папке", f"folder:{folder_id}:0")])
-        await self.show(owner, "История ИИ. Выбери сообщение:" if history else "Разговоров пока нет.",
-                        thread, keys(*rows), edit_id)
+        await self.show_bottom(owner, "История ИИ. Выбери сообщение:" if history else "Разговоров пока нет.",
+                               thread, keys(*rows), screen=f"ailist:{folder_id}:{page}",
+                               back=f"foldermenu:{folder_id}", edit_id=edit_id)
 
     async def ai_callback(self, owner, thread, message_id, data):
         parts = data.split(":")
@@ -156,20 +157,23 @@ class AIBotMixin:
         elif action == "aiaccessmenu":
             selected = self.ai_state.settings(owner)["notes_access"]
             choices = [("none", "Выключен"), ("read", "Только чтение"), ("write", "Чтение и запись")]
-            await self.show(owner, "Что ИИ может делать с твоими заметками?", thread, keys(
+            await self.show_bottom(owner, "Что ИИ может делать с твоими заметками?", thread, keys(
                 *[[key(("✓ " if selected == value else "") + label, f"aiaccess:{value}")]
-                  for value, label in choices], [key("← Настройки", "aisettings")]), message_id)
+                  for value, label in choices]), screen="aiaccessmenu", back="aisettings", edit_id=message_id)
         elif action in {"aiwake", "aiaccess"}:
             self.ai_state.set_settings(owner, **({"wake_enabled": identity == "1"} if action == "aiwake"
                                                 else {"notes_access": identity}))
             await self.ai_settings(owner, thread, message_id)
         elif action == "ainames":
             self.store.set_action(owner, "ai_names")
-            await self.show(owner, "Пришли имена обращения через запятую, например: Луна, Астра, GPT. /cancel — отмена.", thread)
+            await self.show_bottom(owner, "Пришли имена обращения через запятую, например: Луна, Астра, GPT.",
+                                   thread, screen="ainames", back="aisettings", keep=True, edit_id=message_id)
         elif action == "aimodels":
-            await self.show(owner, "Выбери модель:", thread, keys(
-                *[[key(model, f"aimodel:{index}")] for index, model in enumerate(self.ai_models)],
-                [key("← Настройки", "aisettings")]), message_id)
+            selected = self.ai_state.settings(owner)["model"] or self.config.llm.model
+            await self.show_bottom(owner, "Выбери модель:", thread, keys(
+                *[[key(("✓ " if model == selected else "") + model, f"aimodel:{index}")]
+                  for index, model in enumerate(self.ai_models)]), screen="aimodels", back="aisettings",
+                edit_id=message_id)
         elif action == "aimodel":
             if not identity or not identity.isdigit() or int(identity) >= len(self.ai_models):
                 raise ValueError("Модель не найдена")
@@ -177,24 +181,34 @@ class AIBotMixin:
             await self.ai_settings(owner, thread, message_id)
         elif action == "aimode":
             self.ai_state.mode(owner, identity, parts[2])
-            await self.show_notes(owner, thread, identity, edit_id=message_id)
+            await self.show_notes_menu(owner, thread, identity, edit_id=message_id)
         elif action == "ainew":
             await self.new_ai_conversation(owner, thread, identity)
         elif action == "ailist":
             await self.ai_history(owner, thread, identity, int(parts[2]), message_id)
+        elif action in {"aioptions", "aicollapse"}:
+            request = self.ai_state.request(owner, identity)
+            if not request:
+                raise ValueError("Запрос не найден")
+            rows, _ = self.ai_result_controls(owner, identity, request)
+            await self.edit_note_buttons(owner, message_id, keys(*rows) if action == "aioptions"
+                                         else keys([key("Опции", f"aioptions:{identity}")]))
         elif action == "aiask":
             conversation = self.ai_state.start_note_conversation(owner, identity)
             self.store.set_action(owner, f"ai_note:{conversation}")
-            response = await self.show(owner,
+            response = await self.show_bottom(owner,
                 "Хорошо, отправь инструкцию для ИИ.\n"
                 "Следующие сообщения будут относиться только к выбранной записи.\n"
                 "Чтобы вернуться к заметкам, нажми «Завершить» или выбери папку.", thread,
-                keys([key("Завершить", f"aiend:{conversation}")]))
+                keys([key("Завершить", f"aiend:{conversation}")]),
+                screen=f"ai_note:{conversation}", back="root", keep=True)
             self.ai_state.link(owner, response["message_id"], conversation)
         elif action == "aiend":
             if self.store.action(owner) == f"ai_note:{identity}":
                 self.store.set_action(owner, None)
-            await self.edit_note_buttons(owner, message_id, keys())
+            if message_id:
+                await self.edit_note_buttons(owner, message_id, keys())
+            await self.show_home(owner, thread)
         elif action in {"aiview", "airetry"}:
             request = self.ai_state.request(owner, identity)
             if not request:
@@ -230,16 +244,7 @@ class AIBotMixin:
         async with self.ai_delivery_locks[request["note_id"]]:
             await self._deliver_ai(request, force, thread)
 
-    async def _deliver_ai(self, request, force=False, thread=None):
-        from .bot import transcript_chunks
-        owner, identity = request["owner"], request["note_id"]
-        current = self.ai_state.request(owner, identity)
-        if not current or (not force and current["delivery"] != "pending") or not current["response"]:
-            return
-        if current["trigger"] == "miniapp" and not force:
-            self.ai_state.update_request(owner, identity, delivery="sent")
-            return
-        conversation = self.ai_state.conversation(owner, current["conversation_id"])
+    def ai_result_controls(self, owner, identity, current):
         rows, changes = [], []
         for receipt in self.ai_engine.receipts(owner, identity):
             label = "Изменено" if receipt["action"] == "update_note" else "Создано"
@@ -250,10 +255,21 @@ class AIBotMixin:
         if current["state"] == "failed":
             rows.append([key("Повторить запрос", f"airetry:{identity}")])
         context = self.ai_state.note_context(owner, current["conversation_id"])
-        if context:
-            rows.append([key("Завершить", f"aiend:{current['conversation_id']}")])
         rows.append([key("Исходное сообщение", f"note:{context['note_id'] if context else identity}")])
-        rows.append([key("Новый разговор", f"ainew:{conversation['folder_id']}"), key("Настройки ИИ", "aisettings")])
+        rows.append([key("← Назад", f"aicollapse:{identity}")])
+        return rows, changes
+
+    async def _deliver_ai(self, request, force=False, thread=None):
+        from .bot import transcript_chunks
+        owner, identity = request["owner"], request["note_id"]
+        current = self.ai_state.request(owner, identity)
+        if not current or (not force and current["delivery"] != "pending") or not current["response"]:
+            return
+        if current["trigger"] == "miniapp" and not force:
+            self.ai_state.update_request(owner, identity, delivery="sent")
+            return
+        self.ai_state.conversation(owner, current["conversation_id"])
+        _, changes = self.ai_result_controls(owner, identity, current)
         text = "🤖 " + current["response"]
         if changes:
             text += "\n\n" + "\n".join(changes)
@@ -265,7 +281,7 @@ class AIBotMixin:
         try:
             for index, chunk in enumerate(chunks):
                 sent = await self.telegram.text(owner, chunk, thread if force else current["thread_id"],
-                    keys(*rows) if index == len(chunks) - 1 else None,
+                    keys([key("Опции", f"aioptions:{identity}")]) if index == len(chunks) - 1 else None,
                     reply_to=None if force else current["reply_to"])
                 self.ai_state.link(owner, sent["message_id"], current["conversation_id"])
             self.ai_state.update_request(owner, identity, delivery="sent")
