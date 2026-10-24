@@ -24,7 +24,6 @@ class FolderNamingMixin:
                                thread, {"remove_keyboard": True})
 
     async def create_folder_from_voice(self, owner, thread, message):
-        from .bot import button, keyboard
         mid = message['message_id']
         receipt = self.store.one('SELECT * FROM folder_name_inputs WHERE owner=? AND message_id=?', (owner, mid))
         if receipt and receipt['folder_id']:
@@ -35,11 +34,14 @@ class FolderNamingMixin:
             raise ValueError('Пришли голосовое с названием размером до 20 MB.')
         if media.get('duration', 0) > 60:
             raise ValueError('Для названия папки хватит голосового до одной минуты.')
-        keys = keyboard([button('Отмена', 'home')])
+        keys = {'inline_keyboard': []}
         status = await self.show(owner, '🎙 Расшифровываю название…', thread, keys)
         directory = self.archive.root / str(owner) / 'folder-names' / str(mid)
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         path = directory / ('source.ogg' if kind == 'voice' else 'source.mp4')
+        phase = 'asr'
+        folder = None
+        transcript = None
         try:
             transcript = receipt['transcript'] if receipt else None
             if transcript is None:
@@ -55,14 +57,20 @@ class FolderNamingMixin:
                 if duration > 60:
                     raise ValueError('Для названия папки хватит голосового до одной минуты.')
                 self.store.reserve_asr(owner, duration)
-                transcript = await self.groq.transcribe(path)
+                transcript = await self.groq.transcribe(path, prompt=
+                    'Folder names / Названия папок.')
                 with self.store.db:
                     self.store.db.execute('INSERT INTO folder_name_inputs(owner,message_id,transcript) VALUES (?,?,?) '
                                           'ON CONFLICT(owner,message_id) DO UPDATE SET transcript=excluded.transcript',
                                           (owner, mid, transcript))
                 (directory / 'transcript.txt').write_text(transcript, encoding='utf-8')
+            phase = 'name'
             await self.show(owner, '✨ Выделяю название папки…', thread, keys, status['message_id'])
             name = receipt['name'] if receipt and receipt['name'] else await self.folder_namer.folder_name(transcript)
+            phase = 'create'
+            with self.store.db:
+                self.store.db.execute('UPDATE folder_name_inputs SET name=? WHERE owner=? AND message_id=?',
+                                      (name, owner, mid))
             await self.show(owner, f'📁 Создаю папку «{name}»…', thread, keys, status['message_id'])
             folder = self.store.create_folder(owner, name)
             with self.store.db:
@@ -73,6 +81,14 @@ class FolderNamingMixin:
             self.store.set_action(owner, None)
             await self.show_notes(owner, thread, folder['id'], notice=f'✅ Папка «{name}» создана.')
         except (ProviderError, OSError, ValueError) as exc:
-            log.warning('folder name failed owner=%s type=%s', owner, type(exc).__name__)
-            text = str(exc) if isinstance(exc, ValueError) else 'Не получилось обработать название. Пришли его текстом или повтори голосовое.'
+            log.warning('folder name failed owner=%s phase=%s type=%s', owner, phase, type(exc).__name__)
+            if folder is not None:
+                self.store.set_action(owner, None)
+                text = f'Папка «{folder["name"]}» создана. Открой её через «Все папки».'
+            elif isinstance(exc, ValueError):
+                text = str(exc)
+                if phase == 'name' and transcript:
+                    text = f'Расслышал: «{transcript[:1000]}».\nНе удалось однозначно выделить название. Напиши его или повтори голосовое.'
+            else:
+                text = 'Не получилось обработать название. Пришли его текстом или повтори голосовое.'
             await self.show(owner, text, thread, keys, status['message_id'])

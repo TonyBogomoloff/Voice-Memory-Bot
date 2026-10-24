@@ -20,8 +20,8 @@ def test_first_folder_voice_name_statuses_keyboard_and_original_survive(tmp_path
             assert 'первую папку' in bot.telegram.sent[-1][1]['text']
             assert bot.telegram.sent[-1][1]['keyboard'] == {'remove_keyboard': True}
 
-            async def transcribe(path):
-                assert path.exists()
+            async def transcribe(path, *, prompt=None):
+                assert path.exists() and 'папок' in prompt
                 return 'Давай назовём папку Test 2'
 
             async def extract(text):
@@ -38,6 +38,7 @@ def test_first_folder_voice_name_statuses_keyboard_and_original_survive(tmp_path
             changes = [p for m, p in bot.telegram.sent if m == 'editMessageText']
             assert [p['text'] for p in changes] == ['✨ Выделяю название папки…', '📁 Создаю папку «Test 2»…']
             assert changes[0]['message_id'] == changes[1]['message_id']
+            assert all(p['reply_markup'] == {'inline_keyboard': []} for p in changes)
             assert (bot.archive.root / '1/folder-names/1001/source.ogg').is_file()
             assert (bot.archive.root / '1/folder-names/1001/transcript.txt').read_text() == 'Давай назовём папку Test 2'
             await bot.create_folder_from_voice(1, None, {'message_id': 1001})
@@ -99,6 +100,48 @@ def test_voice_name_failure_keeps_create_prompt_and_does_not_create_note(tmp_pat
             assert store.one('SELECT transcript FROM folder_name_inputs')['transcript']
             await receive(bot, 'Название вручную', 1002)
             assert [f['name'] for f in store.folders(1)] == ['Название вручную']
+        finally:
+            store.close()
+    asyncio.run(run())
+
+
+def test_ambiguous_voice_explains_what_was_heard_without_cancel(tmp_path):
+    async def run():
+        store = Store(tmp_path / 'db', Limits())
+        bot = make_bot(tmp_path, store)
+        try:
+            async def ambiguous(text):
+                raise ValueError('Скажи одно название папки или напиши его текстом.')
+            bot.folder_namer = SimpleNamespace(folder_name=ambiguous)
+            await receive(bot, '/new')
+            assert bot.telegram.sent[-1][1]['keyboard'] == {'inline_keyboard': []}
+            await receive_voice(bot, 1001, None)
+            result = bot.telegram.sent[-1][1]
+            assert 'Расслышал:' in result['text'] and 'не удалось' in result['text'].lower()
+            assert result['reply_markup'] == {'inline_keyboard': []}
+            assert store.folders(1) == [] and store.action(1) == 'create'
+        finally:
+            store.close()
+    asyncio.run(run())
+
+
+def test_created_folder_is_not_reported_as_naming_failure(tmp_path):
+    async def run():
+        store = Store(tmp_path / 'db', Limits())
+        bot = make_bot(tmp_path, store)
+        try:
+            async def extract(text):
+                return 'Новая'
+            async def unavailable_view(*args, **kwargs):
+                raise ProviderError('telegram_429')
+            bot.folder_namer = SimpleNamespace(folder_name=extract)
+            bot.show_notes = unavailable_view
+            await receive(bot, '/new')
+            await receive_voice(bot, 1001, None)
+            assert [f['name'] for f in store.folders(1)] == ['Новая']
+            assert store.action(1) is None
+            assert 'Папка «Новая» создана' in bot.telegram.sent[-1][1]['text']
+            assert store.one('SELECT folder_id FROM folder_name_inputs')['folder_id']
         finally:
             store.close()
     asyncio.run(run())

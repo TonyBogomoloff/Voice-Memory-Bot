@@ -274,7 +274,7 @@ class FakeGroq:
     calls = 0
     error = None
 
-    async def transcribe(self, path):
+    async def transcribe(self, path, *, prompt=None):
         self.calls += 1
         if self.error:
             raise ProviderError(self.error)

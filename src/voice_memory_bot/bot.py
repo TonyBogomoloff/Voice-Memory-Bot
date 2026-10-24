@@ -290,6 +290,9 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                     return await self.input_action(owner, thread, text)
                 if self.store.action(owner) == "create" and any(message.get(k) for k in ("voice", "audio", "video_note")):
                     return await self.create_folder_from_voice(owner, thread, message)
+                if self.store.action(owner) == "create":
+                    return await self.show(owner, "Напиши название папки или пришли голосовое.", thread,
+                                           {"inline_keyboard": []})
                 return await self.show(owner, "Сначала пришли ответ текстом или нажми «Отмена».", thread,
                                        keyboard([button("Отмена", "home")]))
             if not self.store.folders(owner):
@@ -385,7 +388,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                 return await self.create_folder(owner, thread, argument)
             self.store.set_action(owner, "create")
             return await self.show(owner, "Как назовём папку? Напиши название или пришли голосовое.", thread,
-                                   keyboard([button("Отмена", "home")]))
+                                   {"inline_keyboard": []})
         if command == "/notes":
             return await self.show_notes(owner, thread, self.store.current_folder(owner, thread))
         if command == "/search":
