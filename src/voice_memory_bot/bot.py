@@ -176,7 +176,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                     await asyncio.sleep(2)
                     continue
                 updates = await self.telegram.call("getUpdates", offset=self.store.offset(), timeout=30,
-                                                   allowed_updates=["message", "callback_query"], limit=50)
+                                                   allowed_updates=["message", "edited_message", "callback_query"], limit=50)
                 self.store.ingest(updates, self.config.allowed_user_ids)
             except ProviderError as exc:
                 if str(exc) in {"telegram_401", "telegram_409"}:
@@ -243,18 +243,25 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
 
     async def handle(self, update):
         callback = update.get("callback_query")
-        sender = (callback or update.get("message", {})).get("from", {})
+        sender = (callback or update.get("message") or update.get("edited_message", {})).get("from", {})
         async with self.view_locks[sender.get("id")]:
             return await self._handle(update)
 
     async def _handle(self, update):
         callback = update.get("callback_query")
-        message = update.get("message") or (callback or {}).get("message", {})
+        message = update.get("message") or update.get("edited_message") or (callback or {}).get("message", {})
         sender = callback.get("from", {}) if callback else message.get("from", {})
         owner = sender.get("id")
         if owner not in self.config.allowed_user_ids or message.get("chat", {}).get("type") != "private":
             return
         if message["chat"]["id"] != owner:
+            return
+        if "edited_message" in update:
+            note = self.store.one("SELECT * FROM notes WHERE owner=? AND message_id=? AND deleted=0",
+                                  (owner, message.get("message_id")))
+            if note:
+                async with self.note_locks[note["id"]]:
+                    self.store.edit_source(owner, message)
             return
         thread = message.get("message_thread_id")
         self.cleanup.remember(owner, message.get("message_id"), thread, message.get("date"))

@@ -480,10 +480,39 @@ class Store:
             self.db.execute("DELETE FROM ai_steps WHERE note_id=?", (identity,))
             self.db.execute("UPDATE ai_requests SET state='deleted',response=NULL,input_text=NULL,error=NULL WHERE note_id=?", (identity,))
 
+    def edit_source(self, owner, message):
+        """Apply source text/caption edits without replaying commands or AI requests."""
+        note = self.one("SELECT * FROM notes WHERE owner=? AND message_id=? AND deleted=0",
+                        (owner, message.get("message_id")))
+        if not note:
+            return
+        source = json.loads(note["source_json"] or "{}")
+        if message.get("edit_date", 0) < source.get("edit_date", 0):
+            return
+        updated = dict(source)
+        for key in ("text", "entities", "caption", "caption_entities"):
+            updated.pop(key, None)
+            if key in message:
+                updated[key] = message[key]
+        updated["edit_date"] = message.get("edit_date", 0)
+        if updated == source:
+            return
+        # Audio transcripts remain ASR output; their captions live in source_json.
+        field = "text" if note["kind"] == "text" else "caption"
+        changed = source.get(field, "") != updated.get(field, "")
+        replace_text = changed and note["kind"] in {"text", "photo", "file", "video"}
+        with self.db:
+            self.db.execute("UPDATE notes SET source_json=?,archive_dirty=1,revision=revision+?,"
+                            "transcript=CASE WHEN ? THEN ? ELSE transcript END,"
+                            "content=CASE WHEN ? THEN NULL ELSE content END "
+                            "WHERE owner=? AND id=? AND deleted=0",
+                            (json.dumps(updated, ensure_ascii=False), int(changed), replace_text,
+                             updated.get(field, ""), replace_text, owner, note["id"]))
+
     def ingest(self, updates, allowed):
         with self.db:
             for update in updates:
-                message = update.get("message") or update.get("callback_query", {}).get("message", {})
+                message = update.get("message") or update.get("edited_message") or update.get("callback_query", {}).get("message", {})
                 sender = update.get("callback_query", {}).get("from") or message.get("from", {})
                 if sender.get("id") in allowed and message.get("chat", {}).get("type") == "private":
                     self.db.execute("INSERT OR IGNORE INTO updates(id,payload) VALUES (?,?)",
