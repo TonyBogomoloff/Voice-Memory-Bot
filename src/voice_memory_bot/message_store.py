@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import nullcontext
 
 
 class MessageStore:
@@ -60,7 +61,7 @@ class MessageStore:
             "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND thread_id IS ? "
             "AND deleted=0 ORDER BY message_id", (owner, identity, thread))]
 
-    def move_archive(self, note, folder_id):
+    def move_archive(self, note, folder_id, *, commit=True):
         """Commit the destination and cleanup receipt before deleting messages.
 
         Folders are archive views; opening the target renders the note there.
@@ -72,7 +73,7 @@ class MessageStore:
         source_ids = [row["message_id"] for row in self.store.all(
             "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0 ORDER BY message_id",
             (owner, identity))]
-        with self.db:
+        with self.db if commit else nullcontext():
             self.db.execute("UPDATE notes SET folder_id=?,routing='manual',requested_folder=NULL,archive_dirty=1,"
                             "revision=revision+? WHERE owner=? AND id=? AND deleted=0",
                             (folder_id, int(current["state"] == "ready" and current["folder_id"] != folder_id),

@@ -150,6 +150,7 @@ class MiniApp:
             web.put("/api/folders/{folder}/uploads/{key}", self.upload),
             web.put("/api/folders/{folder}/text/{key}", self.text_note),
             web.post("/api/notes/{note}/execute", self.execute),
+            web.post("/api/notes/{note}/ai-folder", self.ai_folder),
             web.post("/api/notes/{note}/move", self.move), web.post("/api/notes/{note}/retry", self.retry),
             web.get("/api/notes/{note}/media", self.media_url), web.get("/media/{note}", self.media),
         ])
@@ -217,6 +218,8 @@ class MiniApp:
         result["ai_generated"] = bool(note.get("ai_generated_from"))
         job = self.bot.ai_state.request(note["owner"], note["id"])
         result["ai"] = ({k: job[k] for k in ("state", "result_note_id")} if job else None)
+        if job:
+            result["ai"]["folder_choices"] = self.bot.ai_note_actions.choices(note["owner"], note["id"])
         if job and job["state"] == "running":
             steps = self.bot.ai_state.steps(note["owner"], note["id"])
             if steps and steps[-1]["command"]["action"] in {"create_image", "edit_image"} and not steps[-1]["result"]:
@@ -226,6 +229,17 @@ class MiniApp:
         result["can_execute"] = (note["kind"] in {"voice", "video_note", "audio", "text"} and note["state"] == "ready"
             and bool((result["text"] or "").strip()) and (not job or job["state"] == "failed"))
         return result
+
+    async def ai_folder(self, request):
+        body = await request.json()
+        if type(body.get("step")) is not int or not isinstance(body.get("target"), str):
+            raise web.HTTPBadRequest(text="Выбери папку кнопкой.")
+        try:
+            message = await self.bot.ai_note_actions.choose(request[OWNER], request.match_info["note"],
+                                                           body["step"], body["target"])
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from None
+        return web.json_response({"message": message})
 
     async def text_note(self, request):
         owner, folder, key = request[OWNER], request.match_info["folder"], request.match_info["key"]

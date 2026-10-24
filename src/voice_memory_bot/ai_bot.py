@@ -5,6 +5,7 @@ import json
 import logging
 from collections import defaultdict
 
+from .ai_note_actions import NoteActions
 from .ai_store import AIStore
 from .assistant import AssistantEngine, CodexAssistant, edge_candidate
 from .providers import ProviderError
@@ -26,7 +27,9 @@ class AIBotMixin:
         self.ai_state.archive_replies()
         self.ai_models = tuple(dict.fromkeys((self.config.llm.model, *self.config.assistant_models)))
         self.assistant = assistant or CodexAssistant(self.config.llm)
-        self.ai_engine = AssistantEngine(self.ai_state, self.assistant, self.config.llm.model, self.ai_models, self.archive)
+        self.ai_note_actions = NoteActions(self)
+        self.ai_engine = AssistantEngine(self.ai_state, self.assistant, self.config.llm.model, self.ai_models,
+                                         self.archive, self.ai_note_actions)
         self.ai_delivery_locks = defaultdict(asyncio.Lock)
 
     def reply_input(self, owner, message):
@@ -182,7 +185,10 @@ class AIBotMixin:
     async def ai_callback(self, owner, thread, message_id, data):
         parts = data.split(":")
         action, identity = parts[0], parts[1] if len(parts) > 1 else None
-        if action == "aisettings":
+        if action == "aiplace" and len(parts) == 4:
+            text = await self.ai_note_actions.choose(owner, identity, int(parts[2]), parts[3])
+            await self.show(owner, text, thread, keys([key("Открыть ответ ИИ", f"aiview:{identity}")]), message_id)
+        elif action == "aisettings":
             await self.ai_settings(owner, thread, message_id)
         elif action == "aiopen":
             await self.open_ai(owner, thread)
@@ -291,15 +297,23 @@ class AIBotMixin:
     def ai_result_controls(self, owner, identity, current):
         rows, changes = [], []
         for receipt in self.ai_engine.receipts(owner, identity):
-            label = "Изменено" if receipt["action"] == "update_note" else "Создано"
+            label = {"update_note": "Изменено", "move_note": "Перенесено", "delete_note": "Удалено"}.get(
+                receipt["action"], "Создано")
             changes.append(f"{label}: {receipt['title']}")
-            rows.append([key(receipt["title"][:45], f"note:{receipt['id']}")])
-            if receipt["action"] == "update_note":
+            if receipt.get("cleanup_state") in {"pending", "blocked"}:
+                changes.append(receipt["message"])
+            exists = self.store.one("SELECT id FROM notes WHERE owner=? AND id=? AND deleted=0", (owner, receipt['id']))
+            if exists:
+                rows.append([key(receipt["title"][:45], f"note:{receipt['id']}")])
+            if exists and receipt["action"] == "update_note":
                 rows[-1].append(key("Отменить правку", f"aiundo:{receipt['id']}:{receipt['revision']}"))
         if current["state"] == "failed":
             rows.append([key("Повторить запрос", f"airetry:{identity}")])
         context = self.ai_state.note_context(owner, current["conversation_id"])
-        rows.append([key("Исходное сообщение", f"note:{context['note_id'] if context else identity}")])
+        source = context['note_id'] if context else identity
+        if self.store.one("SELECT id FROM notes WHERE owner=? AND id=? AND deleted=0", (owner, source)):
+            rows.append([key("Исходное сообщение", f"note:{source}")])
+        rows[:0] = self.ai_note_actions.buttons(owner, identity)
         rows.append([key("← Назад", f"aicollapse:{identity}")])
         return rows, changes
 
@@ -322,7 +336,11 @@ class AIBotMixin:
             text = "Ты: " + (note["transcript"] or "") + "\n\n" + text
         note = self.store.note(owner, identity)
         reply_to = note["transcript_message_id"]
-        controls = [[key("Продолжить", f"aicontinue:{identity}")]]
+        controls = self.ai_note_actions.buttons(owner, identity)
+        context = self.ai_state.note_context(owner, current["conversation_id"])
+        context_deleted = context and not self.store.one(
+            "SELECT id FROM notes WHERE owner=? AND id=? AND deleted=0", (owner, context["note_id"]))
+        controls.append([key("Папки", "folders") if context_deleted else key("Продолжить", f"aicontinue:{identity}")])
         if current["state"] == "failed":
             controls.append([key("Повторить запрос", f"airetry:{identity}")])
         chunks = list(transcript_chunks(text))
@@ -369,6 +387,7 @@ class AIBotMixin:
                 await asyncio.sleep(.2)
                 continue
             try:
+                await self.ai_note_actions.resume()
                 self.flush_ai_archive()
                 request = self.ai_state.claim()
                 if request:

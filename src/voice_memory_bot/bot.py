@@ -89,7 +89,8 @@ HELP = """🎙 Voice Memory Bot
 Голосовые и видеокружки сразу расшифровываются в текст. Под расшифровкой: «Переместить» / «Удалить» / «ИИ».
 В папке с режимом «Диалог с ИИ» все сообщения идут помощнику. Ответ на реплику ИИ продолжает разговор.
 Обращение по имени в начале или конце можно включить в настройках. По умолчанию оно выключено.
-ИИ умеет искать, создавать и менять заметки; исходная расшифровка сохраняется, правку можно отменить.
+ИИ умеет искать, создавать, менять, переносить и удалять заметки.
+За один запрос — не больше одного переноса и одного удаления. Если папки нет, предложит варианты кнопками.
 История разговора и запрошенные заметки передаются модели. Доступ к заметкам можно выключить в настройках.
 Фото тоже сохраняются: на копии снимка сразу появятся кнопки «Переместить», «Удалить», «ИИ».
 Аудио отправляется в Groq для распознавания. OpenAI используется для функций ИИ.
@@ -740,7 +741,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             await self.remove_menu_message(owner, message_id)
             return await self._show(owner, text, thread)
 
-    async def delete_note_messages(self, note):
+    async def delete_note_messages(self, note, *, details=False):
         owner, identity = note["owner"], note["id"]
         receipts = self.store.all(
             "SELECT message_id,deleted FROM note_messages WHERE owner=? AND note_id=?",
@@ -751,20 +752,21 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         targets.update(note[field] for field in (
             "message_id", "status_message_id", "transcript_message_id", "result_message_id")
             if note.get(field) and note[field] > 0 and note[field] not in removed)
-        remaining = 0
+        remaining = retryable = 0
         for target in sorted(targets):
             try:
                 await self.telegram.call("deleteMessage", chat_id=owner, message_id=target)
             except ProviderError as exc:
                 if getattr(exc, "reason", None) != "delete_target_missing":
                     remaining += 1
+                    retryable += getattr(exc, "reason", None) != "delete_forbidden"
                     log.warning("note cleanup failed note_id=%s error=%s", identity, exc)
                     continue
             self.messages.removed(owner, identity, target)
             with self.store.db:
                 self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
                                       (owner, target))
-        return remaining
+        return {"remaining": remaining, "retryable": retryable} if details else remaining
 
     async def search(self, owner, thread, query):
         if not 1 <= len(query) <= 200:

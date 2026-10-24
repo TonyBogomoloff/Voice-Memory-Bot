@@ -190,6 +190,20 @@ function noteCard(note) {
     else media.append(action("↓ Скачать файл", "media-button", () => downloadNote(note).catch(fail)));
   }
   if (note.text) card.append(element("div", "note-text", note.text));
+  for (const choice of note.ai?.folder_choices || []) {
+    const panel = element("div", "note-status"); panel.append(element("p", "", choice.message));
+    for (const [target, label] of [["new", "➕ Новая папка"],
+      ...choice.folders.map(f => [f.id, "📁 " + f.name]), ["cancel", "Отмена"]]) {
+      panel.append(action(label, "text-button", async () => {
+        panel.querySelectorAll("button").forEach(b => { b.disabled = true; });
+        try {
+          const result = await post(`/api/notes/${note.id}/ai-folder`, {step: choice.step, target});
+          toast(result.message); await loadFolders(); await loadNotes();
+        } catch (err) { fail(err); panel.querySelectorAll("button").forEach(b => { b.disabled = false; }); }
+      }));
+    }
+    card.append(panel);
+  }
   if (["queued", "processing", "asr_failed"].includes(note.state)) {
     const error = note.state === "asr_failed";
     const status = element("div", "note-status" + (error ? " error" : ""), error ? "Не удалось обработать. Оригинал сохранён." :
@@ -204,7 +218,8 @@ function noteCard(note) {
     const running = ["queued", "running"].includes(note.ai.state), failed = note.ai.state === "failed";
     card.append(element("div", "ai-status" + (running ? " running" : failed ? " error" : ""),
       running ? (note.ai.phase === "image" ? "✦ Готовлю изображение… Это может занять несколько минут." : "✦ ИИ выполняет команду…") :
-      failed ? note.ai.error || "Не удалось выполнить. Можно повторить через ⋯." : "✓ Выполнено · ответ добавлен"));
+      failed ? note.ai.error || "Не удалось выполнить. Можно повторить через ⋯." :
+      note.ai.folder_choices?.length ? "Выбери папку для переноса" : "✓ Выполнено · ответ добавлен"));
   }
   return card;
 }

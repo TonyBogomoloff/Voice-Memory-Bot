@@ -57,6 +57,11 @@ def migrate_ai(db):
             request_id TEXT, created_at REAL NOT NULL, PRIMARY KEY(note_id, revision)
         );
         CREATE INDEX IF NOT EXISTS ai_request_queue ON ai_requests(state, created_at);
+        CREATE TABLE IF NOT EXISTS ai_note_jobs (
+            request_id TEXT NOT NULL REFERENCES ai_requests(note_id), step INTEGER NOT NULL,
+            owner INTEGER NOT NULL, note_id TEXT NOT NULL REFERENCES notes(id), action TEXT NOT NULL,
+            state TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(request_id, step)
+        );
     """)
     with db:
         columns = {r[1] for r in db.execute("PRAGMA table_info(ai_requests)")}
@@ -279,7 +284,7 @@ class AIStore:
                 if access == "none" or (command["action"] in {"create_note", "update_note"} and access != "write"):
                     raise ValueError("Доступ к заметкам выключен в настройках ИИ")
                 context = self.note_context(owner, self.request(owner, note_id)["conversation_id"])
-                if context and (command["action"] not in {"read_note", "update_note"}
+                if context and command["action"] != "list_folders" and (command["action"] not in {"read_note", "update_note"}
                                 or command["note_id"] != context["note_id"]):
                     raise ValueError("Этот диалог относится только к выбранной записи")
                 result = self._operation(owner, note_id, command)
@@ -292,6 +297,9 @@ class AIStore:
     def _operation(self, owner, request_id, command):
         from .store import clean_name, new_id
         action = command["action"]
+        if action == "list_folders":
+            return {"folders": [{"id": f["id"], "name": f["name"], "aliases": json.loads(f["aliases"]),
+                                  "mode": f["mode"]} for f in self.store.folders(owner)]}
         folder_id = command["folder_id"] or None
         if folder_id:
             self.store.folder(owner, folder_id)
@@ -333,6 +341,8 @@ class AIStore:
                                 (request_id, identity))
             return {"ok": True, "action": action, "id": identity, "title": title, "revision": 0}
         note = self.store.note(owner, command["note_id"])
+        if folder_id and folder_id != note["folder_id"]:
+            raise ValueError("Для переноса используй move_note. update_note меняет только текст")
         if self.is_busy(note["id"]):
             raise ValueError("Запись сейчас обрабатывается или переносится; попробуй после завершения")
         if note["entry_type"] != "note" or note["state"] != "ready":

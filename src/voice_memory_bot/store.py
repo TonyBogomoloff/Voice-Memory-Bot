@@ -233,15 +233,17 @@ class Store:
                 self.db.execute("INSERT OR IGNORE INTO implicit_topics VALUES (?,?)", (owner, folder["thread_id"]))
         return selected
 
-    def create_folder(self, owner: int, name: str, thread: int | None = None):
-        self.register_user(owner)
+    def create_folder(self, owner: int, name: str, thread: int | None = None, *, commit=True):
+        if commit:
+            self.register_user(owner)
         name = clean_name(name)
         self.check_names(owner, [name])
         if len(self.folders(owner)) >= self.limits.max_folders_per_user:
             raise ValueError("Достигнут лимит папок")
         identity = new_id()
-        with self.db:
-            self.db.execute("BEGIN IMMEDIATE")
+        with self.db if commit else nullcontext():
+            if commit:
+                self.db.execute("BEGIN IMMEDIATE")
             self.db.execute("INSERT INTO folders(id,owner,name,normalized,thread_id,pin_slot) VALUES (?,?,?,?,?,?)",
                             (identity, owner, name, normalize(name), thread, self.free_pin_slot(owner)))
         return self.folder(owner, identity)
@@ -448,13 +450,15 @@ class Store:
             raise ValueError("Пять попыток уже использованы; аудио доступно для выгрузки")
         self.update_note(owner, identity, state="queued", error=None, delivery="pending")
 
-    def delete(self, owner, identity):
+    def delete(self, owner, identity, *, commit=True):
         self.note(owner, identity)
-        with self.db:
+        with self.db if commit else nullcontext():
             self.db.execute("UPDATE notes SET deleted=1,transcript=NULL,title='',file_id=NULL,"
                             "content=NULL,source_json=NULL,original_name=NULL,mime_type=NULL,"
                             "requested_folder=NULL,error=NULL WHERE owner=? AND id=?", (owner, identity))
             self.db.execute("DELETE FROM note_revisions WHERE note_id=?", (identity,))
+            self.db.execute("UPDATE ai_note_context SET content='',title='Удалённая запись' WHERE note_id=?",
+                            (identity,))
             self.db.execute("DELETE FROM ai_steps WHERE note_id=?", (identity,))
             self.db.execute("UPDATE ai_requests SET state='deleted',response=NULL,input_text=NULL,error=NULL WHERE note_id=?", (identity,))
 

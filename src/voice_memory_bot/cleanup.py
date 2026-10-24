@@ -106,7 +106,7 @@ class CleanupStore:
                                 [(owner, mid, thread) for mid, thread in messages.items()])
             self.db.execute("DELETE FROM note_revisions WHERE note_id IN (SELECT id FROM notes WHERE owner=?)", (owner,))
             self.db.execute("DELETE FROM ai_steps WHERE note_id IN (SELECT note_id FROM ai_requests WHERE owner=?)", (owner,))
-            for table in ("record_prompts", "record_panels", "note_moves", "note_messages", "folder_name_inputs",
+            for table in ("ai_note_jobs", "record_prompts", "record_panels", "note_moves", "note_messages", "folder_name_inputs",
                           "bottom_menus", "bottom_menu_labels", "folder_options"):
                 if table in tables:
                     self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
@@ -165,6 +165,7 @@ class CleanupMixin:
         notes = self.store.all("SELECT id,state,delivery,transcript_delivery FROM notes WHERE owner=? AND deleted=0",
                                (owner,))
         return (self.export_locks[owner].locked()
+                or self.ai_note_actions.locks[owner].locked()
                 or bool(getattr(self, "web", None) and owner in self.web.uploading)
                 or any(n["state"] == "processing" or n["delivery"] == "sending"
                        or n["transcript_delivery"] == "sending"
