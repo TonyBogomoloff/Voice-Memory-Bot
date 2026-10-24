@@ -289,7 +289,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             text = message.get("text", "").strip()
             if await self.bottom_input(owner, thread, text, message["message_id"]):
                 return
-            if text in MENU_COMMANDS or text in OPTION_ACTIONS or text in {"⬅️", "➡️"} or self.is_folder_button(text) or text.startswith("/"):
+            # Folder taps remain as view anchors until the next selection.
+            if text in MENU_COMMANDS or text in OPTION_ACTIONS or text in {"⬅️", "➡️"} or text.startswith("/"):
                 await self.remove_menu_message(owner, message["message_id"])
             if text in OPTION_ACTIONS:
                 return await self.folder_option_button(owner, thread, text)

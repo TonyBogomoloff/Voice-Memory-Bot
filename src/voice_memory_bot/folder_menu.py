@@ -120,9 +120,11 @@ class FolderMenuMixin:
         for folder in self.store.folders(owner):
             if text in {prefix + folder["name"] for prefix in FOLDER_PREFIXES}:
                 if folder["id"] == self.store.current_folder(owner):
+                    await self.remove_menu_message(owner, message_id)
                     return
                 self.folder_delete_confirmations.pop(owner, None)
                 return await self.show_notes(owner, thread, folder["id"], command_message_id=message_id)
+        await self.remove_menu_message(owner, message_id)
         self.store.set_action(owner, None)
         await self.refresh_folder_keyboard(owner, thread, force=True,
             notice="Эта кнопка устарела. Выбери папку внизу или открой «Все папки».")

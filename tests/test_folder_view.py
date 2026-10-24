@@ -252,28 +252,38 @@ def test_switch_has_all_records_and_no_persistent_header_or_menu(bot):
     asyncio.run(run())
 
 
-def test_switch_removes_navigation_commands_including_deferred_render_and_restart(bot):
+@pytest.mark.parametrize("deferred", [False, True])
+def test_folder_tap_keeps_latest_message_until_next_selection(bot, deferred):
     async def run():
         inbox = bot.store.ensure_user(1)
         work = bot.store.create_folder(1, 'Работа')['id']
+        note = saved(bot, work, 'Обработка', 6001)
+        before = bot.store.all('SELECT * FROM notes ORDER BY id')
+        bot.cleanup.remember(2, 6002)
         await receive(bot, '📌 Работа', 7001)
-        assert any(m == 'deleteMessage' and p['message_id'] == 7001 for m, p in bot.telegram.sent)
-        note = saved(bot, work, 'Обработка', 8001)
-        bot.store.update_note(1, note['id'], state='processing')
+        def deleted():
+            return {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        assert 6001 in deleted() and 7001 not in deleted() and 6002 not in deleted()
+        assert bot.store.one('SELECT 1 FROM telegram_messages WHERE owner=1 AND message_id=7001')
+        if deferred:
+            bot.store.update_note(1, note['id'], state='processing')
+        bot.telegram.sent.clear()
         await receive(bot, '📌 Входящие', 7002)
         assert bot.store.current_folder(1) == inbox
-        assert not bot.store.one('SELECT * FROM telegram_messages WHERE message_id=7002')
+        assert 7002 not in deleted()
+        if deferred:
+            assert 7001 not in deleted()
         bot.init_folder_view()
-        bot.store.update_note(1, note['id'], state='ready')
-        bot.telegram.sent.clear()
+        bot.init_bottom_menu()
+        if deferred:
+            bot.store.update_note(1, note['id'], state='ready')
         await bot.refresh_due_views()
-        assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
+        assert 7001 in deleted() and 7002 not in deleted() and 6002 not in deleted()
+        assert bot.store.one('SELECT 1 FROM telegram_messages WHERE owner=1 AND message_id=7002')
         bot.telegram.sent.clear()
-        await bot.refresh_due_views()
-        assert not bot.telegram.sent
         await receive(bot, '📌 Работа', 7003)
-        assert any(m == 'deleteMessage' and p['message_id'] == 7003 for m, p in bot.telegram.sent)
-        assert bot.store.note(1, note['id'])['transcript'] == 'Обработка'
+        assert 7002 in deleted() and 7003 not in deleted()
+        assert bot.store.all('SELECT * FROM notes ORDER BY id') == before
     asyncio.run(run())
 
 
