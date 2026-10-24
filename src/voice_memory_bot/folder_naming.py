@@ -14,6 +14,9 @@ class FolderNamingMixin:
             owner INTEGER NOT NULL, message_id INTEGER NOT NULL, transcript TEXT,
             name TEXT, folder_id TEXT, PRIMARY KEY(owner,message_id)
         )""")
+        columns = {r[1] for r in self.store.db.execute("PRAGMA table_info(folder_name_inputs)")}
+        if "rename_id" not in columns:
+            self.store.db.execute("ALTER TABLE folder_name_inputs ADD COLUMN rename_id TEXT")
         self.store.db.commit()
 
     async def ask_first_folder(self, owner, thread=None):
@@ -23,10 +26,16 @@ class FolderNamingMixin:
         return await self.show_bottom(owner, "Как назовём нашу первую папку? Напиши название или пришли голосовое.",
                                       thread, screen="create", back="home", keep=True)
 
-    async def create_folder_from_voice(self, owner, thread, message):
+    async def create_folder_from_voice(self, owner, thread, message, rename_id=None):
         mid = message['message_id']
         receipt = self.store.one('SELECT * FROM folder_name_inputs WHERE owner=? AND message_id=?', (owner, mid))
+        if rename_id:
+            self.store.folder(owner, rename_id)
+        if receipt and receipt['rename_id'] != rename_id:
+            raise ValueError('Это голосовое уже использовано для другой операции. Пришли новое.')
         if receipt and receipt['folder_id']:
+            if rename_id and self.options_folder(owner) == rename_id:
+                return await self.show_folder_options(owner, thread, rename_id)
             return await self.show_notes(owner, thread, receipt['folder_id'])
         kind = next(k for k in ('voice', 'audio', 'video_note') if message.get(k))
         media = message[kind]
@@ -34,6 +43,10 @@ class FolderNamingMixin:
             raise ValueError('Пришли голосовое с названием размером до 20 MB.')
         if media.get('duration', 0) > 60:
             raise ValueError('Для названия папки хватит голосового до одной минуты.')
+        with self.store.db:
+            self.store.db.execute('INSERT OR IGNORE INTO folder_name_inputs(owner,message_id,rename_id) VALUES (?,?,?)',
+                                  (owner, mid, rename_id))
+        result_word = 'переименована' if rename_id else 'создана'
         keys = {'inline_keyboard': []}
         status = await self.show(owner, '🎙 Расшифровываю название…', thread, keys)
         directory = self.archive.root / str(owner) / 'folder-names' / str(mid)
@@ -67,24 +80,32 @@ class FolderNamingMixin:
             phase = 'name'
             await self.show(owner, '✨ Выделяю название папки…', thread, keys, status['message_id'])
             name = receipt['name'] if receipt and receipt['name'] else await self.folder_namer.folder_name(transcript)
-            phase = 'create'
+            phase = 'rename' if rename_id else 'create'
             with self.store.db:
                 self.store.db.execute('UPDATE folder_name_inputs SET name=? WHERE owner=? AND message_id=?',
                                       (name, owner, mid))
-            await self.show(owner, f'📁 Создаю папку «{name}»…', thread, keys, status['message_id'])
-            folder = self.store.create_folder(owner, name)
+            verb = 'Переименовываю папку в' if rename_id else 'Создаю папку'
+            await self.show(owner, f'📁 {verb} «{name}»…', thread, keys, status['message_id'])
+            if rename_id:
+                self.store.rename_folder(owner, rename_id, name)
+                folder = self.store.folder(owner, rename_id)
+            else:
+                folder = self.store.create_folder(owner, name)
             with self.store.db:
                 self.store.db.execute('UPDATE folder_name_inputs SET name=?,folder_id=? WHERE owner=? AND message_id=?',
                                       (name, folder['id'], owner, mid))
             (directory / 'result.json').write_text(json.dumps({'name': name, 'folder_id': folder['id']},
                                                              ensure_ascii=False), encoding='utf-8')
             self.store.set_action(owner, None)
-            await self.show_notes(owner, thread, folder['id'], notice=f'✅ Папка «{name}» создана.')
+            if rename_id and self.options_folder(owner) == rename_id:
+                await self.show_folder_options(owner, thread, rename_id)
+            else:
+                await self.show_notes(owner, thread, folder['id'], notice=f'✅ Папка «{name}» {result_word}.')
         except (ProviderError, OSError, ValueError) as exc:
             log.warning('folder name failed owner=%s phase=%s type=%s', owner, phase, type(exc).__name__)
             if folder is not None:
                 self.store.set_action(owner, None)
-                text = f'Папка «{folder["name"]}» создана. Открой её через «Все папки».'
+                text = f'Папка «{folder["name"]}» {result_word}. Открой её через «Все папки».'
             elif isinstance(exc, ValueError):
                 text = str(exc)
                 if phase == 'name' and transcript:

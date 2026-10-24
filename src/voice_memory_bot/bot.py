@@ -309,9 +309,12 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             if self.store.action(owner) and not self.store.action(owner).startswith("ai_note:"):
                 if text:
                     return await self.input_action(owner, thread, text)
-                if self.store.action(owner) == "create" and any(message.get(k) for k in ("voice", "audio", "video_note")):
-                    return await self.create_folder_from_voice(owner, thread, message)
-                if self.store.action(owner) == "create":
+                naming_action = self.store.action(owner)
+                if naming_action == "create" or naming_action.startswith("rename:"):
+                    if any(message.get(k) for k in ("voice", "audio", "video_note")):
+                        rename_id = naming_action.split(":", 1)[1] if naming_action.startswith("rename:") else None
+                        return await self.create_folder_from_voice(owner, thread, message, rename_id=rename_id)
+                if naming_action == "create" or naming_action.startswith("rename:"):
                     return await self.show(owner, "Напиши название папки или пришли голосовое.", thread,
                                            {"inline_keyboard": []})
                 return await self.show(owner, "Сначала пришли ответ текстом или нажми «Отмена».", thread,
@@ -631,7 +634,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         if action in {"rename", "aliases"}:
             self.store.folder(owner, identity)
             self.store.set_action(owner, data)
-            prompt = "Пришли новое название." if action == "rename" else "Пришли названия через запятую. «-» удалит псевдонимы."
+            prompt = "Напиши новое название или пришли голосовое — я выделю из него название папки." if action == "rename" else "Пришли названия через запятую. «-» удалит псевдонимы."
             return await self.show_bottom(owner, prompt, thread, screen=data, back=f"foldermenu:{identity}",
                                           keep=True, edit_id=message_id)
         if action == "export":

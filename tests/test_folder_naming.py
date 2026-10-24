@@ -144,3 +144,75 @@ def test_created_folder_is_not_reported_as_naming_failure(tmp_path):
         finally:
             store.close()
     asyncio.run(run())
+
+
+def test_voice_rename_preserves_folder_notes_and_receipt_across_restart(tmp_path):
+    async def run():
+        store = Store(tmp_path / 'db', Limits())
+        bot = make_bot(tmp_path, store)
+        try:
+            identity = store.ensure_user(1)
+            note, _ = store.add_note(1, identity, {'message_id': 2000}, 'text', transcript='Важная запись')
+            store.update_note(1, note['id'], state='ready', delivery='sent', transcript_delivery='sent')
+            before = store.note(1, note['id'])
+            calls = []
+
+            async def transcribe(path, *, prompt=None):
+                calls.append('asr')
+                return 'Давай переименуем эту папку в Рабочие идеи'
+
+            async def extract(text):
+                calls.append('name')
+                assert text == 'Давай переименуем эту папку в Рабочие идеи'
+                return 'Рабочие идеи'
+
+            bot.groq.transcribe = transcribe
+            bot.folder_namer = SimpleNamespace(folder_name=extract)
+            await bot.callback(1, None, 500, f'rename:{identity}')
+            assert 'голосовое' in bot.telegram.sent[-1][1]['text']
+            await receive_voice(bot, 1001, None)
+            assert store.folder(1, identity)['name'] == 'Рабочие идеи'
+            assert len(store.folders(1)) == 1 and store.action(1) is None
+            assert store.note(1, note['id']) == before
+            assert calls == ['asr', 'name']
+            bot.init_folder_naming()
+            await bot.create_folder_from_voice(1, None, {'message_id': 1001}, rename_id=identity)
+            assert calls == ['asr', 'name']
+            assert store.one('SELECT rename_id,folder_id FROM folder_name_inputs') == {
+                'rename_id': identity, 'folder_id': identity}
+            assert (bot.archive.root / '1/folder-names/1001/source.ogg').is_file()
+            assert store.all('PRAGMA foreign_key_check') == []
+        finally:
+            store.close()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('failure', ['ambiguous', 'unavailable', 'duplicate'])
+def test_voice_rename_failure_keeps_target_and_allows_text_fallback(tmp_path, failure):
+    async def run():
+        store = Store(tmp_path / 'db', Limits())
+        bot = make_bot(tmp_path, store)
+        try:
+            identity = store.ensure_user(1)
+            store.create_folder(1, 'Занято')
+            before = store.folder(1, identity)
+
+            async def extract(text):
+                if failure == 'ambiguous':
+                    raise ValueError('Скажи одно название')
+                if failure == 'unavailable':
+                    raise ProviderError('codex_folder_name_failed')
+                return 'Занято'
+
+            bot.folder_namer = SimpleNamespace(folder_name=extract)
+            await bot.callback(1, None, 500, f'rename:{identity}')
+            await receive_voice(bot, 1001, None)
+            assert store.folder(1, identity) == before
+            assert store.action(1) == f'rename:{identity}'
+            assert store.notes(1) == [] and len(store.folders(1)) == 2
+            await receive(bot, 'Название вручную', 1002)
+            assert store.folder(1, identity)['name'] == 'Название вручную'
+            assert store.action(1) is None
+        finally:
+            store.close()
+    asyncio.run(run())
