@@ -85,7 +85,7 @@ def test_folder_keys_select_before_input_or_ai_and_plain_names_are_notes(bot):
         chat = bot.store.create_folder(1, "Диалог")
         bot.ai_state.mode(1, chat["id"], "chat")
         await receive(bot, "/start")
-        assert labels(bot) == ["✓ 📌 Входящие", "📌 Работа", "📌 Диалог", "📂 Все папки", "⚙️ Options", "☰ Меню"]
+        assert labels(bot) == ["✓ 📌 Входящие", "📌 Работа", "📌 Диалог", "＋", "⚙️ Options", "☰ Меню"]
         assert reply_keyboard(bot)["is_persistent"]
         await receive(bot, "📌 Диалог", 2)
         assert "✓ 📌 Диалог" in labels(bot)
@@ -112,13 +112,13 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         assert bot.store.folder(1, work['id'])['pin_slot'] is None
         assert bot.bottom_state(1)["screen"] == f"foldermenu:{work['id']}"
         await bot.callback(1, None, 500, f"foldermenu:{work['id']}")
-        assert "📌 Закрепить внизу" in labels(bot)
+        assert "📌 Закрепить внизу" not in labels(bot)
         await bot.callback(1, None, 500, f"pin:{work['id']}")
-        assert "📌 Убрать снизу" in labels(bot)
+        assert bot.store.folder(1, work["id"])["pin_slot"] is not None
         await bot.callback(1, None, 500, f"rename:{work['id']}")
         await receive(bot, "Проекты", 2)
         assert "Проекты" in reply_keyboard(bot)["input_field_placeholder"]
-        assert "📦 Скачать исходники" in labels(bot)
+        assert "📦 Экспорт папки" in labels(bot)
         await receive(bot, "📌 Работа", 3)
         assert "устарела" in next(p["text"] for m, p in reversed(bot.telegram.sent) if m == "sendMessage")
         assert bot.store.current_folder(1) == work["id"]
@@ -126,7 +126,7 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         token = bot.folder_delete_confirmations[1][0]
         await bot.callback(1, None, 500, f"confirmdrop:{token}")
         await receive(bot, "✓ 📌 Проекты", 4)
-        assert labels(bot) == ["✓ 📌 Входящие", "📂 Все папки", "⚙️ Options", "☰ Меню"]
+        assert labels(bot) == ["✓ 📌 Входящие", "＋", "⚙️ Options", "☰ Меню"]
         assert bot.store.notes(1) == []
     asyncio.run(run())
 

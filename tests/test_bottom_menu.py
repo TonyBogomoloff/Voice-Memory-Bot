@@ -90,7 +90,7 @@ def test_all_folders_are_reachable_and_stale_labels_never_archive(bot):
         await receive(bot, ROOT, 1006)
         await receive(bot, "☰ Меню", 1007)
         await receive(bot, "⚙️ Эта папка", 1008)
-        await receive(bot, "✏️ Название", 1009)
+        await receive(bot, "✏️ Переименовать", 1009)
         await receive(bot, BACK, 1010)
         assert bot.store.action(1) is None
         assert bot.bottom_state(1)["screen"] == f"foldermenu:{selected}"
@@ -220,4 +220,27 @@ def test_delete_all_buttons_are_red(bot):
         await bot.delete_all_menu(1)
         controls = [b for row in reply_keyboard(bot)["keyboard"] for b in row if b["text"] == "🗑 Да, удалить всё"]
         assert controls and controls[0]["style"] == "danger"
+    asyncio.run(run())
+
+
+def test_home_add_folder_and_options_back(bot):
+    async def run():
+        await receive(bot, "/start", 2000)
+        assert reply_keyboard(bot)["keyboard"][-1][0]["text"] == "＋"
+        await receive(bot, "＋", 2001)
+        assert bot.store.action(1) == "create"
+        await receive(bot, BACK, 2002)
+        assert bot.bottom_state(1)["screen"] == "root"
+        await receive(bot, "＋", 2003)
+        await receive(bot, "Новая с главной", 2004)
+        folder = bot.store.current_folder(1)
+        assert bot.store.folder(1, folder)["name"] == "Новая с главной"
+        await receive(bot, "⚙️ Options", 2005)
+        assert set(labels(bot)) == {"✏️ Переименовать", "🗑 Удалить папку", "📦 Экспорт папки", BACK}
+        assert bot.bottom_state(1)["actions"]["📦 Экспорт папки"] == f"export:{folder}"
+        await receive(bot, BACK, 2006)
+        assert bot.bottom_state(1)["screen"] == "root"
+        assert bot.options_folder(1) is None
+        assert bot.store.current_folder(1) == folder
+        assert bot.store.notes(1) == []
     asyncio.run(run())

@@ -432,7 +432,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                 return await self.create_folder(owner, thread, argument)
             self.store.set_action(owner, "create")
             return await self.show_bottom(owner, "Как назовём папку? Напиши название или пришли голосовое.",
-                                          thread, screen="create", back="folders", keep=True)
+                                          thread, screen="create", back="root", keep=True)
         if command == "/notes":
             return await self.show_notes(owner, thread, self.store.current_folder(owner, thread))
         if command == "/search":
@@ -523,22 +523,11 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         text = f"📁 {folder['name']}"
         text += "\nРежим: " + ("диалог с ИИ" if folder["mode"] == "chat" else "заметки")
         text += "\n✓ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
-        rows = [[button("📝 Показать записи", f"folder:{identity}:0"),
-                 button("✏️ Название", f"rename:{identity}")],
-                [button("📦 Скачать исходники", f"zip:{identity}:raw"),
-                 button("📦 Экспорт папки", f"export:{identity}")]]
-        pin_action = "unpin" if folder["pin_slot"] is not None else "pin"
-        rows.append([button("📌 Убрать снизу" if pin_action == "unpin" else "📌 Закрепить внизу",
-                            f"{pin_action}:{identity}")])
-        target_mode = "notes" if folder["mode"] == "chat" else "chat"
-        rows.append([button("Режим → " + ("Заметки" if target_mode == "notes" else "Диалог с ИИ"),
-                            f"aimode:{identity}:{target_mode}")])
-        if folder["mode"] == "chat":
-            rows.append([button("Новый разговор", f"ainew:{identity}"),
-                         button("История ИИ", f"ailist:{identity}:0")])
-        rows.append([button("🗑 Удалить папку", f"dropfolder:{identity}")])
+        rows = [[button("✏️ Переименовать", f"rename:{identity}"),
+                 button("🗑 Удалить папку", f"dropfolder:{identity}")],
+                [button("📦 Экспорт папки", f"export:{identity}")]]
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"foldermenu:{identity}",
-                               back="home", edit_id=edit_id)
+                               back="root", edit_id=edit_id)
 
     def note_card(self, note):
         folder = self.store.folder(note["owner"], note["folder_id"])

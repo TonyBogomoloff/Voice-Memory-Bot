@@ -21,15 +21,15 @@ def test_options_bind_actions_to_folder_and_survive_restart(bot, tmp_path):
     async def run():
         folder = bot.store.current_folder(1)
         await receive(bot, '⚙️ Options')
-        assert {'✏️ Название', '🗑 Удалить папку', '📦 Скачать исходники',
-                '⬅️ Назад', '🏠 Главная'} <= set(labels(bot))
+        assert {'✏️ Переименовать', '🗑 Удалить папку', '📦 Экспорт папки',
+                '⬅️ Назад'} == set(labels(bot))
         assert bot.store.current_folder(1) == folder
         restarted = make_bot(tmp_path, bot.store)
         assert restarted.options_folder(1) == folder
         await receive(bot, '✏️ Переименовать', 2)
         await receive(bot, 'Мои записи', 3)
         assert bot.store.folder(1, folder)['name'] == 'Мои записи'
-        assert '📦 Скачать исходники' in labels(bot)
+        assert '📦 Экспорт папки' in labels(bot)
         await receive(bot, '🗑 Удалить папку', 4)
         token = bot.folder_delete_confirmations[1][0]
         await bot.callback(1, None, 100, f'canceldrop:{token}')

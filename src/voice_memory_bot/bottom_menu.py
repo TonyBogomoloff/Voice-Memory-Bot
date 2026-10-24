@@ -98,7 +98,8 @@ class BottomMenuMixin:
             keyboard.append(([{"text": PREVIOUS}] if page else []) +
                             ([{"text": NEXT}] if page + 1 < pages else []))
         if state["screen"] != "root":
-            keyboard.append([{"text": BACK}, {"text": ROOT}])
+            keyboard.append([{"text": BACK}] if state["screen"].startswith("foldermenu:")
+                            else [{"text": BACK}, {"text": ROOT}])
         placeholder = state["text"].split("\n", 1)[0]
         if pages > 1:
             placeholder = f"{page + 1}/{pages} · {placeholder}"

@@ -6,7 +6,7 @@ from .store import new_id
 
 MENU_COMMANDS = {
     "📁 Папки": "/folders", "📝 Записи": "/notes",
-    "＋ Новая папка": "/new", "🔎 Поиск": "/search",
+    "＋": "/new", "＋ Новая папка": "/new", "🔎 Поиск": "/search",
     "🤖 ИИ": "/ai", "⚙️ Настройки": "/settings",
     "📂 Все папки": "/folders", "☰ Меню": "/menu",
     "⌂ Меню": "/menu", "✖️ Отмена": "/cancel",
@@ -104,7 +104,7 @@ class FolderMenuMixin:
                 rows[1].insert(0, {"text": "⬅️"})
             if page < len(pages) - 1:
                 rows[1].append({"text": "➡️"})
-        return {"keyboard": rows + [[{"text": "📂 Все папки"}, {"text": "⚙️ Options"}, {"text": "☰ Меню"}]],
+        return {"keyboard": rows + [[{"text": "＋"}, {"text": "⚙️ Options"}, {"text": "☰ Меню"}]],
                 "resize_keyboard": True, "is_persistent": True,
                 "input_field_placeholder": ("📁 " + self.store.folder(owner, active)["name"] +
                                             " · голосовое, текст или фото")[:64]}
@@ -136,7 +136,7 @@ class FolderMenuMixin:
         await self.remove_menu_message(owner, message_id)
         self.store.set_action(owner, None)
         await self.refresh_folder_keyboard(owner, thread, force=True,
-            notice="Эта кнопка устарела. Выбери папку внизу или открой «Все папки».")
+            notice="Эта кнопка устарела. Выбери папку внизу или открой меню.")
 
     async def refresh_folder_keyboard(self, owner, thread=None, *, force=False, notice=None, transient=False):
         if not self.store.folders(owner):
