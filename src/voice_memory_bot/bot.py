@@ -557,8 +557,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         if note.get("content") is not None:
             rows.append([button("Исходная расшифровка", f"original:{identity}"),
                          button("Отменить правку", f"aiundo:{identity}:{note['revision']}")])
-        if note["kind"] != "photo":
-            rows.append([button("Обратиться к ИИ", f"aiask:{identity}")])
+        rows.append([button("Обратиться к ИИ", f"aiask:{identity}")])
         if note["state"] == "asr_failed" or note["routing"] in {"unavailable", "review"}:
             rows.append([button("Повторить обработку", f"retry:{identity}")])
         if note["requested_folder"] and note["routing"] == "review":

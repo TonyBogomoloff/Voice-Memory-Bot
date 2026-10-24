@@ -133,7 +133,11 @@ class AIStore:
     def start_note_conversation(self, owner, note_id):
         note = self.store.note(owner, note_id)
         content = note["content"] if note["content"] is not None else note["transcript"]
-        if not content:
+        if note["kind"] == "photo":
+            if note["state"] != "ready" or not note["audio_bytes"]:
+                raise ValueError("Дождись сохранения фото, затем обратись к ИИ")
+            content = content or ""
+        elif not content:
             raise ValueError("Дождись текста записи, затем обратись к ИИ")
         if len(content) > 40000:
             raise ValueError("Текст слишком длинный для ИИ. Раздели запись на части до 40000 символов")

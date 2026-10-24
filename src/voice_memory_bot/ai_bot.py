@@ -197,7 +197,7 @@ class AIBotMixin:
             conversation = self.ai_state.start_note_conversation(owner, identity)
             self.store.set_action(owner, f"ai_note:{conversation}")
             response = await self.show_bottom(owner,
-                "Хорошо, отправь инструкцию для ИИ.\n"
+                "Хорошо, отправь инструкцию для ИИ текстом или голосовым. Можно добавить ссылку.\n"
                 "Следующие сообщения будут относиться только к выбранной записи.\n"
                 "Чтобы вернуться к заметкам, нажми «Завершить» или выбери папку.", thread,
                 keys([key("Завершить", f"aiend:{conversation}")]),

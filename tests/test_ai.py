@@ -404,3 +404,54 @@ def test_selected_note_scope_isolated_and_cleared_by_folder_switch(bot):
         assert payload['selected_note']['content'] == 'Исходник B'
         assert payload['history'] == []
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("voice", [False, True])
+def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
+    from test_photos import PHOTO, receive_photo
+
+    async def run():
+        bot.store.create_folder(1, "Фото", thread=100)
+        async def download(file_id, path, maximum):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(PHOTO)
+            return len(PHOTO), "photo-checksum"
+        bot.telegram.download = download
+        await receive_photo(bot)
+        note = bot.store.notes(1)[0]
+        with pytest.raises(ValueError, match="сохранения фото"):
+            bot.ai_state.start_note_conversation(1, note['id'])
+        await bot.process(bot.store.claim_note())
+        note = bot.store.note(1, note['id'])
+        original = dict(note)
+        await bot.callback(1, 100, note['transcript_message_id'], f"options:{note['id']}")
+        rows = bot.telegram.sent[-1][1]['reply_markup']['inline_keyboard']
+        assert any(k['callback_data'] == f"aiask:{note['id']}" for row in rows for k in row)
+        await bot.callback(1, 100, note['transcript_message_id'], f"aiask:{note['id']}")
+        assert bot.ai_state.claim() is None
+        bot.ai_state.set_settings(1, notes_access="none")
+        calls = []
+        async def respond(payload, model, images=()):
+            calls.append((payload, list(images)))
+            return step(message="Распознанный текст")
+        bot.assistant.respond = respond
+        # Exercise voice ingestion with the fake ASR provider.
+        bot.telegram.download = FakeTelegram().download
+        await receive(bot, "Распознай текст; сравни с https://example.com", 201, thread=100, voice=voice)
+        request = bot.ai_state.claim()
+        await bot.process_ai(request)
+        assert calls[-1][0]['selected_note']['kind'] == 'photo'
+        assert calls[-1][1] == [bot.archive.audio(note)]
+        assert bot.ai_state.request(1, request['note_id'])['state'] == 'ready'
+        bot.init_ai(bot.assistant)
+        await receive(bot, "Теперь переведи", 202, thread=100)
+        await bot.process_ai(bot.ai_state.claim())
+        assert calls[-1][1] == [bot.archive.audio(note)]
+        assert bot.archive.audio(note).read_bytes() == PHOTO
+        assert bot.store.note(1, note['id']) == original
+        bot.archive.audio(note).unlink()
+        missing = await receive(bot, "Ещё вопрос", 203, thread=100)
+        await bot.process_ai(bot.ai_state.claim())
+        assert len(calls) == 2  # Never pretend to analyze a missing image.
+        assert bot.ai_state.request(1, missing['id'])['state'] == 'failed'
+    asyncio.run(run())
