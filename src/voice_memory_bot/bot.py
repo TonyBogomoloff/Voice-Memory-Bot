@@ -350,7 +350,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                 # The worker uses the same lock, so a quick ASR cannot outrun the status checkpoint.
                 async with self.note_locks[note["id"]]:
                     if note["kind"] == "photo":
-                        return await self.photo_controls(note)
+                        return
                     if note["kind"] == "text":
                         self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
                         self.capture_ai_input(note, message, scoped=True)
@@ -990,15 +990,45 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             if edit_id:
                 response = await self._show(note["owner"], text, note["source_thread"], keys, edit_id)
             else:
+                if not error and not note["result_message_id"]:
+                    photo = await self.telegram.call("sendPhoto", chat_id=note["owner"],
+                        photo=note["file_id"], caption=note["transcript"] or None,
+                        message_thread_id=note["source_thread"],
+                        reply_parameters={"message_id": note["message_id"]} if note["source_thread"] is None else None)
+                    note = self.adopt_source_topic(note, photo)
+                    self.messages.record(note, photo["message_id"], note["source_thread"], "photo_repost")
+                    self.store.update_note(note["owner"], note["id"], result_message_id=photo["message_id"],
+                                           result_thread=note["source_thread"])
+                    note = self.store.note(note["owner"], note["id"])
                 response = await self.telegram.text(note["owner"], text, note["source_thread"], keys,
-                    reply_to=note["message_id"] if note["source_thread"] is None else None)
+                    reply_to=note["result_message_id"] or note["message_id"])
                 note = self.adopt_source_topic(note, response)
             self.messages.record(note, response["message_id"], note["source_thread"], "photo_controls")
             self.store.update_note(note["owner"], note["id"], transcript_delivery="sent",
                                    transcript_message_id=response["message_id"])
         except ProviderError:
             self.store.update_note(note["owner"], note["id"], transcript_delivery="unknown")
-            raise
+            log.warning("photo delivery unknown note_id=%s", note["id"])
+
+    async def cleanup_photo_source(self, note):
+        if note["transcript_delivery"] != "sent" or not self.store.one(
+            "SELECT 1 FROM note_messages WHERE owner=? AND note_id=? AND kind='photo_repost' AND deleted=0",
+            (note["owner"], note["id"])):
+            return
+        source = self.store.one("SELECT * FROM note_messages WHERE owner=? AND note_id=? "
+                                "AND kind='source' AND deleted=0", (note["owner"], note["id"]))
+        if not source:
+            return
+        try:
+            await self.telegram.call("deleteMessage", chat_id=note["owner"], message_id=source["message_id"])
+        except ProviderError as exc:
+            if getattr(exc, "reason", None) != "delete_target_missing":
+                log.warning("photo source cleanup deferred note_id=%s", note["id"])
+                return
+        self.messages.removed(note["owner"], note["id"], source["message_id"])
+        with self.store.db:
+            self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
+                                  (note["owner"], source["message_id"]))
 
     async def process_photo(self, note):
         owner, identity = note["owner"], note["id"]
@@ -1015,8 +1045,6 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             note = self.store.note(owner, identity)
             self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
             await self.clear_status(note)
-            if note["transcript_delivery"] == "pending":
-                await self.photo_controls(note)
         except (ProviderError, OSError, ValueError) as exc:
             self.store.update_note(owner, identity, state="asr_failed", error=type(exc).__name__)
             await self.clear_status(note)
@@ -1094,6 +1122,14 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         owner, identity = note["owner"], note["id"]
         if self.store.note(owner, identity)["delivery"] != "pending":
             return
+        if note["kind"] == "photo":
+            if note["state"] != "ready":
+                return
+            await self.photo_controls(note)
+            saved = self.store.note(owner, identity)
+            self.store.update_note(owner, identity, delivery=saved["transcript_delivery"])
+            await self.cleanup_photo_source(saved)
+            return
         # Mark intent before sending so an uncertain delivery is never replayed.
         self.store.update_note(owner, identity, delivery="sending")
         try:
@@ -1132,6 +1168,12 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                 if note:
                     await self.deliver(note)
                 else:
+                    photo = self.store.one("SELECT n.* FROM notes n JOIN note_messages m ON m.note_id=n.id "
+                        "WHERE n.kind='photo' AND n.deleted=0 AND n.transcript_delivery='sent' "
+                        "AND m.kind='source' AND m.deleted=0 AND EXISTS (SELECT 1 FROM note_messages r "
+                        "WHERE r.note_id=n.id AND r.kind='photo_repost' AND r.deleted=0) LIMIT 1")
+                    if photo:
+                        await self.cleanup_photo_source(photo)
                     move = self.messages.pending()
                     if move and not self.note_locks[move["note_id"]].locked():
                         async with self.note_locks[move["note_id"]]:
@@ -1141,6 +1183,6 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                                            "ORDER BY created_at LIMIT 1")
                     if stale:
                         await self.clear_status(stale)
-                    await asyncio.sleep(3 if stale or move else .5)
+                    await asyncio.sleep(3 if stale or move or photo else .5)
                 continue
             await self.process(note)
