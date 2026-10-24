@@ -93,8 +93,8 @@ HELP = """🎙 Voice Memory Bot
 История разговора и запрошенные заметки передаются модели. Доступ к заметкам можно выключить в настройках.
 Фото тоже сохраняются: под снимком появится отдельное сообщение с кнопками «Переместить», «Удалить», «ИИ».
 Аудио отправляется в Groq для распознавания. OpenAI используется для функций ИИ.
-Оригинал и исходная расшифровка хранятся в твоём архиве. Удаление отдельной записи из архива
-не удаляет историю Telegram. «Удалить всё» очищает также темы и известные боту сообщения;
+Оригинал и исходная расшифровка хранятся в твоём архиве. Удаление отдельной записи также убирает
+её исходное сообщение и расшифровку из Telegram, если Telegram разрешает удаление. «Удалить всё» очищает также темы и известные боту сообщения;
 старые сообщения вне тем могут потребовать ручной очистки в Telegram.
 Автосинхронизация с другими сервисами пока не подключена."""
 
@@ -712,7 +712,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                                                 "Исходный файл без изменений")
         if action == "delete":
             return await self.show_bottom(owner,
-                "Удалить запись и исходный файл из архива бота?\nСообщения в Telegram останутся.", thread,
+                "Удалить запись и исходный файл из архива бота?\nИсходное сообщение и расшифровка также будут удалены из чата.", thread,
                 keyboard([button("🗑 Да, удалить запись", f"confirmdelete:{identity}")]),
                 screen=f"delete:{identity}", back="root", keep=True)
         if action == "confirmdelete":
@@ -720,8 +720,37 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                 raise ValueError("Дождись завершения обработки, затем удали запись")
             self.store.delete(owner, identity)
             self.archive.delete(note)
+            remaining = await self.delete_note_messages(note)
             self.folder_keyboards.pop(owner, None)
-            return await self.show(owner, "Запись удалена из архива.", thread, HOME, message_id)
+            text = ("Запись удалена из архива и чата." if not remaining else
+                    "Запись удалена из архива, но часть сообщений не удалось удалить из Telegram.")
+            return await self.show(owner, text, thread, HOME, message_id)
+
+    async def delete_note_messages(self, note):
+        owner, identity = note["owner"], note["id"]
+        receipts = self.store.all(
+            "SELECT message_id,deleted FROM note_messages WHERE owner=? AND note_id=?",
+            (owner, identity))
+        removed = {row["message_id"] for row in receipts if row["deleted"]}
+        targets = {row["message_id"] for row in receipts if not row["deleted"]}
+        # Legacy records retain only these exact IDs. Never infer nearby messages.
+        targets.update(note[field] for field in (
+            "message_id", "status_message_id", "transcript_message_id", "result_message_id")
+            if note.get(field) and note[field] > 0 and note[field] not in removed)
+        remaining = 0
+        for target in sorted(targets):
+            try:
+                await self.telegram.call("deleteMessage", chat_id=owner, message_id=target)
+            except ProviderError as exc:
+                if getattr(exc, "reason", None) != "delete_target_missing":
+                    remaining += 1
+                    log.warning("note cleanup failed note_id=%s error=%s", identity, exc)
+                    continue
+            self.messages.removed(owner, identity, target)
+            with self.store.db:
+                self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
+                                      (owner, target))
+        return remaining
 
     async def search(self, owner, thread, query):
         if not 1 <= len(query) <= 200:
