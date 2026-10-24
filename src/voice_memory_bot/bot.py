@@ -91,7 +91,7 @@ HELP = """🎙 Voice Memory Bot
 Обращение по имени в начале или конце можно включить в настройках. По умолчанию оно выключено.
 ИИ умеет искать, создавать и менять заметки; исходная расшифровка сохраняется, правку можно отменить.
 История разговора и запрошенные заметки передаются модели. Доступ к заметкам можно выключить в настройках.
-Фото тоже сохраняются: под снимком появится отдельное сообщение с кнопками «Переместить», «Удалить», «ИИ».
+Фото тоже сохраняются: на копии снимка сразу появятся кнопки «Переместить», «Удалить», «ИИ».
 Аудио отправляется в Groq для распознавания. OpenAI используется для функций ИИ.
 Оригинал и исходная расшифровка хранятся в твоём архиве. Удаление отдельной записи также убирает
 её исходное сообщение и расшифровку из Telegram, если Telegram разрешает удаление. «Удалить всё» очищает также темы и известные боту сообщения;
@@ -1019,23 +1019,22 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         keys = keyboard([button("Повторить", f"retry:{note['id']}")]) if error else self.note_controls(note, note["source_thread"])
         self.store.update_note(note["owner"], note["id"], transcript_delivery="sending")
         try:
-            if edit_id:
+            if error:
                 response = await self._show(note["owner"], text, note["source_thread"], keys, edit_id)
+                self.messages.record(note, response["message_id"], note["source_thread"], "photo_controls")
+            elif note["result_message_id"]:
+                await self.telegram.call("editMessageReplyMarkup", chat_id=note["owner"],
+                    message_id=note["result_message_id"], reply_markup=keys)
+                response = {"message_id": note["result_message_id"]}
             else:
-                if not error and not note["result_message_id"]:
-                    photo = await self.telegram.call("sendPhoto", chat_id=note["owner"],
-                        photo=note["file_id"], caption=note["transcript"] or None,
-                        message_thread_id=note["source_thread"],
-                        reply_parameters={"message_id": note["message_id"]} if note["source_thread"] is None else None)
-                    note = self.adopt_source_topic(note, photo)
-                    self.messages.record(note, photo["message_id"], note["source_thread"], "photo_repost")
-                    self.store.update_note(note["owner"], note["id"], result_message_id=photo["message_id"],
-                                           result_thread=note["source_thread"])
-                    note = self.store.note(note["owner"], note["id"])
-                response = await self.telegram.text(note["owner"], text, note["source_thread"], keys,
-                    reply_to=note["result_message_id"] or note["message_id"])
+                response = await self.telegram.call("sendPhoto", chat_id=note["owner"],
+                    photo=note["file_id"], caption=note["transcript"] or None,
+                    message_thread_id=note["source_thread"], reply_markup=keys,
+                    reply_parameters={"message_id": note["message_id"]} if note["source_thread"] is None else None)
                 note = self.adopt_source_topic(note, response)
-            self.messages.record(note, response["message_id"], note["source_thread"], "photo_controls")
+                self.messages.record(note, response["message_id"], note["source_thread"], "photo_repost")
+                self.store.update_note(note["owner"], note["id"], result_message_id=response["message_id"],
+                                       result_thread=note["source_thread"])
             self.store.update_note(note["owner"], note["id"], transcript_delivery="sent",
                                    transcript_message_id=response["message_id"])
         except ProviderError:

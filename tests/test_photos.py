@@ -47,17 +47,16 @@ def test_photo_controls_archive_and_move_delete_source_messages(tmp_path, store,
         method, photo = bot.telegram.sent[0]
         assert method == "sendPhoto" and photo["message_thread_id"] == 100
         assert photo["photo"] == "photo-original" and photo["caption"] == (caption or None)
-        controls = bot.telegram.sent[1][1]
-        assert controls["reply_to"] == store.note(1, note["id"])["result_message_id"]
-        assert controls["keyboard"]["inline_keyboard"] == [[{
+        assert photo["reply_markup"]["inline_keyboard"] == [[{
             "text": "Переместить", "callback_data": f"pick:{note['id']}:0"},
             {"text": "Удалить", "callback_data": f"delete:{note['id']}"},
             {"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]
-        assert bot.telegram.sent[2] == ("deleteMessage", {"chat_id": 1, "message_id": 10})
+        assert bot.telegram.sent[1] == ("deleteMessage", {"chat_id": 1, "message_id": 10})
         note = store.note(1, note["id"])
         assert note["state"] == "ready" and note["delivery"] == "sent"
         assert note["folder_id"] == game["id"] and note["transcript"] == caption
-        assert len(bot.telegram.sent) == 3
+        assert len(bot.telegram.sent) == 2
+        assert note["transcript_message_id"] == note["result_message_id"]
         assert bot.archive.audio(note).name == "photo.jpg"
         assert bot.archive.audio(note).read_bytes() == PHOTO
         paths = bot.archive.export([note], store.folders(1), tmp_path / "export", True, 100000,
@@ -75,7 +74,7 @@ def test_photo_controls_archive_and_move_delete_source_messages(tmp_path, store,
         await bot.callback(1, 100, control_id, f"pick:{note['id']}:0")
         bot.telegram.sent.clear()
         notification = await bot.callback(1, 100, control_id, f"place:{note['id']}:{work['id']}")
-        assert [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"] == [note["result_message_id"], control_id]
+        assert [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"] == [control_id]
         assert notification == "Перенесено в «Работа»."
         assert store.note(1, note["id"])["folder_id"] == work["id"]
         assert bot.messages.in_thread(1, note["id"], 100) == []
@@ -106,8 +105,8 @@ def test_photo_failed_download_can_retry_without_losing_controls(tmp_path, store
         saved = store.note(1, note["id"])
         assert saved["state"] == "ready" and saved["delivery"] == "sent"
         assert saved["status_message_id"] is None
-        assert bot.messages.in_thread(1, note["id"], 100) == [saved["result_message_id"], saved["transcript_message_id"]]
-        assert bot.telegram.sent[-2][1]["keyboard"]["inline_keyboard"][0][-1]["text"] == "ИИ"
+        assert bot.messages.in_thread(1, note["id"], 100) == [saved["result_message_id"]]
+        assert bot.telegram.sent[-2][1]["reply_markup"]["inline_keyboard"][0][-1]["text"] == "ИИ"
     asyncio.run(run())
 
 
@@ -134,7 +133,7 @@ def test_photo_move_works_without_telegram_delivery(tmp_path, store):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("failure", ["sendPhoto", "sendMessage", "deleteMessage"])
+@pytest.mark.parametrize("failure", ["sendPhoto", "deleteMessage"])
 def test_repost_failure_never_deletes_before_confirmed_delivery(tmp_path, store, failure):
     async def run():
         store.create_folder(1, "Игра", thread=100)
