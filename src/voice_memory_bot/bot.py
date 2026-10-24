@@ -949,12 +949,15 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
             self.store.update_note(owner, identity, status_message_id=None)
         self.messages.removed(owner, identity, message_id)
 
-    async def send_transcript(self, note, thread, reply_to=None, source=False):
+    async def send_transcript(self, note, thread, reply_to=None, source=False, edit_id=None):
         content = note["content"] if note.get("content") is not None else note["transcript"]
         chunks = list(transcript_chunks(content))
         for index, text in enumerate(chunks):
             keys = self.note_controls(note, thread) if index == len(chunks) - 1 else None
-            response = await self.telegram.text(note["owner"], text, thread, keys, reply_to=reply_to)
+            if index == 0 and edit_id is not None:
+                response = await self._show(note["owner"], text, thread, keys, edit_id)
+            else:
+                response = await self.telegram.text(note["owner"], text, thread, keys, reply_to=reply_to)
             if source:
                 note = self.adopt_source_topic(note, response)
                 thread = note["source_thread"]
@@ -968,10 +971,12 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         note = self.store.note(owner, identity)
         if not note["transcript"] or note["transcript_delivery"] != "pending":
             return
-        await self.clear_status(note)
-        self.store.update_note(owner, identity, transcript_delivery="sending")
+        edit_id = note["status_message_id"]
+        # The status becomes archive text: never let later cleanup delete it, even
+        # if Telegram accepts the edit but its response is lost or the process exits.
+        self.store.update_note(owner, identity, transcript_delivery="sending", status_message_id=None)
         try:
-            response, _ = await self.send_transcript(note, note["source_thread"], source=True,
+            response, _ = await self.send_transcript(note, note["source_thread"], source=True, edit_id=edit_id,
                 reply_to=note["message_id"] if note["source_thread"] is None else None)
             self.store.update_note(owner, identity, transcript_delivery="sent",
                                    transcript_message_id=response["message_id"])
@@ -986,8 +991,8 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         # Mark intent before sending so an uncertain delivery is never replayed.
         self.store.update_note(owner, identity, delivery="sending")
         try:
-            await self.clear_status(note)
             if not note["transcript"] and note["kind"] != "photo":
+                await self.clear_status(note)
                 text = "Не удалось конвертировать запись в текст. Попробуй ещё раз."
                 keys = keyboard([button("Повторить", f"retry:{identity}")])
                 response = await self.telegram.text(owner, text, note["source_thread"], keys,
@@ -998,6 +1003,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                 return
             if note["kind"] != "photo":
                 await self.deliver_transcript(note)
+            await self.clear_status(note)
             saved = self.store.note(owner, identity)
             self.store.update_note(owner, identity, delivery=saved["transcript_delivery"],
                                    result_message_id=saved["transcript_message_id"],

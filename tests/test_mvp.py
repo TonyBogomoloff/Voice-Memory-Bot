@@ -315,16 +315,18 @@ def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_pat
             raise AssertionError("A folder classifier must not run for an ordinary note")
         bot.router.classify = unused_router
         await receive_voice(bot)
+        status_id = store.notes(1)[0]["status_message_id"]
         await bot.process(store.claim_note())
         saved = store.notes(1)[0]
         assert saved["folder_id"] == game["id"] and saved["routing"] == "manual"
         assert saved["state"] == "ready" and saved["delivery"] == "sent"
         assert saved["status_message_id"] is None
-        assert [m for m, _ in bot.telegram.sent] == ["sendMessage", "deleteMessage", "sendMessage"]
+        assert [m for m, _ in bot.telegram.sent] == ["sendMessage", "editMessageText"]
         payload = bot.telegram.sent[-1][1]
-        assert payload["text"] == saved["transcript"] and payload["thread"] == 100
-        assert payload["reply_to"] is None
-        assert payload["keyboard"]["inline_keyboard"][0][-1]["text"] == "Опции"
+        assert payload["text"] == saved["transcript"]
+        assert payload["message_id"] == status_id
+        assert saved["transcript_message_id"] == payload["message_id"]
+        assert payload["reply_markup"]["inline_keyboard"][0][-1]["text"] == "Опции"
     asyncio.run(run())
 
 def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store):
@@ -338,11 +340,12 @@ def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store):
         await receive_voice(bot)
         await bot.process(store.claim_note())
         messages = [payload for method, payload in bot.telegram.sent
-                    if method == "sendMessage" and payload["text"] != "Конвертирую в текст…"]
+                    if method in {"sendMessage", "editMessageText"} and payload["text"] != "Конвертирую в текст…"]
         assert len(messages) > 1 and "".join(p["text"] for p in messages) == raw
         assert all(len(p["text"].encode("utf-16-le")) <= 7800 for p in messages)
-        assert all(p["reply_to"] is None for p in messages)
-        assert all(p["keyboard"] is None for p in messages[:-1])
+        assert all(p.get("reply_to") is None for p in messages)
+        assert not any(m == "deleteMessage" for m, _ in bot.telegram.sent)
+        assert all(p.get("keyboard", p.get("reply_markup")) is None for p in messages[:-1])
         assert messages[-1]["keyboard"]["inline_keyboard"][0][-1]["text"] == "Опции"
         assert all(method != "sendDocument" for method, _ in bot.telegram.sent)
     asyncio.run(run())
@@ -397,24 +400,24 @@ def test_voice_failure_removes_status_and_can_retry(tmp_path, store):
     asyncio.run(run())
 
 
-def test_status_cleanup_failure_does_not_block_transcript(tmp_path, store):
+def test_uncertain_status_edit_is_not_deleted_or_sent_again(tmp_path, store):
     async def run():
-        store.create_folder(1, "Игра", thread=100)
         bot = make_bot(tmp_path, store)
         call = bot.telegram.call
-        async def failed_delete(method, **kwargs):
-            if method == "deleteMessage":
+        async def lost_edit_response(method, **kwargs):
+            result = await call(method, **kwargs)
+            if method == "editMessageText":
                 raise ProviderError("telegram_transport_unknown")
-            return await call(method, **kwargs)
-        bot.telegram.call = failed_delete
+            return result
+        bot.telegram.call = lost_edit_response
         await receive_voice(bot)
         await bot.process(store.claim_note())
         note = store.notes(1)[0]
-        assert note["transcript_delivery"] == "sent" and note["status_message_id"] == 1
-        bot.telegram.call = call
+        assert note["transcript_delivery"] == "unknown" and note["status_message_id"] is None
+        assert [m for m, _ in bot.telegram.sent] == ["sendMessage", "editMessageText"]
         await bot.clear_status(note)
-        assert store.note(1, note["id"])["status_message_id"] is None
-        assert bot.telegram.sent[-1][0] == "deleteMessage"
+        await bot.deliver_transcript(note)
+        assert len(bot.telegram.sent) == 2
     asyncio.run(run())
 
 

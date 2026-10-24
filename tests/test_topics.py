@@ -26,8 +26,8 @@ def test_custom_folder_wins_over_legacy_telegram_topic_and_spoken_folder(tmp_pat
             note = store.one("SELECT * FROM notes WHERE message_id=?", (message_id,))
             assert note["folder_id"] == folder["id"] and note["result_thread"] == thread
             assert note["delivery"] == "sent"
-            assert [m for m, _ in bot.telegram.sent] == ["sendMessage", "deleteMessage", "sendMessage"]
-            assert bot.telegram.sent[-1][1]["thread"] == thread
+            assert [m for m, _ in bot.telegram.sent] == ["sendMessage", "editMessageText"]
+            assert bot.telegram.sent[0][1]["thread"] == thread
     asyncio.run(run())
 
 
@@ -61,7 +61,7 @@ def test_missing_topic_replies_to_source_and_uses_only_confirmed_topic(tmp_path,
         call = bot.telegram.call
         async def receipt(method, **payload):
             result = await call(method, **payload)
-            if method == "sendMessage":
+            if method in {"sendMessage", "editMessageText"}:
                 is_status = payload["text"] == "Конвертирую в текст…"
                 if recover_at != "never" and (recover_at == "status" or not is_status):
                     result["message_thread_id"] = 100
@@ -73,8 +73,10 @@ def test_missing_topic_replies_to_source_and_uses_only_confirmed_topic(tmp_path,
         assert note["folder_id"] == other["id"]
         assert note["source_thread"] == note["result_thread"] == (None if recover_at == "never" else 100)
         sends = [p for m, p in bot.telegram.sent if m == "sendMessage"]
-        assert len(sends) == 2 and sends[0]["reply_to"] == 10
-        assert sends[1]["reply_to"] == (None if recover_at == "status" else 10)
+        assert len(sends) == 1 and sends[0]["reply_to"] == 10
+        edits = [p for m, p in bot.telegram.sent if m == "editMessageText"]
+        assert len(edits) == 1 and edits[0]["message_id"] == 1001
+        assert not any(m == "deleteMessage" for m, _ in bot.telegram.sent)
         assert note["delivery"] == "sent"
         assert not any(m in {"sendVoice", "createForumTopic"} for m, _ in bot.telegram.sent)
         assert 10 in bot.messages.in_thread(1, note["id"], note["source_thread"])
