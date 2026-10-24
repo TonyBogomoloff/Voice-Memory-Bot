@@ -120,7 +120,7 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         assert "Проекты" in reply_keyboard(bot)["input_field_placeholder"]
         assert "📦 Скачать исходники" in labels(bot)
         await receive(bot, "📌 Работа", 3)
-        assert "устарела" in bot.telegram.sent[-1][1]["text"]
+        assert "устарела" in next(p["text"] for m, p in reversed(bot.telegram.sent) if m == "sendMessage")
         assert bot.store.current_folder(1) == work["id"]
         await bot.callback(1, None, 500, f"dropfolder:{work['id']}")
         token = bot.folder_delete_confirmations[1][0]

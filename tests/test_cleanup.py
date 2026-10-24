@@ -12,6 +12,10 @@ from voice_memory_bot.providers import ProviderError, Telegram, TelegramError
 from voice_memory_bot.store import Store
 
 
+def last_message(bot):
+    return next(p for m, p in reversed(bot.telegram.sent) if m == "sendMessage")
+
+
 @pytest.fixture
 def bot(tmp_path):
     store = Store(tmp_path / "archive.sqlite3", Limits())
@@ -135,10 +139,10 @@ def test_full_cleanup_removes_only_owner_data_and_all_known_telegram_locations(b
         assert all(p["chat_id"] == 1 for m, p in bot.telegram.sent if m.startswith("delete"))
         assert bot.cleanup.job(1) is None and bot.store.claim_note()["id"] == other["id"]
         assert bot.ai_state.claim() is None
-        assert bot.telegram.sent[-1][1]["thread"] is None
+        assert last_message(bot)["thread"] is None
         await bot.handle(incoming(message_id=2000, text="/folders"))
         assert bot.store.folders(1) == []
-        assert "первую папку" in bot.telegram.sent[-1][1]["text"]
+        assert "первую папку" in last_message(bot)["text"]
     asyncio.run(run())
 
 
@@ -187,7 +191,7 @@ def test_partial_telegram_cleanup_retries_snapshot_after_restart_without_erasing
         monkeypatch.setattr(bot.telegram, "call", limited)
         await confirm(bot)
         assert [t["identity"] for t in bot.cleanup.targets(1, "message")] == [1001]
-        assert "сообщений — 1" in bot.telegram.sent[-1][1]["text"]
+        assert "сообщений — 1" in last_message(bot)["text"]
         assert all(1 <= len(p["message_ids"]) <= 100 for m, p in bot.telegram.sent if m == "deleteMessages")
         fresh = note(bot, message_id=5000)
         bot.store.close()
@@ -198,7 +202,7 @@ def test_partial_telegram_cleanup_retries_snapshot_after_restart_without_erasing
         assert resumed.store.note(1, fresh["id"]) and resumed.archive.directory(fresh).exists()
         batches = [p["message_ids"] for m, p in resumed.telegram.sent if m == "deleteMessages"]
         assert batches == [[1001]]
-        assert "Новые записи в архиве сохранены" in resumed.telegram.sent[-1][1]["text"]
+        assert "Новые записи в архиве сохранены" in last_message(resumed)["text"]
     asyncio.run(run())
 
 
@@ -215,7 +219,7 @@ def test_interrupted_file_cleanup_blocks_new_notes_and_resumes_from_durable_inte
         assert bot.store.export_notes(1) == [] and bot.archive.directory(old).exists()
         await bot.handle(incoming(message_id=5000))
         assert bot.store.export_notes(1) == []
-        assert "Очистка ещё не завершена" in bot.telegram.sent[-1][1]["text"]
+        assert "Очистка ещё не завершена" in last_message(bot)["text"]
         monkeypatch.setattr(bot.archive, "delete_all", original)
         await bot.handle({"callback_query": {"id": "retry", "from": {"id": 1}, "data": "retrydeleteall",
                                              "message": incoming(message_id=5001)["message"]}})
@@ -236,10 +240,10 @@ def test_transport_failure_keeps_topic_and_messages_until_confirmed_or_already_m
         monkeypatch.setattr(bot.telegram, "call", unavailable)
         await confirm(bot)
         assert bot.cleanup.targets(1, "topic") and bot.cleanup.targets(1, "message")
-        assert "не подтвердил" in bot.telegram.sent[-1][1]["text"]
+        assert "не подтвердил" in last_message(bot)["text"]
         await bot.handle(incoming(message_id=2000, thread=110))
         assert bot.store.folders(1) == [] and bot.store.export_notes(1) == []
-        assert "Эта тема ожидает удаления" in bot.telegram.sent[-1][1]["text"]
+        assert "Эта тема ожидает удаления" in last_message(bot)["text"]
         async def already_missing(method, **payload):
             if method == "deleteForumTopic":
                 raise TelegramError(400, method, "message thread not found")

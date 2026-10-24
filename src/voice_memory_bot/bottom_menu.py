@@ -116,18 +116,20 @@ class BottomMenuMixin:
             except ProviderError as exc:
                 if str(exc) != "telegram_400":
                     raise
-        if previous:
-            await self.remove_menu_message(owner, previous["message_id"])
         token = silent_delivery.set(True)
         try:
-            response = await self.view_send(self.telegram.text, owner, state["text"], thread, keys)
+            text = state["text"] if state["keep"] else state["text"].split("\n", 1)[0]
+            response = await self.view_send(self.telegram.text, owner, text, thread, keys)
         finally:
             silent_delivery.reset(token)
         with self.store.db:
             self.store.db.execute("UPDATE bottom_menus SET message_id=? WHERE owner=?",
                                   (response["message_id"], owner))
-        if not state["keep"]:
-            await self.remove_menu_message(owner, response["message_id"])
+        # Telegram Web drops the keyboard (and can show START) when its carrier is
+        # deleted. Keep one short heading; retire the previous carrier only after
+        # the new keyboard has been delivered and its receipt saved.
+        if previous and previous["message_id"] != response["message_id"]:
+            await self.remove_menu_message(owner, previous["message_id"])
         return response
 
     async def bottom_input(self, owner, thread, text, message_id):

@@ -10,6 +10,10 @@ from voice_memory_bot.providers import ProviderError
 from voice_memory_bot.store import Store
 
 
+def last_message(bot):
+    return next(p for m, p in reversed(bot.telegram.sent) if m == "sendMessage")
+
+
 def test_first_folder_voice_name_statuses_keyboard_and_original_survive(tmp_path):
     async def run():
         store = Store(tmp_path / 'db', Limits())
@@ -17,8 +21,8 @@ def test_first_folder_voice_name_statuses_keyboard_and_original_survive(tmp_path
         try:
             await receive(bot, '/start')
             assert store.folders(1) == [] and store.action(1) == 'create'
-            assert 'первую папку' in bot.telegram.sent[-1][1]['text']
-            assert bot.telegram.sent[-1][1]['keyboard']['is_persistent']
+            assert 'первую папку' in last_message(bot)['text']
+            assert last_message(bot)['keyboard']['is_persistent']
 
             async def transcribe(path, *, prompt=None):
                 assert path.exists() and 'папок' in prompt
@@ -45,7 +49,7 @@ def test_first_folder_voice_name_statuses_keyboard_and_original_survive(tmp_path
             store.delete_folder(1, store.current_folder(1))
             assert store.folders(1) == [] and store.current_folder(1) is None
             await receive(bot, '/start', 1002)
-            assert 'первую папку' in bot.telegram.sent[-1][1]['text']
+            assert 'первую папку' in last_message(bot)['text']
             await receive(bot, 'Снова', 1003)
             assert [f['name'] for f in store.folders(1)] == ['Снова']
         finally:
@@ -66,7 +70,7 @@ def test_inbox_and_last_folder_can_be_removed_while_archive_remains_searchable(t
             token = bot.folder_delete_confirmations[1][0]
             await bot.callback(1, None, 500, 'confirmdrop:' + token)
             assert store.folders(1) == [] and store.current_folder(1) is None
-            assert 'первую папку' in bot.telegram.sent[-1][1]['text']
+            assert 'первую папку' in last_message(bot)['text']
             assert store.notes(1, query='Сохранённый')[0]['id'] == note['id']
             assert len(store.export_notes(1)) == 1
             assert store.folders(1, include_removed=True)[0]['id'] == inbox
@@ -95,7 +99,7 @@ def test_voice_name_failure_keeps_create_prompt_and_does_not_create_note(tmp_pat
             await receive_voice(bot, 1001, None)
             assert store.folders(1) == [] and store.notes(1) == []
             assert store.action(1) == 'create'
-            assert 'текстом' in bot.telegram.sent[-1][1]['text']
+            assert 'текстом' in last_message(bot)['text']
             assert store.one('SELECT transcript FROM folder_name_inputs')['transcript']
             await receive(bot, 'Название вручную', 1002)
             assert [f['name'] for f in store.folders(1)] == ['Название вручную']
@@ -113,9 +117,9 @@ def test_ambiguous_voice_explains_what_was_heard_with_bottom_cancel(tmp_path):
                 raise ValueError('Скажи одно название папки или напиши его текстом.')
             bot.folder_namer = SimpleNamespace(folder_name=ambiguous)
             await receive(bot, '/new')
-            assert bot.telegram.sent[-1][1]['keyboard']['is_persistent']
+            assert last_message(bot)['keyboard']['is_persistent']
             await receive_voice(bot, 1001, None)
-            result = bot.telegram.sent[-1][1]
+            result = last_message(bot)
             assert 'Расслышал:' in result['text'] and 'не удалось' in result['text'].lower()
             assert result['keyboard']['is_persistent']
             assert store.folders(1) == [] and store.action(1) == 'create'
@@ -139,7 +143,7 @@ def test_created_folder_is_not_reported_as_naming_failure(tmp_path):
             await receive_voice(bot, 1001, None)
             assert [f['name'] for f in store.folders(1)] == ['Новая']
             assert store.action(1) is None
-            assert 'Папка «Новая» создана' in bot.telegram.sent[-1][1]['text']
+            assert 'Папка «Новая» создана' in last_message(bot)['text']
             assert store.one('SELECT folder_id FROM folder_name_inputs')['folder_id']
         finally:
             store.close()
@@ -169,7 +173,7 @@ def test_voice_rename_preserves_folder_notes_and_receipt_across_restart(tmp_path
             bot.groq.transcribe = transcribe
             bot.folder_namer = SimpleNamespace(folder_name=extract)
             await bot.callback(1, None, 500, f'rename:{identity}')
-            assert 'голосовое' in bot.telegram.sent[-1][1]['text']
+            assert 'голосовое' in last_message(bot)['text']
             await receive_voice(bot, 1001, None)
             assert store.folder(1, identity)['name'] == 'Рабочие идеи'
             assert len(store.folders(1)) == 1 and store.action(1) is None

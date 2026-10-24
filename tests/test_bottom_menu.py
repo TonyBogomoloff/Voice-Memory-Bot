@@ -14,6 +14,24 @@ def last_message(bot):
     return next(p for m, p in reversed(bot.telegram.sent) if m == "sendMessage")
 
 
+def test_keyboard_carrier_stays_until_next_keyboard_is_delivered(bot):
+    async def run():
+        await receive(bot, "/start", 1000)
+        first = bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"]
+        assert not any(m == "deleteMessage" and p["message_id"] == first for m, p in bot.telegram.sent)
+        assert "\n" not in last_message(bot)["text"]
+        bot.telegram.sent.clear()
+        await receive(bot, "☰ Меню", 1002)
+        current = bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"]
+        assert current != first
+        sent = next(i for i, (m, _) in enumerate(bot.telegram.sent) if m == "sendMessage")
+        deleted = next(i for i, (m, p) in enumerate(bot.telegram.sent)
+                       if m == "deleteMessage" and p["message_id"] == first)
+        assert sent < deleted
+        assert not any(m == "deleteMessage" and p["message_id"] == current for m, p in bot.telegram.sent)
+    asyncio.run(run())
+
+
 def test_menu_settings_back_cancel_and_plain_input(bot):
     async def run():
         folder = bot.store.current_folder(1)

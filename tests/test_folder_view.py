@@ -190,7 +190,10 @@ def test_settings_without_prior_folder_visit_and_return_to_folder(bot):
         with bot.store.db:
             bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')
         await bot.refresh_due_views()
-        assert not bot.telegram.sent  # An empty folder has no header to renew.
+        # Even an empty folder retains the one message carrying its reply keyboard.
+        assert bot.bottom_state(1)['screen'] == 'root'
+        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
+        assert len(sent) == 1 and sent[0]['keyboard']['keyboard']
         await bot.settings_menu(1, None)
         bot.cleanup.begin(1)
         assert bot.store.all('SELECT * FROM folder_views WHERE owner=1') == []
