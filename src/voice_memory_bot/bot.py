@@ -86,7 +86,7 @@ HELP = """🎙 Voice Memory Bot
 /cancel — отменить ввод названия или поиск
 
 В карточке записи доступны текст, исходное аудио, перенос и удаление.
-Голосовые и видеокружки сразу расшифровываются в текст. Под расшифровкой: «Опции» → «Переместить» / «Обратиться к ИИ».
+Голосовые и видеокружки сразу расшифровываются в текст. Под расшифровкой: «Опции» → «Переместить» / «ИИ».
 В папке с режимом «Диалог с ИИ» все сообщения идут помощнику. Ответ на реплику ИИ продолжает разговор.
 Обращение по имени в начале или конце можно включить в настройках. По умолчанию оно выключено.
 ИИ умеет искать, создавать и менять заметки; исходная расшифровка сохраняется, правку можно отменить.
@@ -560,7 +560,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         if note.get("content") is not None:
             rows.append([button("Исходная расшифровка", f"original:{identity}"),
                          button("Отменить правку", f"aiundo:{identity}:{note['revision']}")])
-        rows.append([button("Обратиться к ИИ", f"aiask:{identity}")])
+        rows.append([button("ИИ", f"aiask:{identity}")])
         if note["state"] == "asr_failed" or note["routing"] in {"unavailable", "review"}:
             rows.append([button("Повторить обработку", f"retry:{identity}")])
         if note["requested_folder"] and note["routing"] == "review":
@@ -669,15 +669,10 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             return
         note = self.store.note(owner, identity)
         if action == "options":
-            _, controls = self.note_card(note)
-            rows = [[b for b in row if b.get("callback_data") != "folders"]
-                    for row in controls["inline_keyboard"]]
-            for row in rows:
-                for item in row:
-                    if item["callback_data"].startswith("choose:"):
-                        item["callback_data"] = f"pick:{identity}:0"
-            rows.append([button("← Назад", f"collapse:{identity}")])
-            return await self.edit_note_buttons(owner, message_id, keyboard(*rows))
+            return await self.edit_note_buttons(owner, message_id, keyboard(
+                [button("Переместить", f"pick:{identity}:0")],
+                [button("Удалить", f"delete:{identity}")],
+                [button("ИИ", f"aiask:{identity}")]))
         if action == "collapse":
             return await self.edit_note_buttons(owner, message_id, self.note_controls(note, thread))
         if action == "pick":
