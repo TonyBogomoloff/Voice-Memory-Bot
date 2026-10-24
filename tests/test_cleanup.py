@@ -125,9 +125,9 @@ def test_full_cleanup_removes_only_owner_data_and_all_known_telegram_locations(b
         assert bot.archive.directory(other).exists() and bot.store.note(2, other["id"])
         assert bot.store.one("SELECT * FROM telegram_messages WHERE owner=2 AND message_id=1105")
         assert bot.store.one("SELECT 1 FROM note_messages WHERE owner=2 AND message_id=2106")
-        assert bot.store.export_format(1) == "markdown"
-        assert bot.store.one("SELECT model FROM ai_settings WHERE owner=1")["model"] == "saved-model"
-        assert bot.store.one("SELECT seconds FROM asr_usage WHERE owner=1")["seconds"] == 20
+        assert bot.store.export_format(1) == "pdf"
+        assert bot.store.one("SELECT model FROM ai_settings WHERE owner=1") is None
+        assert bot.store.one("SELECT seconds FROM asr_usage WHERE owner=1") is None
         assert bot.store.one("SELECT * FROM updates WHERE id=5") is None
         assert bot.store.one("SELECT * FROM updates WHERE id=6") is not None
         assert bot.store.offset() == 7 and bot.store.all("PRAGMA foreign_key_check") == []
@@ -176,7 +176,7 @@ def test_cleanup_waits_for_active_work_without_erasing_data(bot, busy):
     asyncio.run(run())
 
 
-def test_partial_telegram_cleanup_retries_snapshot_after_restart_without_erasing_new_notes(bot, monkeypatch):
+def test_partial_telegram_cleanup_finishes_without_restart_retries(bot, monkeypatch):
     async def run():
         note(bot)
         for mid in range(2000, 2205):
@@ -190,8 +190,9 @@ def test_partial_telegram_cleanup_retries_snapshot_after_restart_without_erasing
             return await original(method, **payload)
         monkeypatch.setattr(bot.telegram, "call", limited)
         await confirm(bot)
-        assert [t["identity"] for t in bot.cleanup.targets(1, "message")] == [1001]
-        assert "сообщений — 1" in last_message(bot)["text"]
+        assert bot.cleanup.targets(1, "message") == []
+        assert bot.cleanup.job(1) is None
+        assert "Автоматических повторов не будет" in last_message(bot)["text"]
         assert all(1 <= len(p["message_ids"]) <= 100 for m, p in bot.telegram.sent if m == "deleteMessages")
         fresh = note(bot, message_id=5000)
         bot.store.close()
@@ -201,8 +202,8 @@ def test_partial_telegram_cleanup_retries_snapshot_after_restart_without_erasing
         assert resumed.cleanup.job(1) is None
         assert resumed.store.note(1, fresh["id"]) and resumed.archive.directory(fresh).exists()
         batches = [p["message_ids"] for m, p in resumed.telegram.sent if m == "deleteMessages"]
-        assert batches == [[1001]]
-        assert "Новые записи в архиве сохранены" in last_message(resumed)["text"]
+        assert batches == []
+        assert resumed.telegram.sent == []
     asyncio.run(run())
 
 
@@ -228,7 +229,7 @@ def test_interrupted_file_cleanup_blocks_new_notes_and_resumes_from_durable_inte
     asyncio.run(run())
 
 
-def test_transport_failure_keeps_topic_and_messages_until_confirmed_or_already_missing(bot, monkeypatch):
+def test_transport_failure_finishes_without_blocking_new_notes(bot, monkeypatch):
     async def run():
         folder = bot.store.create_folder(1, "Проект", 110)
         note(bot, folder=folder["id"])
@@ -239,18 +240,14 @@ def test_transport_failure_keeps_topic_and_messages_until_confirmed_or_already_m
             return await original(method, **payload)
         monkeypatch.setattr(bot.telegram, "call", unavailable)
         await confirm(bot)
-        assert bot.cleanup.targets(1, "topic") and bot.cleanup.targets(1, "message")
-        assert "не подтвердил" in last_message(bot)["text"]
-        await bot.handle(incoming(message_id=2000, thread=110))
-        assert bot.store.folders(1) == [] and bot.store.export_notes(1) == []
-        assert "Эта тема ожидает удаления" in last_message(bot)["text"]
-        async def already_missing(method, **payload):
-            if method == "deleteForumTopic":
-                raise TelegramError(400, method, "message thread not found")
-            return await original(method, **payload)
-        monkeypatch.setattr(bot.telegram, "call", already_missing)
-        await bot.callback(1, None, 500, "retrydeleteall")
         assert bot.cleanup.job(1) is None
+        assert bot.cleanup.targets(1, "topic") == []
+        assert "Автоматических повторов не будет" in last_message(bot)["text"]
+        fresh = note(bot, message_id=2000)
+        sent = len(bot.telegram.sent)
+        await bot.resume_deletions()
+        assert len(bot.telegram.sent) == sent
+        assert bot.store.note(1, fresh["id"])
     asyncio.run(run())
 
 
@@ -297,4 +294,19 @@ def test_telegram_tracks_every_sent_chunk_media_and_upload_without_contents(tmp_
             await telegram.document(1, path, 20)
             assert recorded == [(1, 101, 20), (1, 102, 20), (1, 103, 20)]
             assert "private" not in json.dumps(recorded)
+    asyncio.run(run())
+
+
+def test_old_telegram_jobs_retire_silently_without_touching_new_archive(bot):
+    async def run():
+        fresh = note(bot)
+        with bot.store.db:
+            bot.store.db.execute("INSERT INTO deletion_jobs VALUES (1,0)")
+            bot.store.db.execute("INSERT INTO deletion_targets VALUES (1,'topic',110,NULL)")
+        resumed = Bot(bot.config, bot.store, FakeTelegram(), FakeGroq(), FakeRouter())
+        await resumed.resume_deletions()
+        assert resumed.cleanup.job(1) is None
+        assert resumed.cleanup.targets(1, "topic") == []
+        assert resumed.store.note(1, fresh["id"]) and resumed.archive.directory(fresh).exists()
+        assert resumed.telegram.sent == []
     asyncio.run(run())

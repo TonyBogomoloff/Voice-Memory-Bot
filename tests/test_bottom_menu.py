@@ -208,3 +208,14 @@ def test_selected_note_ai_instruction_can_be_finished_from_bottom_after_restart(
         assert restarted.ai_state.claim() is None
         assert restarted.store.note(1, note["id"])["transcript"] == "Исходник"
     asyncio.run(run())
+
+
+def test_delete_all_buttons_are_red(bot):
+    async def run():
+        await bot.callback(1, None, None, "settings:all")
+        controls = [b for row in reply_keyboard(bot)["keyboard"] for b in row if b["text"] == "🗑 Удалить всё"]
+        assert controls and controls[0]["style"] == "danger"
+        await bot.delete_all_menu(1)
+        controls = [b for row in reply_keyboard(bot)["keyboard"] for b in row if b["text"] == "🗑 Да, удалить всё"]
+        assert controls and controls[0]["style"] == "danger"
+    asyncio.run(run())

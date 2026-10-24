@@ -28,7 +28,8 @@ log = logging.getLogger(__name__)
 
 
 def button(text, data):
-    return {"text": text, "callback_data": data}
+    return {"text": text, "callback_data": data, **(
+        {"style": "danger"} if data == "deleteall" or data.startswith("confirmdeleteall:") else {})}
 
 
 def keyboard(*rows):
@@ -276,11 +277,6 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                 return await self.resume_delete_all(owner)
             return await self.show(owner, "Очистка ещё не завершена. Повтори её перед отправкой новых заметок.",
                                    keys=keyboard([button("Повторить очистку", "retrydeleteall")]))
-        if not callback and thread and self.store.one(
-            "SELECT 1 FROM deletion_targets WHERE owner=? AND kind='topic' AND identity=?", (owner, thread)
-        ):
-            return await self.show(owner, "Эта тема ожидает удаления. Отправь новые заметки в общий чат.",
-                                   keys=keyboard([button("Повторить очистку Telegram", "retrydeleteall")]))
         self.store.register_user(owner)
         try:
             if callback:

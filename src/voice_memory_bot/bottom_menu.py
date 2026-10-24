@@ -90,6 +90,8 @@ class BottomMenuMixin:
                 else:
                     actions[label] = item["callback_data"]
                     rendered.append({"text": label})
+                if item.get("style"):
+                    rendered[-1]["style"] = item["style"]
             if rendered:
                 keyboard.append(rendered)
         if pages > 1:

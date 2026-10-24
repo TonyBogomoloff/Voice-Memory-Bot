@@ -31,6 +31,13 @@ class CleanupStore:
         if "sent_at" not in {r[1] for r in self.db.execute("PRAGMA table_info(telegram_messages)")}:
             self.db.execute("ALTER TABLE telegram_messages ADD COLUMN sent_at REAL")
 
+    def retire_telegram_cleanup(self):
+        # Old Telegram-only retries must never touch new archive entries or notify users.
+        with self.db:
+            self.db.execute("DELETE FROM deletion_targets WHERE owner IN "
+                            "(SELECT owner FROM deletion_jobs WHERE files_pending=0)")
+            self.db.execute("DELETE FROM deletion_jobs WHERE files_pending=0")
+
     def remember(self, owner, message_id, thread=None, sent_at=None):
         # Only identifiers are needed; do not retain another copy of message contents.
         if type(owner) is not int or owner <= 0 or type(message_id) is not int or message_id <= 0:
@@ -104,7 +111,7 @@ class CleanupStore:
                 if table in tables:
                     self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
             for table in ("ai_requests", "ai_links", "ai_note_context", "ai_active", "ai_conversations", "notes", "folders", "implicit_topics",
-                          "telegram_messages"):
+                          "telegram_messages", "ai_settings", "user_export_settings", "asr_usage"):
                 self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
             if self.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='folder_views'"):
                 self.db.execute("DELETE FROM folder_views WHERE owner=?", (owner,))
@@ -125,13 +132,14 @@ class CleanupStore:
 
     def finish(self, owner):
         with self.db:
-            self.db.execute("DELETE FROM deletion_jobs WHERE owner=? AND files_pending=0 "
-                            "AND NOT EXISTS (SELECT 1 FROM deletion_targets WHERE owner=?)", (owner, owner))
+            self.db.execute("DELETE FROM deletion_targets WHERE owner=?", (owner,))
+            self.db.execute("DELETE FROM deletion_jobs WHERE owner=? AND files_pending=0", (owner,))
 
 
 class CleanupMixin:
     def init_cleanup(self):
         self.cleanup = CleanupStore(self.store)
+        self.cleanup.retire_telegram_cleanup()
         self.telegram.on_message = self.cleanup.remember
         self.delete_confirmations = {}
         self.deleting_owners = set()
@@ -146,7 +154,7 @@ class CleanupMixin:
         text = ("Удалить всё?\n\n"
                 f"Папок: {len(self.store.folders(owner))}. Записей и сообщений ИИ: {count}.\n"
                 "Будут удалены все папки, тексты, аудио, фото, версии заметок и история ИИ, "
-                "а также темы и известные боту сообщения в этом чате Telegram.\n\n"
+                "настройки и данные использования. В Telegram удалим доступные боту темы и сообщения.\n\n"
                 "Это нельзя отменить. Сообщения вне тем старше 48 часов и старые сообщения, "
                 "которые бот не сохранил, могут остаться в Telegram. Скачанные архивы останутся у тебя.")
         await self.show_bottom(owner, text, thread, keyboard(
@@ -243,20 +251,18 @@ class CleanupMixin:
                                            keys=keyboard([button("Повторить очистку", "retrydeleteall")]))
                 self.cleanup.files_done(owner)
             await self.delete_telegram_snapshot(owner)
-            self.cleanup.finish(owner)
             topics = len(self.cleanup.targets(owner, "topic"))
             messages = len(self.cleanup.targets(owner, "message"))
-            text = ("Архив очищен: все папки, записи, аудио и история ИИ удалены." if job["files_pending"]
-                    else "Повторная очистка Telegram. Новые записи в архиве сохранены.")
+            # Telegram is best effort, once per confirmed deletion. Persist completion
+            # before sending the report so a lost response cannot create restart spam.
+            self.cleanup.finish(owner)
+            text = "Удалено: все папки, записи, аудио, фото, файлы архива, история ИИ и настройки."
             if topics or messages:
-                text += f"\nTelegram пока не подтвердил удаление: тем — {topics}, сообщений — {messages}."
+                text += "\nЧасть истории Telegram удалить не удалось. Автоматических повторов не будет."
             else:
-                text += "\nТемы и известные боту сообщения Telegram удалены."
-            text += "\nЕсли в общем чате осталась старая история, удали её через «Очистить историю» в Telegram."
-            rows = [[button("Повторить очистку Telegram", "retrydeleteall")]] if topics or messages else []
-            rows.extend(HOME["inline_keyboard"])
-            # The confirmation's topic may no longer exist. Always send the result to the main chat.
-            await self.show(owner, text, keys=keyboard(*rows))
+                text += "\nДоступные боту темы и сообщения Telegram удалены."
+            text += "\nОставшуюся историю можно убрать через «Очистить историю» в Telegram."
+            await self.show(owner, text, keys=HOME)
         finally:
             self.deleting_owners.discard(owner)
 
