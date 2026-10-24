@@ -135,16 +135,15 @@ class FolderViewMixin:
         token = silent_delivery.set(True)
         try:
             self.folder_keyboards.pop(owner, None)
-            panel = await self.refresh_folder_keyboard(owner, thread, notice=notice)
-            leftovers = await self.clear_folder_view(owner, thread, all_threads=True,
-                                                      keep_ids=(panel['message_id'],))
+            leftovers = await self.clear_folder_view(owner, thread, all_threads=True)
+            await self.refresh_folder_keyboard(owner, thread, notice=notice)
             if restore_screen and view['screen']:
                 screen = json.loads(view['screen'])
                 await self.view_send(self.telegram.text, owner, screen['text'], thread, screen['keys'])
                 with self.store.db:
                     self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
                 return
-            notes = self.store.notes(owner, identity, offset=page * 8, limit=8)
+            notes = self.store.notes(owner, identity, limit=count)
             for note in reversed(notes):
                 content = note.get('content') if note.get('content') is not None else note['transcript']
                 if note['kind'] == 'photo' and note['file_id']:
@@ -160,7 +159,6 @@ class FolderViewMixin:
                     for chunk in transcript_chunks('🤖 ' + request['response']):
                         response = await self.view_send(self.telegram.text, owner, chunk, thread, self.note_controls(note, thread))
                         self.ai_state.link(owner, response['message_id'], request['conversation_id'])
-            await self.show_notes_menu(owner, thread, identity, page)
             if leftovers:
                 await self.telegram.text(owner,
                     'Часть старых сообщений Telegram уже не разрешает удалить. '

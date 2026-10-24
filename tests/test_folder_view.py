@@ -193,7 +193,7 @@ def test_settings_without_prior_folder_visit_and_return_to_folder(bot):
     asyncio.run(run())
 
 
-def test_old_topic_cleanup_does_not_block_switch_and_keyboard_arrives_before_clear(bot):
+def test_old_topic_cleanup_does_not_block_switch_and_clears_before_header(bot):
     async def run():
         inbox = bot.store.ensure_user(1)
         work = bot.store.create_folder(1, 'Работа')['id']
@@ -204,13 +204,40 @@ def test_old_topic_cleanup_does_not_block_switch_and_keyboard_arrives_before_cle
             bot.store.db.execute('INSERT INTO deletion_jobs VALUES (1,0)')
             bot.store.db.execute("INSERT INTO deletion_targets VALUES (1,'topic',99,NULL)")
         await bot.show_notes(1, None, work)
-        assert bot.telegram.sent[0][0] == 'sendMessage'
-        assert '✓ 📌 Работа' in str(bot.telegram.sent[0])
+        assert bot.telegram.sent[0][0] == 'deleteMessage'
+        header = next(p for m, p in bot.telegram.sent if m == 'sendMessage')
+        assert '✓ 📌 Работа' in str(header)
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert {1001, 1002, 3001} <= deleted
-        assert 1 not in deleted
         assert any(p.get('text') == 'Вторая' for _, p in bot.telegram.sent)
         assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
         await bot.settings_menu(1, None)
         assert bot.store.one('SELECT screen FROM folder_views WHERE owner=1')['screen']
+    asyncio.run(run())
+
+
+def test_switch_has_one_header_all_records_and_no_trailing_menu(bot):
+    async def run():
+        old = bot.store.ensure_user(1)
+        work = bot.store.create_folder(1, 'Работа')['id']
+        await bot.show_notes(1, None, old)
+        previous = {r['message_id'] for r in bot.store.all('SELECT * FROM telegram_messages')}
+        for i in range(10):
+            saved(bot, work, f'Запись {i}', 1000 + i)
+        bot.telegram.sent.clear()
+        await receive(bot, '📌 Работа', 2000)
+        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
+        assert len(sent) == 11
+        assert sent[0]['text'].startswith('📁 Работа\nРежим: заметки')
+        assert all('Входящие' not in p['text'] for p in sent)
+        assert {p['text'] for p in sent[1:]} == {f'Запись {i}' for i in range(10)}
+        for p in sent[1:]:
+            rows = p['keyboard']['inline_keyboard']
+            assert len(rows) == len(rows[0]) == 1
+            assert rows[0][0]['text'] == 'Опции'
+        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        assert previous <= deleted
+        await bot.show_main_menu(1)
+        await bot.callback(1, None, 5000, f'foldermenu:{work}')
+        assert 'Удалить папку' in str(bot.telegram.sent[-1])
     asyncio.run(run())

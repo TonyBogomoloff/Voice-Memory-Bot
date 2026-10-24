@@ -81,10 +81,8 @@ class FolderMenuMixin:
         signature = (folder["id"], folder["name"], folder["mode"], keys)
         if not force and self.folder_keyboards.get(owner) == signature:
             return
-        if folder["mode"] == "chat":
-            text = f"🤖 «{folder['name']}» — диалог с ИИ. Пришли текст или голосовое."
-        else:
-            text = f"🎙 Сейчас сохраняю в «{folder['name']}». Пришли голосовое, текст или фото."
+        mode = 'диалог с ИИ' if folder['mode'] == 'chat' else 'заметки'
+        text = f"📁 {folder['name']}\nРежим: {mode}\nСохраняю сообщения в эту папку."
         if notice:
             text = notice + "\n\n" + text
         response = await self.view_send(self.telegram.text, owner, text, thread, keys)
@@ -103,20 +101,24 @@ class FolderMenuMixin:
         self.remember_screen(owner, thread, hint, self.folder_keyboard(owner))
 
     async def show_main_menu(self, owner, thread=None, edit_id=None):
-        from .bot import HOME
+        from .bot import HOME, button, keyboard
         if not self.store.folders(owner):
             return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
         await self.refresh_folder_keyboard(owner, thread)
         folder = self.store.folder(owner, self.store.current_folder(owner))
-        await self.show(owner, f"☰ Меню\nВыбрана папка «{folder['name']}».", thread, HOME, edit_id)
+        await self.show(owner, f"☰ Меню\nВыбрана папка «{folder['name']}».", thread,
+                        keyboard([button("Настройки папки", f"foldermenu:{folder['id']}")],
+                                 *HOME["inline_keyboard"]), edit_id)
 
     async def folder_menu_callback(self, owner, thread, message_id, data):
         from .bot import button, keyboard
         action, _, identity = data.partition(":")
         if action == "home":
             await self.show_main_menu(owner, thread, message_id)
+        elif action == "foldermenu":
+            await self.show_notes_menu(owner, thread, identity, edit_id=message_id)
         elif action in {"pin", "unpin"}:
             self.store.set_folder_pin(owner, identity, action == "pin")
             await self.show_notes(owner, thread, identity, edit_id=message_id)
