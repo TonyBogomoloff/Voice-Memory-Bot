@@ -26,7 +26,7 @@ def read(bot, request, note):
     return tool(bot, request, step("read_note", note_id=note["id"]))
 
 
-def test_voice_move_then_delete_is_single_exact_and_durable(bot):
+def test_multiple_moves_and_deletes_are_exact_and_durable(bot):
     async def run():
         note = await receive(bot, voice=True)
         other = ready_note(bot, message_id=888)
@@ -41,17 +41,19 @@ def test_voice_move_then_delete_is_single_exact_and_durable(bot):
         assert bot.archive.audio(current).read_bytes() == original
         assert current["transcript"] == note["transcript"]
         read(bot, request, other)
-        assert "только одну" in (await act(bot, request, "move_note", other, folder_id=folder["id"]))["error"]
+        assert (await act(bot, request, "move_note", other, folder_id=folder["id"]))["ok"]
         read(bot, request, current)
         bot.messages.record(current, 777, None, "view")
         deleted = await act(bot, request, "delete_note", current)
         assert deleted["ok"] and deleted["cleanup_state"] == "done"
         assert not bot.archive.audio(current).exists()
         assert not bot.store.one("SELECT id FROM notes WHERE id=? AND deleted=0", (note["id"],))
-        assert "только одну" in (await act(bot, request, "delete_note", other))["error"]
-        assert bot.store.note(1, other["id"])["transcript"] == other["transcript"]
+        other = bot.store.note(1, other['id'])
+        read(bot, request, other)
+        assert (await act(bot, request, "delete_note", other))["ok"]
+        assert bot.store.one("SELECT deleted FROM notes WHERE id=?", (other['id'],))['deleted']
         ids = [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"]
-        assert 777 in ids and 888 not in ids
+        assert 777 in ids and 888 in ids
         assert bot.store.db.execute("PRAGMA foreign_key_check").fetchall() == []
     asyncio.run(run())
 
@@ -189,7 +191,7 @@ def test_receipt_commits_before_cleanup_and_replay_does_not_repeat_action(bot, a
         with pytest.raises(asyncio.CancelledError):
             await act(bot, request, action, note, folder_id=folder["id"] if action == "move_note" else "")
         assert bot.ai_state.steps(1, request)[1]["result"]["ok"]
-        assert bot.store.one("SELECT * FROM ai_note_jobs")["state"] == "pending"
+        assert bot.store.one("SELECT * FROM ai_message_jobs")["state"] == "pending"
         monkeypatch.setattr(bot.ai_note_actions, "cleanup", cleanup)
         bot.init_ai(bot.assistant)
         result = await bot.ai_note_actions.execute(1, request, 1)
@@ -199,7 +201,7 @@ def test_receipt_commits_before_cleanup_and_replay_does_not_repeat_action(bot, a
         sent = len(bot.telegram.sent)
         await bot.ai_note_actions.execute(1, request, 1)
         assert len(bot.telegram.sent) == sent
-        assert bot.store.one("SELECT count(*) AS n FROM ai_note_jobs")["n"] == 1
+        assert bot.store.one("SELECT count(*) AS n FROM ai_message_jobs")["n"] == 1
     asyncio.run(run())
 
 
@@ -220,11 +222,11 @@ def test_failed_telegram_delete_is_reported_and_cleanup_can_retry(bot):
         assert result["message"] in changes
         bot.telegram.call = original
         await bot.ai_note_actions.cleanup(request, 1)
-        assert bot.store.one("SELECT state FROM ai_note_jobs")["state"] == "done"
+        assert bot.store.one("SELECT state FROM ai_message_jobs")["state"] == "done"
     asyncio.run(run())
 
 
-def test_update_cannot_bypass_move_limit_and_folder_tool_is_complete_owner_scoped(bot):
+def test_update_requires_move_tool_and_folder_tool_is_complete_owner_scoped(bot):
     note = ready_note(bot)
     request = request_for(bot, note)
     folders = [bot.store.create_folder(1, f"Папка {i}") for i in range(12)]
@@ -251,7 +253,7 @@ def test_new_folder_and_move_roll_back_together_if_receipt_cannot_be_saved(bot, 
             await bot.ai_note_actions.choose(1, request, 1, "new")
         assert len(bot.store.folders(1)) == 1
         assert bot.store.note(1, note["id"])["folder_id"] == note["folder_id"]
-        assert bot.store.all("SELECT * FROM ai_note_jobs") == []
+        assert bot.store.all("SELECT * FROM ai_message_jobs") == []
     asyncio.run(run())
 
 

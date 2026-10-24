@@ -65,6 +65,12 @@ def migrate_ai(db):
             owner INTEGER NOT NULL, note_id TEXT NOT NULL REFERENCES notes(id), action TEXT NOT NULL,
             state TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(request_id, step)
         );
+        CREATE TABLE IF NOT EXISTS ai_message_jobs (
+            request_id TEXT NOT NULL REFERENCES ai_requests(note_id), step INTEGER NOT NULL,
+            owner INTEGER NOT NULL, note_id TEXT NOT NULL REFERENCES notes(id), action TEXT NOT NULL,
+            state TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(request_id, step, note_id)
+        );
+        INSERT OR IGNORE INTO ai_message_jobs SELECT * FROM ai_note_jobs;
     """)
     with db:
         columns = {r[1] for r in db.execute("PRAGMA table_info(ai_requests)")}
@@ -162,7 +168,56 @@ class AIStore:
 
     def reply_conversation(self, owner, message_id):
         row = self.store.one("SELECT conversation_id FROM ai_links WHERE owner=? AND message_id=?", (owner, message_id))
+        if not row:
+            note = self.message_note(owner, message_id)
+            if note:
+                row = self.store.one("SELECT a.conversation_id FROM ai_requests a JOIN notes n ON n.id=a.note_id "
+                    "WHERE a.owner=? AND (a.note_id=? OR a.result_note_id=? OR n.reply_message_id=? "
+                    "OR n.reply_message_id IN (SELECT message_id FROM note_messages WHERE owner=? AND note_id=?) "
+                    "OR EXISTS (SELECT 1 FROM ai_note_context c WHERE c.conversation_id=a.conversation_id "
+                    "AND c.owner=a.owner AND c.note_id=?)) ORDER BY a.created_at DESC LIMIT 1",
+                    (owner, note['id'], note['id'], note['message_id'], owner, note['id'], note['id']))
         return row["conversation_id"] if row else None
+
+    def message_note(self, owner, message_id):
+        if not message_id or message_id < 1:
+            return None
+        return self.store.one("SELECT n.* FROM notes n WHERE n.owner=? AND n.deleted=0 AND "
+            "(n.message_id=? OR EXISTS (SELECT 1 FROM note_messages m WHERE m.owner=n.owner "
+            "AND m.note_id=n.id AND m.message_id=?)) LIMIT 1", (owner, message_id, message_id))
+
+    def message_ref(self, owner, identity):
+        note = self.store.one("SELECT * FROM notes WHERE owner=? AND id=? AND deleted=0", (owner, identity))
+        if not note:
+            return None
+        messages = self.store.all("SELECT message_id,thread_id FROM note_messages WHERE owner=? "
+                                  "AND note_id=? AND deleted=0 ORDER BY message_id", (owner, identity))
+        return {"id": identity, "revision": note['revision'], "folder_id": note['folder_id'],
+                "kind": note['kind'], "title": note['title'], "telegram_messages": messages,
+                "reply_message_id": note['reply_message_id']}
+
+    def conversation_notes(self, owner, conversation, exclude=None):
+        """Whole conversation identity list, independent of history text truncation."""
+        self.conversation(owner, conversation)
+        members = {}
+        context = self.note_context(owner, conversation)
+        if context:
+            members[context['note_id']] = 'source'
+        requests = self.store.all("SELECT a.*,n.reply_message_id FROM ai_requests a JOIN notes n ON n.id=a.note_id "
+                                   "WHERE a.owner=? AND a.conversation_id=? ORDER BY a.created_at,a.note_id",
+                                   (owner, conversation))
+        for request in requests:
+            source = self.message_note(owner, request['reply_message_id'])
+            if source:
+                members.setdefault(source['id'], 'source')
+            members[request['note_id']] = 'user'
+            if request['result_note_id']:
+                members[request['result_note_id']] = 'assistant'
+            for result in self.store.all("SELECT id FROM notes WHERE owner=? AND ai_generated_from=? AND deleted=0",
+                                          (owner, request['note_id'])):
+                members[result['id']] = 'assistant'
+        return [{**ref, "role": role} for identity, role in members.items() if identity != exclude
+                and (ref := self.message_ref(owner, identity))]
 
     def link(self, owner, message_id, conversation):
         self.conversation(owner, conversation)
@@ -218,7 +273,7 @@ class AIStore:
 
     def command_reply(self, owner, note_id):
         """Operational replies stay in the conversation, not in the notes archive."""
-        return any(s["command"]["action"] in {"move_note", "delete_note"} and s["result"]
+        return any(s["command"]["action"] in {"move_note", "delete_note", "move_notes", "delete_notes"} and s["result"]
                    and (s["result"].get("ok") or s["result"].get("needs_folder_choice")
                         or s["result"].get("cancelled"))
                    for s in self.steps(owner, note_id))
@@ -294,8 +349,9 @@ class AIStore:
                 if access == "none" or (command["action"] in {"create_note", "update_note"} and access != "write"):
                     raise ValueError("Доступ к заметкам выключен в настройках ИИ")
                 context = self.note_context(owner, self.request(owner, note_id)["conversation_id"])
-                if context and command["action"] != "list_folders" and (command["action"] not in {"read_note", "update_note", "get_message_folder"}
-                                or command["note_id"] != context["note_id"]):
+                allowed = {n['id'] for n in self.conversation_notes(owner, self.request(owner, note_id)['conversation_id'])}
+                if context and command["action"] not in {"list_folders", "list_conversation"} and (command["action"] not in {"read_note", "update_note", "get_message_folder"}
+                                or command["note_id"] not in allowed):
                     raise ValueError("Этот диалог относится только к выбранной записи")
                 result = self._operation(owner, note_id, command)
             except ValueError as exc:
@@ -307,6 +363,10 @@ class AIStore:
     def _operation(self, owner, request_id, command):
         from .store import clean_name, new_id
         action = command["action"]
+        if action == "list_conversation":
+            request = self.request(owner, request_id)
+            return {"notes": self.conversation_notes(owner, request['conversation_id'], exclude=request_id),
+                    "current_command_id": request_id, "complete": True}
         if action == "get_message_folder":
             note = self.store.note(owner, command["note_id"])
             folder = self.store.folder(owner, note["folder_id"])
@@ -319,15 +379,13 @@ class AIStore:
         if folder_id:
             self.store.folder(owner, folder_id)
         if action == "search_notes":
-            matches = self.store.notes(owner, folder_id, query=command["query"] or None, limit=9)
+            matches = self.store.notes(owner, folder_id, query=command["query"] or None, limit=-1)
             return {"notes": [{"id": n["id"], "title": n["title"], "folder_id": n["folder_id"], "kind": n["kind"],
-                               "created_at": n["created_at"],
+                               "created_at": n["created_at"], "revision": n['revision'],
                                "excerpt": (n["content"] if n["content"] is not None else n["transcript"] or "")[:250]}
-                              for n in matches[:8]], "has_more": len(matches) > 8}
+                              for n in matches], "has_more": False}
         if action == "read_note":
             note = self.store.note(owner, command["note_id"])
-            if note["entry_type"] != "note":
-                raise ValueError("Это сообщение диалога, а не заметка")
             content = note["content"] if note["content"] is not None else note["transcript"] or ""
             return {"id": note["id"], "title": note["title"], "folder_id": note["folder_id"], "kind": note["kind"],
                     "revision": note["revision"], "content": content[:40000], "truncated": len(content) > 40000}

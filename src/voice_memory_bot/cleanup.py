@@ -106,7 +106,8 @@ class CleanupStore:
                                 [(owner, mid, thread) for mid, thread in messages.items()])
             self.db.execute("DELETE FROM note_revisions WHERE note_id IN (SELECT id FROM notes WHERE owner=?)", (owner,))
             self.db.execute("DELETE FROM ai_steps WHERE note_id IN (SELECT note_id FROM ai_requests WHERE owner=?)", (owner,))
-            for table in ("ai_note_jobs", "record_prompts", "record_panels", "note_moves", "note_messages", "folder_name_inputs",
+            self.db.execute("DELETE FROM ai_progress WHERE note_id IN (SELECT note_id FROM ai_requests WHERE owner=?)", (owner,))
+            for table in ("ai_message_jobs", "ai_note_jobs", "record_prompts", "record_panels", "note_moves", "note_messages", "folder_name_inputs",
                           "bottom_menus", "bottom_menu_labels", "folder_options"):
                 if table in tables:
                     self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))

@@ -82,9 +82,12 @@ class AIBotMixin:
             trigger = "reply" if reply or conversation else "folder"
             if not reply and not conversation and not self.ai_state.request(owner, note["id"]):
                 conversation = self.ai_state.active(owner, note["source_folder"])
-            self.ai_state.enqueue(owner, note["id"], trigger,
+            request = self.ai_state.enqueue(owner, note["id"], trigger,
                                   message.get("message_thread_id"), message["message_id"], conversation,
                                   reply_context=self.reply_context(owner, reply) if reply else None)
+            self.ai_state.link(owner, message['message_id'], request['conversation_id'])
+            if reply:
+                self.ai_state.link(owner, reply['message_id'], request['conversation_id'])
             if scoped and action.startswith("ai_note:"):
                 self.store.set_action(owner, None)
 
@@ -114,6 +117,8 @@ class AIBotMixin:
                                delivery=current["transcript_delivery"],
                                result_message_id=current["transcript_message_id"], result_thread=note["source_thread"])
         self.archive.persist_text(self.store.note(owner, identity), self.store.folder(owner, current["folder_id"]))
+        if current['transcript_message_id']:
+            self.ai_state.link(owner, current['transcript_message_id'], request['conversation_id'])
         await self.show_ai_progress(request)
         return True
 
@@ -298,7 +303,16 @@ class AIBotMixin:
 
     def ai_result_controls(self, owner, identity, current):
         rows, changes = [], []
-        for receipt in self.ai_engine.receipts(owner, identity):
+        receipts = self.ai_engine.receipts(owner, identity)
+        if len(receipts) > 5:
+            for action, label in (("move_note", "Перенесено"), ("delete_note", "Удалено")):
+                count = sum(r['action'] == action for r in receipts)
+                if count:
+                    changes.append(f"{label} сообщений: {count}.")
+            if any(r.get('cleanup_state') in {'pending', 'blocked'} for r in receipts):
+                changes.append('Часть исходных сообщений пока не удалось удалить из Telegram.')
+            receipts = [r for r in receipts if r['action'] not in {'move_note', 'delete_note'}]
+        for receipt in receipts:
             label = {"update_note": "Изменено", "move_note": "Перенесено", "delete_note": "Удалено"}.get(
                 receipt["action"], "Создано")
             changes.append(f"{label}: {receipt['title']}")
@@ -393,6 +407,8 @@ class AIBotMixin:
                 if result:
                     self.messages.record(result, sent["message_id"], thread if force else current["thread_id"],
                                          "ai_response")
+                else:
+                    self.messages.record(note, sent['message_id'], thread if force else current['thread_id'], 'ai_notice')
             self.ai_state.update_request(owner, identity, delivery="sent")
         except ProviderError:
             self.ai_state.update_request(owner, identity, delivery="unknown")
