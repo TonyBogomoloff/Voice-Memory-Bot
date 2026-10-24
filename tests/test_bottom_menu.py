@@ -193,16 +193,16 @@ def test_miniapp_button_and_initial_folder_prompt_use_bottom_controls(bot):
     asyncio.run(run())
 
 
-def test_selected_note_ai_instruction_can_be_finished_from_bottom_after_restart(bot):
+def test_selected_note_ai_instruction_has_no_finish_and_can_go_back_after_restart(bot):
     async def run():
         await receive(bot, "Исходник", 1000)
         note = bot.store.notes(1)[0]
         await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
-        assert "Завершить" in labels(bot) and BACK in labels(bot)
+        assert "Завершить" not in labels(bot) and BACK in labels(bot)
         assert bot.store.action(1).startswith("ai_note:")
         assert bot.ai_state.claim() is None
         restarted = Bot(bot.config, bot.store, FakeTelegram(), FakeGroq(), FakeRouter())
-        await receive(restarted, "Завершить", 1001)
+        await receive(restarted, BACK, 1001)
         assert restarted.store.action(1) is None
         await receive(restarted, "Обычная заметка", 1002)
         assert restarted.ai_state.claim() is None

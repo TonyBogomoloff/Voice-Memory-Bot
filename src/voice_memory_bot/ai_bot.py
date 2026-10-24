@@ -33,7 +33,8 @@ class AIBotMixin:
         action = self.store.action(owner) or ""
         if action.startswith("ai_note:"):
             context = self.ai_state.note_context(owner, action.split(":", 1)[1])
-            self.store.note(owner, context["note_id"])
+            if context:
+                self.store.note(owner, context["note_id"])
         if folder["mode"] == "chat" or reply or (self.store.action(owner) or "").startswith("ai_note:"):
             pending = self.store.one("SELECT count(*) AS n FROM ai_requests WHERE owner=? "
                                      "AND state IN ('queued','running')", (owner,))["n"]
@@ -47,13 +48,16 @@ class AIBotMixin:
         if scoped and action.startswith("ai_note:"):
             conversation = action.split(":", 1)[1]
             context = self.ai_state.note_context(owner, conversation)
-            self.store.note(owner, context["note_id"])
+            if context:
+                self.store.note(owner, context["note_id"])
         if conversation or note["input_mode"] == "chat":
             trigger = "reply" if conversation else "folder"
             if not conversation and not self.ai_state.request(owner, note["id"]):
                 conversation = self.ai_state.active(owner, note["source_folder"])
             self.ai_state.enqueue(owner, note["id"], trigger,
                                   message.get("message_thread_id"), message["message_id"], conversation)
+            if scoped and action.startswith("ai_note:"):
+                self.store.set_action(owner, None)
 
     async def route_ai(self, note, detect=True):
         owner, identity = note["owner"], note["id"]
@@ -194,15 +198,19 @@ class AIBotMixin:
                 raise ValueError("Запрос не найден")
             rows, _ = self.ai_result_controls(owner, identity, request)
             await self.edit_note_buttons(owner, message_id, keys(*rows) if action == "aioptions"
-                                         else keys([key("Опции", f"aioptions:{identity}")]))
-        elif action == "aiask":
-            conversation = self.ai_state.start_note_conversation(owner, identity)
+                                         else keys([key("Продолжить", f"aicontinue:{identity}")]))
+        elif action in {"aiask", "aicontinue"}:
+            if action == "aiask":
+                conversation = self.ai_state.start_note_conversation(owner, identity)
+                prompt = "Отправь инструкцию для ИИ текстом или голосовым. Можно добавить ссылку."
+            else:
+                request = self.ai_state.request(owner, identity)
+                if not request or not request["response"]:
+                    raise ValueError("Дождись ответа ИИ")
+                conversation = request["conversation_id"]
+                prompt = "Продолжаем общаться с ИИ. Отправь ещё одно сообщение."
             self.store.set_action(owner, f"ai_note:{conversation}")
-            response = await self.show_bottom(owner,
-                "Хорошо, отправь инструкцию для ИИ текстом или голосовым. Можно добавить ссылку.\n"
-                "Следующие сообщения будут относиться только к выбранной записи.\n"
-                "Чтобы вернуться к заметкам, нажми «Завершить» или выбери папку.", thread,
-                keys([key("Завершить", f"aiend:{conversation}")]),
+            response = await self.show_bottom(owner, prompt, thread, keys(),
                 screen=f"ai_note:{conversation}", back="root", keep=True)
             self.ai_state.link(owner, response["message_id"], conversation)
         elif action == "aiend":
@@ -280,12 +288,15 @@ class AIBotMixin:
             text = "Ты: " + (note["transcript"] or "") + "\n\n" + text
         note = self.store.note(owner, identity)
         reply_to = note["transcript_message_id"]
+        controls = [[key("Продолжить", f"aicontinue:{identity}")]]
+        if current["state"] == "failed":
+            controls.append([key("Повторить запрос", f"airetry:{identity}")])
         chunks = list(transcript_chunks(text))
         self.ai_state.update_request(owner, identity, delivery="sending")
         try:
             for index, chunk in enumerate(chunks):
                 sent = await self.telegram.text(owner, chunk, thread if force else current["thread_id"],
-                    keys([key("Опции", f"aioptions:{identity}")]) if index == len(chunks) - 1 else None,
+                    keys(*controls) if index == len(chunks) - 1 else None,
                     reply_to=None if force else reply_to)
                 self.ai_state.link(owner, sent["message_id"], current["conversation_id"])
             self.ai_state.update_request(owner, identity, delivery="sent")

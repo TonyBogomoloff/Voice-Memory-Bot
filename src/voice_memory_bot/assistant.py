@@ -173,16 +173,10 @@ class AssistantEngine:
         text = request.get("input_text") if request.get("input_text") is not None else note["transcript"]
         if len(text or "") > 40000:
             raise ValueError("Запрос слишком длинный для ИИ. Раздели его на части до 40000 символов")
-        history, used = [], 0
-        previous = self.state.history(owner, request["conversation_id"], before=request["created_at"], limit=13)
-        for item in reversed(previous):
-            entry = {"user": item["transcript"], "assistant": item["response"],
-                     "receipts": self.receipts(owner, item["note_id"])}
-            size = len(json.dumps(entry, ensure_ascii=False))
-            if used + size > 40000 or len(history) == 12:
-                break
-            used += size
-            history.insert(0, entry)
+        previous = self.state.history(owner, request["conversation_id"], before=request["created_at"], limit=-1)
+        history = [{"user": item["input_text"] if item.get("input_text") is not None else item["transcript"],
+                    "assistant": item["response"], "receipts": self.receipts(owner, item["note_id"])}
+                   for item in previous]
         context = self.state.note_context(owner, request["conversation_id"])
         if context:
             selected_note = self.state.store.note(owner, context["note_id"])

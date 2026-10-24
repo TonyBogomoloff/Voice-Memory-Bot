@@ -214,7 +214,8 @@ class FolderViewMixin:
         for view in self.store.all('SELECT * FROM folder_views'):
             owner = view['owner']
             # Keep the selected source and reply anchors visible throughout the conversation.
-            if (self.store.action(owner) or "").startswith("ai_note:"):
+            if ((self.store.action(owner) or "").startswith("ai_note:")
+                    or (self.bottom_state(owner) or {}).get("screen", "").startswith("ai_note:")):
                 continue
             if owner not in self.config.allowed_user_ids or self.view_locks[owner].locked():
                 continue

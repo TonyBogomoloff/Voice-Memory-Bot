@@ -138,7 +138,7 @@ def test_button_waits_for_instruction_and_keeps_selected_note_context(bot):
         await bot.callback(1, None, note['transcript_message_id'], f"aiask:{note['id']}")
         assert bot.ai_state.claim() is None
         assert bot.store.note(1, note['id']) == original
-        assert 'отправь инструкцию' in bot.telegram.sent[-1][1]['text']
+        assert 'Отправь инструкцию' in bot.telegram.sent[-1][1]['text']
         first = await receive(bot, 'Сделай краткое резюме', 201)
         request = bot.ai_state.claim()
         assert request['note_id'] == first['id']
@@ -148,6 +148,7 @@ def test_button_waits_for_instruction_and_keeps_selected_note_context(bot):
         assert payload['selected_note']['id'] == original['id']
         assert payload['selected_note']['content'] == original['transcript']
         bot.init_ai(bot.assistant)
+        await bot.callback(1, None, 500, f"aicontinue:{first['id']}")
         await receive(bot, 'Теперь переведи на английский', 202)
         continuation = bot.ai_state.claim()
         assert continuation['conversation_id'] == request['conversation_id']
@@ -359,7 +360,7 @@ def test_revoke_write_access_while_model_is_generating(bot):
     asyncio.run(run())
 
 
-def test_ai_queue_rejects_new_input_before_archiving_and_context_is_bounded(bot):
+def test_ai_queue_rejects_new_input_before_archiving_and_keeps_full_context(bot):
     async def run():
         folder = bot.store.create_folder(1, "ИИ", 100)
         bot.ai_state.mode(1, folder["id"], "chat")
@@ -374,7 +375,8 @@ def test_ai_queue_rejects_new_input_before_archiving_and_context_is_bounded(bot)
         bot.ai_state.update_request(1, first["id"], response="Очень длинная история " * 3000)
         second = await receive(bot, "Продолжим", message_id=103, thread=100)
         payload = bot.ai_engine.payload(bot.ai_state.request(1, second["id"]), [])
-        assert payload["history_truncated"] and payload["history"] == []
+        assert not payload["history_truncated"]
+        assert payload["history"][0]["assistant"] == "Очень длинная история " * 3000
         assert len(bot.ai_state.history(1, bot.ai_state.request(1, first["id"])["conversation_id"])) == 1
     asyncio.run(run())
 
@@ -461,14 +463,42 @@ def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
         assert calls[-1][1] == [bot.archive.audio(note)]
         assert bot.ai_state.request(1, request['note_id'])['state'] == 'ready'
         bot.init_ai(bot.assistant)
-        await receive(bot, "Теперь переведи", 202, thread=100)
+        assert bot.store.action(1) is None
+        await bot.callback(1, 100, 900, f"aicontinue:{request['note_id']}")
+        followup = await receive(bot, "Теперь переведи", 202, thread=100)
         await bot.process_ai(bot.ai_state.claim())
         assert calls[-1][1] == [bot.archive.audio(note)]
         assert bot.archive.audio(note).read_bytes() == PHOTO
         assert bot.store.note(1, note['id']) == original
         bot.archive.audio(note).unlink()
+        await bot.callback(1, 100, 901, f"aicontinue:{followup['id']}")
         missing = await receive(bot, "Ещё вопрос", 203, thread=100)
         await bot.process_ai(bot.ai_state.claim())
         assert len(calls) == 2  # Never pretend to analyze a missing image.
         assert bot.ai_state.request(1, missing['id'])['state'] == 'failed'
+    asyncio.run(run())
+
+
+def test_continue_is_one_shot_and_keeps_more_than_twelve_turns(bot):
+    async def run():
+        original = await receive(bot, "Исходная заметка", 400)
+        await bot.callback(1, None, 500, f"aiask:{original['id']}")
+        last = await receive(bot, "Первый вопрос", 401)
+        await bot.process_ai(bot.ai_state.claim())
+        for index in range(14):
+            buttons = bot.telegram.sent[-1][1]['keyboard']['inline_keyboard']
+            assert buttons == [[{'text': 'Продолжить', 'callback_data': f"aicontinue:{last['id']}"}]]
+            await bot.callback(1, None, 500, f"aicontinue:{last['id']}")
+            bot.init_ai(bot.assistant)
+            last = await receive(bot, f"Уточнение {index}", 402 + index)
+            assert bot.store.action(1) is None
+            await bot.process_ai(bot.ai_state.claim())
+        payload = bot.assistant.calls[-1][0]
+        assert len(payload['history']) == 14
+        assert payload['history'][0]['user'] == 'Первый вопрос'
+        assert payload['history'][0]['assistant'] == 'Ответ'
+        assert payload['selected_note']['content'] == 'Исходная заметка'
+        plain = await receive(bot, 'Новая заметка', 500)
+        assert plain['entry_type'] == 'note'
+        assert bot.ai_state.request(1, plain['id']) is None
     asyncio.run(run())
