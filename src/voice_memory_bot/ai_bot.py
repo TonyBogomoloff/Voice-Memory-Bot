@@ -113,6 +113,7 @@ class AIBotMixin:
                                delivery=current["transcript_delivery"],
                                result_message_id=current["transcript_message_id"], result_thread=note["source_thread"])
         self.archive.persist_text(self.store.note(owner, identity), self.store.folder(owner, current["folder_id"]))
+        await self.show_ai_progress(request)
         return True
 
     async def ai_settings(self, owner, thread, edit_id=None):
@@ -317,6 +318,27 @@ class AIBotMixin:
         rows.append([key("← Назад", f"aicollapse:{identity}")])
         return rows, changes
 
+    async def show_ai_progress(self, request):
+        owner, identity = request["owner"], request["note_id"]
+        note = self.store.note(owner, identity)
+        if (request["trigger"] == "miniapp" or note["kind"] != "voice"
+                or request["state"] not in {"queued", "running"}):
+            return
+        # Checkpoint before sending: an ambiguous network failure must not create duplicates.
+        with self.store.db:
+            inserted = self.store.db.execute("INSERT OR IGNORE INTO ai_progress VALUES (?,0)", (identity,)).rowcount
+        if not inserted:
+            return
+        try:
+            sent = await self.telegram.text(owner, "🤖 Обрабатываю команду…", request["thread_id"],
+                                            reply_to=note["transcript_message_id"])
+            with self.store.db:
+                self.store.db.execute("UPDATE ai_progress SET message_id=? WHERE note_id=?",
+                                      (sent["message_id"], identity))
+            self.ai_state.link(owner, sent["message_id"], request["conversation_id"])
+        except ProviderError:
+            log.warning("AI progress delivery unavailable request=%s", identity)
+
     async def _deliver_ai(self, request, force=False, thread=None):
         from .bot import transcript_chunks
         owner, identity = request["owner"], request["note_id"]
@@ -344,12 +366,25 @@ class AIBotMixin:
         if current["state"] == "failed":
             controls.append([key("Повторить запрос", f"airetry:{identity}")])
         chunks = list(transcript_chunks(text))
+        progress = None if force else self.store.one("SELECT message_id FROM ai_progress WHERE note_id=?", (identity,))
         self.ai_state.update_request(owner, identity, delivery="sending")
         try:
             for index, chunk in enumerate(chunks):
-                sent = await self.telegram.text(owner, chunk, thread if force else current["thread_id"],
-                    keys(*controls) if index == len(chunks) - 1 else None,
-                    reply_to=None if force else reply_to)
+                keyboard = keys(*controls) if index == len(chunks) - 1 else None
+                sent = None
+                if index == 0 and progress and progress["message_id"]:
+                    try:
+                        sent = await self.telegram.call("editMessageText", chat_id=owner,
+                            message_id=progress["message_id"], text=chunk, reply_markup=keyboard or keys(),
+                            link_preview_options={"is_disabled": True})
+                    except ProviderError as exc:
+                        if getattr(exc, "reason", None) == "not_modified":
+                            sent = {"message_id": progress["message_id"]}
+                        elif getattr(exc, "reason", None) != "edit_target_missing":
+                            raise
+                if sent is None:
+                    sent = await self.telegram.text(owner, chunk, thread if force else current["thread_id"],
+                        keyboard, reply_to=None if force else reply_to)
                 self.ai_state.link(owner, sent["message_id"], current["conversation_id"])
                 result = self.store.one("SELECT * FROM notes WHERE owner=? AND id=? AND deleted=0",
                                         (owner, current["result_note_id"]))

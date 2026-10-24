@@ -92,10 +92,13 @@ def test_chat_voice_history_reply_new_conversation_and_model_change(bot):
         bot.store.select(1, folder["id"])
         first = await receive(bot, thread=100, voice=True)
         assert first["entry_type"] == "ai" and bot.router.calls == 0 and bot.groq.calls == 1
+        progress = bot.telegram.sent[-1][1]
+        assert progress["thread"] == 100 and progress["reply_to"] == first["transcript_message_id"]
         await bot.process_ai(bot.ai_state.claim())
         old = bot.ai_state.request(1, first["id"])["conversation_id"]
         response_id = bot.telegram.sent[-1][1]
-        assert response_id["thread"] == 100 and response_id["reply_to"] == first["transcript_message_id"]
+        assert bot.telegram.sent[-1][0] == "editMessageText"
+        assert response_id["message_id"] == bot.store.one("SELECT message_id FROM ai_progress")["message_id"]
         reply_id = bot.store.one("SELECT message_id FROM ai_links ORDER BY rowid DESC LIMIT 1")["message_id"]
         bot.ai_state.set_settings(1, model="another-model")
         second = await receive(bot, "Продолжи", 102, thread=100, reply=reply_id)
@@ -449,8 +452,12 @@ def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
                     transcript_sends[-1].get('reply_markup') or {}).get('inline_keyboard')
         request = bot.ai_state.claim()
         await bot.process_ai(request)
-        assert bot.telegram.sent[-1][1]['reply_to'] == instruction['transcript_message_id']
-        assert bot.telegram.sent[-1][1]['keyboard']['inline_keyboard']
+        if voice:
+            assert bot.telegram.sent[-1][0] == 'editMessageText'
+            assert bot.telegram.sent[-1][1]['reply_markup']['inline_keyboard']
+        else:
+            assert bot.telegram.sent[-1][1]['reply_to'] == instruction['transcript_message_id']
+            assert bot.telegram.sent[-1][1]['keyboard']['inline_keyboard']
         before_refresh = len(bot.telegram.sent)
         with bot.store.db:
             bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')

@@ -47,6 +47,9 @@ def migrate_ai(db):
             owner INTEGER NOT NULL, message_id INTEGER NOT NULL, conversation_id TEXT NOT NULL,
             PRIMARY KEY(owner, message_id)
         );
+        CREATE TABLE IF NOT EXISTS ai_progress (
+            note_id TEXT PRIMARY KEY REFERENCES ai_requests(note_id), message_id INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS ai_steps (
             note_id TEXT NOT NULL REFERENCES ai_requests(note_id), step INTEGER NOT NULL,
             command TEXT NOT NULL, result TEXT, PRIMARY KEY(note_id, step)
@@ -206,12 +209,19 @@ class AIStore:
         from .web_store import result_text
         request = self.request(owner, note_id)
         with self.db:
-            if not request["result_note_id"]:
+            if not request["result_note_id"] and not self.command_reply(owner, note_id):
                 result = result_text(self.store, self.store.note(owner, note_id), text)
                 self.db.execute("UPDATE ai_requests SET result_note_id=? WHERE owner=? AND note_id=?",
                                 (result["id"], owner, note_id))
             self.db.execute("UPDATE ai_requests SET response=?,state='ready',error=NULL WHERE owner=? AND note_id=?",
                             (text, owner, note_id))
+
+    def command_reply(self, owner, note_id):
+        """Operational replies stay in the conversation, not in the notes archive."""
+        return any(s["command"]["action"] in {"move_note", "delete_note"} and s["result"]
+                   and (s["result"].get("ok") or s["result"].get("needs_folder_choice")
+                        or s["result"].get("cancelled"))
+                   for s in self.steps(owner, note_id))
 
     def archive_replies(self):
         """Expose old successful replies without replaying AI calls or Telegram sends."""
@@ -220,7 +230,7 @@ class AIStore:
                                   "AND a.response IS NOT NULL AND n.deleted=0 ORDER BY a.created_at")
         from .web_store import result_text
         for request in requests:
-            if not request["response"].strip():
+            if not request["response"].strip() or self.command_reply(request["owner"], request["note_id"]):
                 continue
             with self.db:
                 note = self.store.note(request["owner"], request["note_id"])

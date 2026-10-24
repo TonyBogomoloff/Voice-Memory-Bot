@@ -83,6 +83,8 @@ def test_missing_folder_renders_buttons_and_choice_is_single_use(bot, target):
         assert len(bot.store.folders(1)) == count
         assert bot.ai_note_actions.buttons(1, request) == []
         assert bot.ai_state.request(1, request)["response"] != "Ответ"
+        bot.ai_state.archive_replies()
+        assert bot.ai_state.request(1, request)["result_note_id"] is None
     asyncio.run(run())
 
 
