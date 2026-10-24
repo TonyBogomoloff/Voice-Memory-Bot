@@ -28,7 +28,7 @@ def test_voice_reply_shows_progress_before_model_and_edits_it(bot, failure):
         method, payload = bot.telegram.sent[-1]
         assert method == "editMessageText" and payload["message_id"] == progress
         assert "Обрабатываю" not in payload["text"]
-        assert payload["reply_markup"]["inline_keyboard"]
+        assert bool(payload["reply_markup"]["inline_keyboard"]) is failure
         result = bot.ai_state.request(1, note["id"])
         assert result["delivery"] == "sent"
         assert bool(result["result_note_id"]) is not failure

@@ -79,7 +79,7 @@ class FolderMenuMixin:
             {"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]
         answer = self.ai_state.result_request(note["owner"], note["id"])
         if answer:
-            rows[0][-1] = {"text": "Продолжить", "callback_data": f"aicontinue:{answer['note_id']}"}
+            rows[0].pop()
         return {"inline_keyboard": rows}
 
     def folder_keyboard_pages(self, owner):

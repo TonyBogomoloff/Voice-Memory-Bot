@@ -232,7 +232,7 @@ class AIBotMixin:
                 raise ValueError("Запрос не найден")
             rows, _ = self.ai_result_controls(owner, identity, request)
             await self.edit_note_buttons(owner, message_id, keys(*rows) if action == "aioptions"
-                                         else keys([key("Продолжить", f"aicontinue:{identity}")]))
+                                         else keys(*self.ai_note_actions.buttons(owner, identity)))
         elif action in {"aiask", "aicontinue"}:
             if action == "aiask":
                 conversation = self.ai_state.start_note_conversation(owner, identity)
@@ -363,7 +363,8 @@ class AIBotMixin:
         context = self.ai_state.note_context(owner, current["conversation_id"])
         context_deleted = context and not self.store.one(
             "SELECT id FROM notes WHERE owner=? AND id=? AND deleted=0", (owner, context["note_id"]))
-        controls.append([key("Папки", "folders") if context_deleted else key("Продолжить", f"aicontinue:{identity}")])
+        if context_deleted:
+            controls.append([key("Папки", "folders")])
         if current["state"] == "failed":
             controls.append([key("Повторить запрос", f"airetry:{identity}")])
         chunks = list(transcript_chunks(text))

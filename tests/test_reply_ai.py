@@ -1,8 +1,8 @@
 import asyncio
 
 import pytest
-
-from test_ai import bot, receive, ready_note, step  # noqa: F401
+from test_ai import bot as bot
+from test_ai import ready_note, receive, step
 
 
 @pytest.mark.parametrize('voice', [False, True])
@@ -80,4 +80,28 @@ def test_reply_capacity_applies_to_photo(bot):
             'photo': [{'file_id': 'photo', 'file_size': 100}]}})
         assert bot.store.one('SELECT id FROM notes WHERE message_id=102') is None
         assert 'Очередь ИИ заполнена' in bot.telegram.sent[-1][1]['text']
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("chunk_index", [0, -1])
+@pytest.mark.parametrize("voice", [False, True])
+def test_reply_to_long_ai_answer_keeps_history(bot, chunk_index, voice):
+    async def run():
+        original = ready_note(bot, "Исходная мысль")
+        bot.messages.record(original, 1, None, "source")
+        first = await receive(bot, "Объясни подробнее", reply=1)
+        answer = "Подробный ответ. " * 600
+        bot.assistant.responses = [step(message=answer)]
+        await bot.process_ai(bot.ai_state.claim())
+        request = bot.ai_state.request(1, first['id'])
+        links = bot.store.all("SELECT message_id FROM ai_links WHERE conversation_id=? ORDER BY rowid",
+                              (request['conversation_id'],))
+        assert len(links) > 1
+        followup = await receive(bot, "Уточнение", 102, reply=links[chunk_index]['message_id'], voice=voice)
+        await bot.process_ai(bot.ai_state.claim())
+        payload = bot.assistant.calls[-1][0]
+        assert bot.ai_state.request(1, followup['id'])['conversation_id'] == request['conversation_id']
+        assert payload['history'][0]['user'] == first['transcript']
+        assert payload['history'][0]['assistant'] == answer
+        assert payload['history'][0]['reply_context'] == original['transcript']
     asyncio.run(run())

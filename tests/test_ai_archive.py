@@ -103,6 +103,7 @@ def test_reply_and_result_note_commit_atomically(bot, monkeypatch):
 
 def test_saved_reply_survives_folder_switch_and_can_be_moved_and_continued(bot):
     async def run():
+        bot.store.set_message_buttons(1, True)
         source = ready_note(bot, "Вопрос в первой папке")
         bot.ai_state.enqueue(1, source["id"], "button")
         bot.assistant.responses = [step(message="Сохранённый ответ")]
@@ -117,7 +118,8 @@ def test_saved_reply_survives_folder_switch_and_can_be_moved_and_continued(bot):
                    if method == "sendMessage" and p.get("text") == "🤖 Сохранённый ответ"]
         assert len(replies) == 1
         buttons = [b["callback_data"] for row in replies[0]["keyboard"]["inline_keyboard"] for b in row]
-        assert f"pick:{answer['id']}:0" in buttons and f"aicontinue:{source['id']}" in buttons
+        assert f"pick:{answer['id']}:0" in buttons
+        assert not any(button.startswith("aicontinue:") for button in buttons)
         ids = bot.messages.in_thread(1, answer["id"], None)
         assert bot.ai_state.reply_conversation(1, ids[-1]) == request["conversation_id"]
         await bot.show_note(1, answer["id"], None)

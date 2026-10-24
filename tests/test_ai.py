@@ -455,10 +455,10 @@ def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
         await bot.process_ai(request)
         if voice:
             assert bot.telegram.sent[-1][0] == 'editMessageText'
-            assert bot.telegram.sent[-1][1]['reply_markup']['inline_keyboard']
+            assert bot.telegram.sent[-1][1]['reply_markup']['inline_keyboard'] == []
         else:
             assert bot.telegram.sent[-1][1]['reply_to'] == instruction['transcript_message_id']
-            assert bot.telegram.sent[-1][1]['keyboard']['inline_keyboard']
+            assert bot.telegram.sent[-1][1]['keyboard']['inline_keyboard'] == []
         before_refresh = len(bot.telegram.sent)
         with bot.store.db:
             bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')
@@ -489,18 +489,20 @@ def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
     asyncio.run(run())
 
 
-def test_continue_is_one_shot_and_keeps_more_than_twelve_turns(bot):
+def test_reply_continuation_keeps_more_than_twelve_turns(bot):
     async def run():
         original = await receive(bot, "Исходная заметка", 400)
         await bot.callback(1, None, 500, f"aiask:{original['id']}")
-        last = await receive(bot, "Первый вопрос", 401)
+        await receive(bot, "Первый вопрос", 401)
         await bot.process_ai(bot.ai_state.claim())
         for index in range(14):
-            buttons = bot.telegram.sent[-1][1]['keyboard']['inline_keyboard']
-            assert buttons == [[{'text': 'Продолжить', 'callback_data': f"aicontinue:{last['id']}"}]]
-            await bot.callback(1, None, 500, f"aicontinue:{last['id']}")
+            sent = bot.telegram.sent[-1][1]
+            keyboard = sent.get('reply_markup') or sent.get('keyboard') or {}
+            assert not any(b['callback_data'].startswith('aicontinue:')
+                           for row in keyboard.get('inline_keyboard', []) for b in row)
+            reply_id = bot.store.one("SELECT message_id FROM ai_links ORDER BY rowid DESC LIMIT 1")["message_id"]
             bot.init_ai(bot.assistant)
-            last = await receive(bot, f"Уточнение {index}", 402 + index)
+            await receive(bot, f"Уточнение {index}", 402 + index, reply=reply_id)
             assert bot.store.action(1) is None
             await bot.process_ai(bot.ai_state.claim())
         payload = bot.assistant.calls[-1][0]
