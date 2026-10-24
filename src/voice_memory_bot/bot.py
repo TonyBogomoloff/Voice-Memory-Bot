@@ -342,8 +342,9 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                         await self.deliver_transcript(note)
                         return
                     status = "Конвертирую в текст…" if note["file_id"] and note['kind'] not in {"file", "video"} else "Сохраняю…"
-                    response = await self.telegram.text(owner, status, thread,
-                        reply_to=note["message_id"] if thread is None else None)
+                    # Editing this status preserves its reply linkage in Telegram.
+                    # Keep it standalone from the start, including outside topics.
+                    response = await self.telegram.text(owner, status, thread)
                     self.store.update_note(owner, note["id"], status_message_id=response["message_id"])
                     note = self.adopt_source_topic(note, response)
                     if note['kind'] not in {'file', 'video'}:
@@ -1045,8 +1046,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
         # if Telegram accepts the edit but its response is lost or the process exits.
         self.store.update_note(owner, identity, transcript_delivery="sending", status_message_id=None)
         try:
-            response, _ = await self.send_transcript(note, note["source_thread"], source=True, edit_id=edit_id,
-                reply_to=note["message_id"] if note["source_thread"] is None and note["kind"] != "text" else None)
+            response, _ = await self.send_transcript(note, note["source_thread"], source=True, edit_id=edit_id)
             self.store.update_note(owner, identity, transcript_delivery="sent",
                                    transcript_message_id=response["message_id"])
         except ProviderError as exc:
@@ -1076,8 +1076,7 @@ class Bot(FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIB
                 await self.clear_status(note)
                 text = "Не удалось конвертировать запись в текст. Попробуй ещё раз."
                 keys = keyboard([button("Повторить", f"retry:{identity}")])
-                response = await self.telegram.text(owner, text, note["source_thread"], keys,
-                    reply_to=note["message_id"] if note["source_thread"] is None else None)
+                response = await self.telegram.text(owner, text, note["source_thread"], keys)
                 note = self.adopt_source_topic(note, response)
                 self.store.update_note(owner, identity, delivery="sent", result_message_id=response["message_id"],
                                        result_thread=note["source_thread"])

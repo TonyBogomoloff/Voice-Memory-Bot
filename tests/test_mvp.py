@@ -306,7 +306,8 @@ async def receive_voice(bot, message_id=10, thread=100):
         "voice": {"file_id": "voice-id", "file_size": 32044, "duration": 1}}})
 
 
-def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_path, store):
+@pytest.mark.parametrize("thread", [None, 100])
+def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_path, store, thread):
     async def run():
         game = store.create_folder(1, "Игра", thread=100)
         store.select(1, game["id"])
@@ -314,7 +315,7 @@ def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_pat
         async def unused_router(*args):
             raise AssertionError("A folder classifier must not run for an ordinary note")
         bot.router.classify = unused_router
-        await receive_voice(bot)
+        await receive_voice(bot, thread=thread)
         status_id = store.notes(1)[0]["status_message_id"]
         await bot.process(store.claim_note())
         saved = store.notes(1)[0]
@@ -322,6 +323,8 @@ def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_pat
         assert saved["state"] == "ready" and saved["delivery"] == "sent"
         assert saved["status_message_id"] is None
         assert [m for m, _ in bot.telegram.sent] == ["sendMessage", "editMessageText"]
+        # Telegram preserves reply linkage when editing the status into a transcript.
+        assert bot.telegram.sent[0][1].get("reply_to") is None
         payload = bot.telegram.sent[-1][1]
         assert payload["text"] == saved["transcript"]
         assert payload["message_id"] == status_id
@@ -329,7 +332,8 @@ def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_pat
         assert payload["reply_markup"]["inline_keyboard"][0][-1]["text"] == "Опции"
     asyncio.run(run())
 
-def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store):
+@pytest.mark.parametrize("thread", [None, 100])
+def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store, thread):
     async def run():
         store.create_folder(1, "Игра", thread=100)
         bot = make_bot(tmp_path, store)
@@ -337,13 +341,13 @@ def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store):
         async def transcribe(_):
             return raw
         bot.groq.transcribe = transcribe
-        await receive_voice(bot)
+        await receive_voice(bot, thread=thread)
         await bot.process(store.claim_note())
         messages = [payload for method, payload in bot.telegram.sent
                     if method in {"sendMessage", "editMessageText"} and payload["text"] != "Конвертирую в текст…"]
         assert len(messages) > 1 and "".join(p["text"] for p in messages) == raw
         assert all(len(p["text"].encode("utf-16-le")) <= 7800 for p in messages)
-        assert all(p.get("reply_to") is None for p in messages)
+        assert all(p.get("reply_to") is None for m, p in bot.telegram.sent if m == "sendMessage")
         assert not any(m == "deleteMessage" for m, _ in bot.telegram.sent)
         assert all(p.get("keyboard", p.get("reply_markup")) is None for p in messages[:-1])
         assert messages[-1]["keyboard"]["inline_keyboard"][0][-1]["text"] == "Опции"
@@ -591,3 +595,28 @@ def test_config_reads_only_named_bot_from_shared_secrets(tmp_path):
     app.write_text(json.dumps({"allowed_user_ids": []}))
     with pytest.raises(ValueError, match="allowed_user_ids"):
         Config.load(app, secrets)
+
+
+@pytest.mark.parametrize("fallback", ["missing_status", "edit_refused"])
+def test_voice_transcript_fallback_is_standalone_with_options(tmp_path, store, fallback):
+    async def run():
+        bot = make_bot(tmp_path, store)
+        await receive_voice(bot, thread=None)
+        note = store.notes(1)[0]
+        if fallback == 'missing_status':
+            store.update_note(1, note['id'], status_message_id=None)
+        else:
+            original_call = bot.telegram.call
+
+            async def refuse_edit(method, **payload):
+                if method == 'editMessageText':
+                    raise ProviderError('telegram_400')
+                return await original_call(method, **payload)
+
+            bot.telegram.call = refuse_edit
+        await bot.process(store.claim_note())
+        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
+        assert all(p.get('reply_to') is None for p in sent)
+        assert sent[-1]['text'] == store.note(1, note['id'])['transcript']
+        assert sent[-1]['keyboard']['inline_keyboard'][0][0]['text'] == 'Опции'
+    asyncio.run(run())

@@ -50,7 +50,7 @@ def test_old_topic_metadata_never_imports_a_new_folder(tmp_path, store):
 
 
 @pytest.mark.parametrize("recover_at", ["status", "transcript", "never"])
-def test_missing_topic_replies_to_source_and_uses_only_confirmed_topic(tmp_path, store, recover_at):
+def test_missing_topic_sends_standalone_and_uses_only_confirmed_topic(tmp_path, store, recover_at):
     async def run():
         store.create_folder(1, "Test1", 100)
         other = store.create_folder(1, "Test2", 200)
@@ -73,7 +73,7 @@ def test_missing_topic_replies_to_source_and_uses_only_confirmed_topic(tmp_path,
         assert note["folder_id"] == other["id"]
         assert note["source_thread"] == note["result_thread"] == (None if recover_at == "never" else 100)
         sends = [p for m, p in bot.telegram.sent if m == "sendMessage"]
-        assert len(sends) == 1 and sends[0]["reply_to"] == 10
+        assert len(sends) == 1 and sends[0]["reply_to"] is None
         edits = [p for m, p in bot.telegram.sent if m == "editMessageText"]
         assert len(edits) == 1 and edits[0]["message_id"] == 1001
         assert not any(m == "deleteMessage" for m, _ in bot.telegram.sent)
