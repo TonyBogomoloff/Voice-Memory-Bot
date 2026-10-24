@@ -329,7 +329,7 @@ def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_pat
         assert payload["text"] == saved["transcript"]
         assert payload["message_id"] == status_id
         assert saved["transcript_message_id"] == payload["message_id"]
-        assert payload["reply_markup"]["inline_keyboard"][0][-1]["text"] == "Опции"
+        assert payload["reply_markup"]["inline_keyboard"][0][-1]["text"] == "ИИ"
     asyncio.run(run())
 
 @pytest.mark.parametrize("thread", [None, 100])
@@ -350,7 +350,7 @@ def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store, thre
         assert all(p.get("reply_to") is None for m, p in bot.telegram.sent if m == "sendMessage")
         assert not any(m == "deleteMessage" for m, _ in bot.telegram.sent)
         assert all(p.get("keyboard", p.get("reply_markup")) is None for p in messages[:-1])
-        assert messages[-1]["keyboard"]["inline_keyboard"][0][-1]["text"] == "Опции"
+        assert messages[-1]["keyboard"]["inline_keyboard"][0][-1]["text"] == "ИИ"
         assert all(method != "sendDocument" for method, _ in bot.telegram.sent)
     asyncio.run(run())
 
@@ -368,9 +368,9 @@ def test_voice_options_move_changes_archive_and_removes_source(tmp_path, store):
         await bot.callback(1, 100, message_id, f"options:{note['id']}")
         keys = bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
         assert keys == [
-            [{"text": "Переместить", "callback_data": f"pick:{note['id']}:0"}],
-            [{"text": "Удалить", "callback_data": f"delete:{note['id']}"}],
-            [{"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]
+            [{"text": "Переместить", "callback_data": f"pick:{note['id']}:0"},
+            {"text": "Удалить", "callback_data": f"delete:{note['id']}"},
+            {"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]
         await bot.callback(1, 100, message_id, next(b["callback_data"] for row in keys for b in row
                                                      if b["callback_data"].startswith("pick:")))
         keys = bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
@@ -627,5 +627,5 @@ def test_voice_transcript_fallback_is_standalone_with_options(tmp_path, store, f
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
         assert all(p.get('reply_to') is None for p in sent)
         assert sent[-1]['text'] == store.note(1, note['id'])['transcript']
-        assert sent[-1]['keyboard']['inline_keyboard'][0][0]['text'] == 'Опции'
+        assert sent[-1]['keyboard']['inline_keyboard'][0][0]['text'] == 'Переместить'
     asyncio.run(run())

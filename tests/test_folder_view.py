@@ -242,8 +242,7 @@ def test_switch_has_all_records_and_no_persistent_header_or_menu(bot):
         assert {p['text'] for p in sent[1:]} == {f'Запись {i}' for i in range(10)}
         for p in sent[1:]:
             rows = p['keyboard']['inline_keyboard']
-            assert len(rows) == len(rows[0]) == 1
-            assert rows[0][0]['text'] == 'Опции'
+            assert [[b['text'] for b in row] for row in rows] == [['Переместить', 'Удалить', 'ИИ']]
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert previous <= deleted
         await bot.show_main_menu(1)

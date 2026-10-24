@@ -14,7 +14,7 @@ def test_text_copy_is_immediate_standalone_and_deletes_original_after_all_chunks
         sent = [p for m, p in bot.telegram.sent if m == "sendMessage"]
         assert ''.join(p['text'] for p in sent) == text
         assert all(p['reply_to'] is None for p in sent)
-        assert sent[-1]['keyboard']['inline_keyboard'][0][0]['text'] == 'Опции'
+        assert [[b['text'] for b in row] for row in sent[-1]['keyboard']['inline_keyboard']] == [['Переместить', 'Удалить', 'ИИ']]
         assert bot.telegram.sent[-1] == ('deleteMessage', {'chat_id': 1, 'message_id': 5001})
         note = bot.store.notes(1)[0]
         assert note['transcript'] == text and note['transcript_delivery'] == 'sent'

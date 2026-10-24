@@ -50,7 +50,9 @@ def test_photo_controls_archive_and_move_delete_source_messages(tmp_path, store,
         controls = bot.telegram.sent[1][1]
         assert controls["reply_to"] == store.note(1, note["id"])["result_message_id"]
         assert controls["keyboard"]["inline_keyboard"] == [[{
-            "text": "Опции", "callback_data": f"options:{note['id']}"}]]
+            "text": "Переместить", "callback_data": f"pick:{note['id']}:0"},
+            {"text": "Удалить", "callback_data": f"delete:{note['id']}"},
+            {"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]
         assert bot.telegram.sent[2] == ("deleteMessage", {"chat_id": 1, "message_id": 10})
         note = store.note(1, note["id"])
         assert note["state"] == "ready" and note["delivery"] == "sent"
@@ -105,7 +107,7 @@ def test_photo_failed_download_can_retry_without_losing_controls(tmp_path, store
         assert saved["state"] == "ready" and saved["delivery"] == "sent"
         assert saved["status_message_id"] is None
         assert bot.messages.in_thread(1, note["id"], 100) == [saved["result_message_id"], saved["transcript_message_id"]]
-        assert bot.telegram.sent[-2][1]["keyboard"]["inline_keyboard"][0][-1]["text"] == "Опции"
+        assert bot.telegram.sent[-2][1]["keyboard"]["inline_keyboard"][0][-1]["text"] == "ИИ"
     asyncio.run(run())
 
 
