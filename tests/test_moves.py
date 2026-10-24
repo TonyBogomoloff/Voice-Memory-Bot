@@ -95,7 +95,7 @@ def test_move_picker_filters_source_before_pagination(tmp_path, store):
         async def show(*args, **kwargs):
             captured.append(args[3])
 
-        bot.show_bottom = show
+        bot._show = show
         seen = set()
         for page in (0, 1):
             await bot.show_folders(1, note_id=note["id"], page=page)

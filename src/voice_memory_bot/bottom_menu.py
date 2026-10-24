@@ -171,7 +171,10 @@ class BottomMenuMixin:
                                       (json.dumps(state, ensure_ascii=False), owner))
         result = await self.callback(owner, thread, None, action)
         if isinstance(result, str) and result:
-            await self.show_bottom(owner, result, thread, screen="notice", back="root", keep=True)
+            if action.startswith(("place:", "move:")):
+                await self._show(owner, result, thread)
+            else:
+                await self.show_bottom(owner, result, thread, screen="notice", back="root", keep=True)
         return True
 
     async def open_bottom_screen(self, owner, thread, screen):

@@ -471,7 +471,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         await self.show_notes(owner, thread, folder["id"], notice=f"✅ Папка «{folder['name']}» создана.")
 
     async def show_folders(self, owner, thread=None, edit_id=None, page=0, note_id=None):
-        self.leave_folder_options(owner)
+        if not note_id:
+            self.leave_folder_options(owner)
         if not self.store.folders(owner):
             return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
@@ -494,6 +495,10 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             nav.append(button("Папки ➡️", f"{mode}:{page + 1}"))
         if nav:
             rows.append(nav)
+        if note_id:
+            rows.append([button("Отмена", f"options:{note_id}")])
+            return await self._show(owner, "Куда переместить запись?", thread,
+                                    keyboard(*rows), edit_id)
         rows.append([button("＋ Новая папка", "create"), button("🔎 Поиск", "search")])
         rows.append([button("⌂ Меню", "home")])
         name = self.store.folder(owner, active)["name"]
@@ -716,20 +721,22 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             return await self.telegram.document(owner, path, thread,
                                                 "Исходный файл без изменений")
         if action == "delete":
-            return await self.show_bottom(owner,
+            return await self._show(owner,
                 "Удалить запись и исходный файл из архива бота?\nИсходное сообщение и расшифровка также будут удалены из чата.", thread,
-                keyboard([button("🗑 Да, удалить запись", f"confirmdelete:{identity}")]),
-                screen=f"delete:{identity}", back="root", keep=True)
+                keyboard([button("🗑 Да, удалить запись", f"confirmdelete:{identity}"),
+                          button("Отмена", f"canceldelete:{identity}")]))
+        if action == "canceldelete":
+            return await self.remove_menu_message(owner, message_id)
         if action == "confirmdelete":
             if note["state"] == "processing" or self.note_locks[identity].locked():
                 raise ValueError("Дождись завершения обработки, затем удали запись")
             self.store.delete(owner, identity)
             self.archive.delete(note)
             remaining = await self.delete_note_messages(note)
-            self.folder_keyboards.pop(owner, None)
             text = ("Запись удалена из архива и чата." if not remaining else
                     "Запись удалена из архива, но часть сообщений не удалось удалить из Telegram.")
-            return await self.show(owner, text, thread, HOME, message_id)
+            await self.remove_menu_message(owner, message_id)
+            return await self._show(owner, text, thread)
 
     async def delete_note_messages(self, note):
         owner, identity = note["owner"], note["id"]
