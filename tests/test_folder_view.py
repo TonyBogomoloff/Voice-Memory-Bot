@@ -29,7 +29,7 @@ def test_switch_renders_only_selected_folder_and_preserves_archive(bot, tmp_path
         bot.cleanup.remember(1, 3001, 99)
         await bot.show_notes(1, None, work)
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
-        assert {1001, 1002} <= deleted and not {2001, 3001} & deleted
+        assert {1001, 1002, 3001} <= deleted and 2001 not in deleted
         texts = [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage']
         assert 'Текст второй папки' in texts and 'Текст первой папки' not in texts
         bot.telegram.sent.clear()
@@ -190,4 +190,27 @@ def test_settings_without_prior_folder_visit_and_return_to_folder(bot):
         await bot.settings_menu(1, None)
         bot.cleanup.begin(1)
         assert bot.store.all('SELECT * FROM folder_views WHERE owner=1') == []
+    asyncio.run(run())
+
+
+def test_old_topic_cleanup_does_not_block_switch_and_keyboard_arrives_before_clear(bot):
+    async def run():
+        inbox = bot.store.ensure_user(1)
+        work = bot.store.create_folder(1, 'Работа')['id']
+        saved(bot, inbox, 'Первая', 1001)
+        saved(bot, work, 'Вторая', 1002)
+        bot.cleanup.remember(1, 3001, 99)
+        with bot.store.db:
+            bot.store.db.execute('INSERT INTO deletion_jobs VALUES (1,0)')
+            bot.store.db.execute("INSERT INTO deletion_targets VALUES (1,'topic',99,NULL)")
+        await bot.show_notes(1, None, work)
+        assert bot.telegram.sent[0][0] == 'sendMessage'
+        assert '✓ 📌 Работа' in str(bot.telegram.sent[0])
+        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        assert {1001, 1002, 3001} <= deleted
+        assert 1 not in deleted
+        assert any(p.get('text') == 'Вторая' for _, p in bot.telegram.sent)
+        assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
+        await bot.settings_menu(1, None)
+        assert bot.store.one('SELECT screen FROM folder_views WHERE owner=1')['screen']
     asyncio.run(run())

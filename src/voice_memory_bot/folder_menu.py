@@ -74,6 +74,8 @@ class FolderMenuMixin:
             notice="Эта кнопка устарела. Выбери папку внизу или открой «Все папки».")
 
     async def refresh_folder_keyboard(self, owner, thread=None, *, force=False, notice=None):
+        if not self.store.folders(owner):
+            return await self.ask_first_folder(owner, thread)
         folder = self.store.folder(owner, self.store.current_folder(owner))
         keys = self.folder_keyboard(owner)
         signature = (folder["id"], folder["name"], folder["mode"], keys)
@@ -85,10 +87,13 @@ class FolderMenuMixin:
             text = f"🎙 Сейчас сохраняю в «{folder['name']}». Пришли голосовое, текст или фото."
         if notice:
             text = notice + "\n\n" + text
-        await self.telegram.text(owner, text, thread, keys)
+        response = await self.view_send(self.telegram.text, owner, text, thread, keys)
         self.folder_keyboards[owner] = signature
+        return response
 
     async def show_home(self, owner, thread=None):
+        if not self.store.folders(owner):
+            return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
         hint = "Переключай папки внизу. Стрелки листают страницы, действия — в «Меню»."
@@ -99,6 +104,8 @@ class FolderMenuMixin:
 
     async def show_main_menu(self, owner, thread=None, edit_id=None):
         from .bot import HOME
+        if not self.store.folders(owner):
+            return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
         await self.refresh_folder_keyboard(owner, thread)
@@ -115,15 +122,13 @@ class FolderMenuMixin:
             await self.show_notes(owner, thread, identity, edit_id=message_id)
         elif action == "dropfolder":
             folder = self.store.folder(owner, identity)
-            if folder["is_inbox"]:
-                raise ValueError("Папку «Входящие» удалить нельзя")
             count = self.store.one("SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0",
                                    (owner, identity))["n"]
             token = new_id()
             self.folder_delete_confirmations[owner] = (token, identity, folder["name"], time.monotonic() + 600)
             await self.show(owner, f"Удалить папку «{folder['name']}»?\n"
-                            f"Все записи ({count}) и история ИИ сохранятся во «Входящих».\n"
-                            "Исходные файлы и сообщения Telegram останутся.", thread,
+                            f"Все записи ({count}) и история ИИ останутся в архиве без папки.\n"
+                            "Исходные файлы сохранятся; записи доступны через поиск и экспорт.", thread,
                             keyboard([button("Удалить папку", f"confirmdrop:{token}")],
                                      [button("Отмена", f"canceldrop:{token}")]), message_id)
         elif action in {"confirmdrop", "canceldrop"}:
@@ -140,11 +145,16 @@ class FolderMenuMixin:
                 raise ValueError("Название папки изменилось. Открой её заново перед удалением")
             if self.deletion_busy(owner):
                 raise ValueError("Дождись завершения обработки или экспорта, затем удали папку")
-            self.store.delete_folder(owner, folder_id)
+            selected = self.store.delete_folder(owner, folder_id)
             self.folder_delete_confirmations.pop(owner, None)
-            await self.refresh_folder_keyboard(owner, thread)
-            await self.show(owner, f"Папка «{name}» удалена. Записи сохранены во «Входящих».", thread,
-                            keyboard([button("📁 Папки", "folders"), button("⌂ Меню", "home")]), message_id)
+            if selected:
+                await self.show_notes(owner, thread, selected,
+                                      notice=f"Папка «{name}» удалена. Записи доступны через поиск и экспорт.")
+            else:
+                await self.clear_folder_view(owner, thread, all_threads=True)
+                with self.store.db:
+                    self.store.db.execute('DELETE FROM folder_views WHERE owner=?', (owner,))
+                await self.ask_first_folder(owner, thread)
         else:
             return False
         return True

@@ -30,10 +30,9 @@ class FolderViewMixin:
             self.store.db.execute("ALTER TABLE folder_views ADD COLUMN screen TEXT")
 
     def remember_screen(self, owner, thread, text, keys):
-        if (owner in self.view_rendering or owner in self.deleting_owners or self.cleanup.job(owner)
-                or not self.store.one('SELECT 1 FROM folders WHERE owner=?', (owner,))):
+        if (owner in self.view_rendering or owner in self.deleting_owners or (self.cleanup.job(owner) or {}).get("files_pending")):
             return
-        identity = self.store.current_folder(owner)
+        identity = self.store.current_folder(owner) or ''
         screen = json.dumps({"text": text, "keys": keys}, ensure_ascii=False)
         with self.store.db:
             self.store.db.execute("INSERT INTO folder_views(owner,folder_id,thread_id,page,dirty,screen) "
@@ -49,10 +48,14 @@ class FolderViewMixin:
             self.store.one("SELECT 1 FROM ai_requests WHERE owner=? AND "
                            "(state IN ('queued','running') OR delivery='pending') LIMIT 1", (owner,)))
 
-    async def show_notes(self, owner, thread, identity, page=0, edit_id=None):
+    async def show_notes(self, owner, thread, identity, page=0, edit_id=None, notice=None):
         self.store.folder(owner, identity)
         self.store.set_action(owner, None)
         self.store.select(owner, identity)
+        for index, folders in enumerate(self.folder_keyboard_pages(owner)):
+            if any(folder['id'] == identity for folder in folders):
+                self.folder_pages[owner] = index
+                break
         with self.store.db:
             self.store.db.execute("INSERT INTO folder_views(owner,folder_id,thread_id,page,dirty) VALUES (?,?,?,?,1) ON CONFLICT(owner) "
                                   "DO UPDATE SET folder_id=excluded.folder_id,thread_id=excluded.thread_id,"
@@ -60,7 +63,7 @@ class FolderViewMixin:
         if self.view_busy(owner):
             return await self.refresh_folder_keyboard(owner, thread, force=True,
                 notice="Папка выбрана. Обновлю сообщения, когда завершу текущую обработку.")
-        await self.render_folder_view(owner)
+        await self.render_folder_view(owner, notice=notice)
 
     async def view_send(self, method, *args, **kwargs):
         for attempt in range(4):
@@ -72,7 +75,7 @@ class FolderViewMixin:
                     raise
                 await asyncio.sleep(max(1, min(60, getattr(exc, "retry_after", 5))))
 
-    async def clear_folder_view(self, owner, thread, all_threads=False):
+    async def clear_folder_view(self, owner, thread, all_threads=False, keep_ids=()):
         # Daily renewal covers every known message of this owner, never guessed IDs or other chats.
         if all_threads:
             # Recover legacy receipts too; never enumerate adjacent Telegram IDs.
@@ -88,6 +91,8 @@ class FolderViewMixin:
         leftovers = 0
         for row in rows:
             mid = row['message_id']
+            if mid in keep_ids:
+                continue
             if self.store.one("SELECT 1 FROM notes WHERE owner=? AND message_id=? AND deleted=0 "
                               "AND file_id IS NOT NULL AND audio_bytes=0", (owner, mid)):
                 continue
@@ -109,13 +114,15 @@ class FolderViewMixin:
                 self.store.db.execute('UPDATE note_messages SET deleted=1 WHERE owner=? AND message_id=?', (owner, mid))
         return leftovers
 
-    async def render_folder_view(self, owner, *, restore_screen=False):
+    async def render_folder_view(self, owner, *, restore_screen=False, notice=None):
         from .bot import transcript_chunks
         view = self.store.one('SELECT * FROM folder_views WHERE owner=?', (owner,))
-        if not view or self.cleanup.job(owner) or owner in self.deleting_owners:
+        if not view or (self.cleanup.job(owner) or {}).get('files_pending') or owner in self.deleting_owners:
             return
         # Folder deletion and Mini App selection may have changed the active folder.
         identity = self.store.current_folder(owner)
+        if identity is None:
+            return await self.render_empty_view(owner, view)
         page = view['page'] if identity == view['folder_id'] else 0
         thread = view['thread_id']
         count = self.store.one('SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0',
@@ -127,11 +134,12 @@ class FolderViewMixin:
         self.view_rendering.add(owner)
         token = silent_delivery.set(True)
         try:
-            leftovers = await self.clear_folder_view(owner, thread, all_threads=restore_screen)
+            self.folder_keyboards.pop(owner, None)
+            panel = await self.refresh_folder_keyboard(owner, thread, notice=notice)
+            leftovers = await self.clear_folder_view(owner, thread, all_threads=True,
+                                                      keep_ids=(panel['message_id'],))
             if restore_screen and view['screen']:
                 screen = json.loads(view['screen'])
-                self.folder_keyboards.pop(owner, None)
-                await self.refresh_folder_keyboard(owner, thread)
                 await self.view_send(self.telegram.text, owner, screen['text'], thread, screen['keys'])
                 with self.store.db:
                     self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
@@ -152,7 +160,6 @@ class FolderViewMixin:
                     for chunk in transcript_chunks('🤖 ' + request['response']):
                         response = await self.view_send(self.telegram.text, owner, chunk, thread, self.note_controls(note, thread))
                         self.ai_state.link(owner, response['message_id'], request['conversation_id'])
-            self.folder_keyboards.pop(owner, None)
             await self.show_notes_menu(owner, thread, identity, page)
             if leftovers:
                 await self.telegram.text(owner,
@@ -164,13 +171,28 @@ class FolderViewMixin:
             silent_delivery.reset(token)
             self.view_rendering.discard(owner)
 
+    async def render_empty_view(self, owner, view):
+        self.view_rendering.add(owner)
+        token = silent_delivery.set(True)
+        try:
+            screen = json.loads(view['screen']) if view['screen'] else {
+                'text': 'Как назовём нашу первую папку? Напиши название или пришли голосовое.',
+                'keys': {'remove_keyboard': True}}
+            await self.clear_folder_view(owner, view['thread_id'], all_threads=True)
+            await self.view_send(self.telegram.text, owner, screen['text'], view['thread_id'], screen['keys'])
+            with self.store.db:
+                self.store.db.execute('UPDATE folder_views SET dirty=0,folder_id=? WHERE owner=?', ('', owner))
+        finally:
+            silent_delivery.reset(token)
+            self.view_rendering.discard(owner)
+
     async def refresh_due_views(self, now=None):
         now = time.time() if now is None else now
         for view in self.store.all('SELECT * FROM folder_views'):
             owner = view['owner']
             if owner not in self.config.allowed_user_ids or self.view_locks[owner].locked():
                 continue
-            if not self.store.one('SELECT 1 FROM folders WHERE owner=?', (owner,)):
+            if not self.store.folders(owner) and not view['screen']:
                 # Delete All must never resurrect an empty folder or send a new view.
                 with self.store.db:
                     self.store.db.execute('DELETE FROM folder_views WHERE owner=?', (owner,))
@@ -181,7 +203,7 @@ class FolderViewMixin:
                                     "n.message_id=telegram_messages.message_id AND n.deleted=0 "
                                     "AND n.file_id IS NOT NULL AND n.audio_bytes=0)",
                                     (owner,))['age']
-            changed = not view['screen'] and self.store.current_folder(owner) != view['folder_id']
+            changed = not view['screen'] and (self.store.current_folder(owner) or '') != view['folder_id']
             if not view['dirty'] and not changed and (oldest is None or now - oldest < RENEW_AFTER):
                 continue
             async with self.view_locks[owner]:

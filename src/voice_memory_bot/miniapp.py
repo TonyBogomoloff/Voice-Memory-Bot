@@ -187,14 +187,14 @@ class MiniApp:
         owner = validate_init_data(body.get("init_data"), self.config.bot_token, self.config.allowed_user_ids)
         self.available(owner)
         self.rate(owner)
-        self.store.ensure_user(owner)
+        self.store.register_user(owner)
         return web.json_response({"token": self.sign("session", owner),
             "max_file_bytes": self.config.limits.max_file_bytes,
             "max_audio_seconds": self.config.limits.max_audio_seconds})
 
     async def folders(self, request):
         owner = request[OWNER]
-        self.store.ensure_user(owner)
+        self.store.register_user(owner)
         return web.json_response({"folders": [
             {k: f[k] for k in ("id", "name", "count", "is_inbox")} for f in self.store.folders(owner)]})
 

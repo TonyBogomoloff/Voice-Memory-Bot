@@ -40,6 +40,7 @@ class Config:
     assistant_models: tuple[str, ...] = ()
     web_url: str = ""
     web_port: int = 18767
+    folder_name_model: str = ""
 
     @classmethod
     def load(cls, path: Path, secrets_path: Path | None = None) -> Config:
@@ -64,6 +65,10 @@ class Config:
                 or any(not isinstance(m, str) or not 1 <= len(m) <= 100
                        or not all(c.isalnum() or c in "-._" for c in m) for m in models)):
             raise ValueError("assistant_models: укажи до 10 идентификаторов доступных моделей")
+        name_model = raw.get("folder_name_model", "")
+        if not isinstance(name_model, str) or len(name_model) > 100 or any(
+                not (c.isalnum() or c in "-._") for c in name_model):
+            raise ValueError("folder_name_model: нужен идентификатор модели")
         limits = Limits(**raw.get("limits", {}))
         if any(type(v) is not int or v <= 0 for v in vars(limits).values()):
             raise ValueError("Все limits должны быть положительными целыми числами")
@@ -81,4 +86,4 @@ class Config:
         if not 1024 <= web_port <= 65535:
             raise ValueError("web_port: допустимо 1024–65535")
         return cls(token, frozenset(ids), key, directory.resolve(),
-                   raw.get("groq_model", "whisper-large-v3-turbo"), llm, limits, tuple(models), web_url, web_port)
+                   raw.get("groq_model", "whisper-large-v3-turbo"), llm, limits, tuple(models), web_url, web_port, name_model)

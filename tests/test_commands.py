@@ -10,6 +10,7 @@ from voice_memory_bot.store import Store
 @pytest.fixture
 def bot(tmp_path):
     store = Store(tmp_path / "archive.sqlite3", Limits())
+    store.ensure_user(1)
     app = make_bot(tmp_path, store)
     yield app
     store.close()

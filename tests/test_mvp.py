@@ -284,6 +284,9 @@ class FakeGroq:
 class FakeRouter:
     error = False
 
+    async def folder_name(self, transcript):
+        raise ProviderError("fake_folder_name_disabled")
+
     async def classify(self, transcript, folders):
         if self.error:
             raise ProviderError("codex_timeout")
@@ -292,7 +295,9 @@ class FakeRouter:
 
 def make_bot(tmp_path, store):
     config = Config("123:secret", frozenset({1}), "secret", tmp_path)
-    return Bot(config, store, FakeTelegram(), FakeGroq(), FakeRouter())
+    app = Bot(config, store, FakeTelegram(), FakeGroq(), FakeRouter())
+    app.folder_namer = app.router
+    return app
 
 
 async def receive_voice(bot, message_id=10, thread=100):

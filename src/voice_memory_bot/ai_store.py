@@ -68,7 +68,7 @@ class AIStore:
         self.is_busy = is_busy or (lambda identity: False)
 
     def settings(self, owner):
-        self.store.ensure_user(owner)
+        self.store.register_user(owner)
         with self.db:
             self.db.execute("INSERT OR IGNORE INTO ai_settings(owner) VALUES (?)", (owner,))
         row = self.store.one("SELECT * FROM ai_settings WHERE owner=?", (owner,))

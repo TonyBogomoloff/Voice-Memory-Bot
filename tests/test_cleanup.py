@@ -137,7 +137,8 @@ def test_full_cleanup_removes_only_owner_data_and_all_known_telegram_locations(b
         assert bot.ai_state.claim() is None
         assert bot.telegram.sent[-1][1]["thread"] is None
         await bot.handle(incoming(message_id=2000, text="/folders"))
-        assert len(bot.store.folders(1)) == 1 and bot.store.folders(1)[0]["is_inbox"]
+        assert bot.store.folders(1) == []
+        assert "первую папку" in bot.telegram.sent[-1][1]["text"]
     asyncio.run(run())
 
 

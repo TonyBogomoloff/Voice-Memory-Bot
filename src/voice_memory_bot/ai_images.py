@@ -21,7 +21,7 @@ def authorize_image(engine, request, command):
     current = store.note(owner, request["note_id"])
     folder = store.folder(owner, command["folder_id"] or current["folder_id"])
     if folder["mode"] == "chat" and not command["folder_id"]:
-        folder = store.folder(owner, store.ensure_user(owner))
+        folder = store.folder(owner, store.current_folder(owner))
     if not command["content"].strip() or len(command["content"]) > 8000:
         raise ValueError("Описание картинки должно содержать от 1 до 8000 символов")
     source = None

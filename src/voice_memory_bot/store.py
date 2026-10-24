@@ -113,6 +113,8 @@ class Store:
                                        (user["id"], MAX_PINNED_FOLDERS))
                     for slot, folder in enumerate(folders, 1):
                         self.db.execute("UPDATE folders SET pin_slot=? WHERE id=?", (slot, folder["id"]))
+            if "removed" not in {row["name"] for row in self.all("PRAGMA table_info(folders)")}:
+                self.db.execute("ALTER TABLE folders ADD COLUMN removed INTEGER NOT NULL DEFAULT 0")
             self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS folder_pin_slot "
                             "ON folders(owner,pin_slot) WHERE pin_slot IS NOT NULL")
 
@@ -126,10 +128,14 @@ class Store:
     def all(self, sql, args=()):
         return [dict(r) for r in self.db.execute(sql, args)]
 
+    def register_user(self, owner: int):
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO users(id) VALUES (?)", (owner,))
+
     def ensure_user(self, owner: int) -> str:
         with self.db:
             self.db.execute("INSERT OR IGNORE INTO users(id) VALUES (?)", (owner,))
-            folder = self.one("SELECT id FROM folders WHERE owner=? AND is_inbox=1", (owner,))
+            folder = self.one("SELECT id FROM folders WHERE owner=? AND is_inbox=1 AND removed=0", (owner,))
             if folder:
                 return folder["id"]
             identity = new_id()
@@ -137,13 +143,13 @@ class Store:
                             (identity, owner, "Входящие", normalize("Входящие"), self.free_pin_slot(owner)))
             return identity
 
-    def folders(self, owner: int):
+    def folders(self, owner: int, include_removed=False):
         return self.all("SELECT f.*, (SELECT count(*) FROM notes n WHERE n.folder_id=f.id "
-                        "AND n.deleted=0 AND n.entry_type='note') AS count FROM folders f WHERE owner=? "
-                        "ORDER BY is_inbox DESC, normalized", (owner,))
+                        "AND n.deleted=0 AND n.entry_type='note') AS count FROM folders f WHERE owner=? AND (removed=0 OR ?) "
+                        "ORDER BY is_inbox DESC, normalized", (owner, int(include_removed)))
 
     def pinned_folders(self, owner):
-        return self.all("SELECT * FROM folders WHERE owner=? AND pin_slot IS NOT NULL ORDER BY pin_slot",
+        return self.all("SELECT * FROM folders WHERE owner=? AND removed=0 AND pin_slot IS NOT NULL ORDER BY pin_slot",
                         (owner,))
 
     def free_pin_slot(self, owner):
@@ -154,6 +160,8 @@ class Store:
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             folder = self.folder(owner, identity)
+            if folder['removed']:
+                raise ValueError('Папка удалена')
             slot = folder["pin_slot"] if pinned else None
             if pinned and slot is None:
                 slot = self.free_pin_slot(owner)
@@ -169,7 +177,7 @@ class Store:
     def set_export_format(self, owner: int, text_format: str):
         if text_format not in {"pdf", "markdown"}:
             raise ValueError("Выбери PDF или Markdown")
-        self.ensure_user(owner)
+        self.register_user(owner)
         with self.db:
             self.db.execute("INSERT INTO user_export_settings(owner,text_format) VALUES (?,?) "
                             "ON CONFLICT(owner) DO UPDATE SET text_format=excluded.text_format",
@@ -194,48 +202,39 @@ class Store:
         return bool(self.one("SELECT 1 FROM implicit_topics WHERE owner=? AND thread_id=?", (owner, thread)))
 
     def current_folder(self, owner: int, thread: int | None = None):
-        inbox = self.ensure_user(owner)
+        self.register_user(owner)
         selected = self.one("SELECT f.id FROM users u JOIN folders f "
-                            "ON f.id=u.active_folder AND f.owner=u.id WHERE u.id=?", (owner,))
-        return selected["id"] if selected else inbox
+                            "ON f.id=u.active_folder AND f.owner=u.id AND f.removed=0 WHERE u.id=?", (owner,))
+        folders = self.folders(owner)
+        return selected["id"] if selected else folders[0]["id"] if folders else None
 
     def delete_folder(self, owner, identity):
-        """Remove the container atomically; keep all notes, files, revisions and AI history."""
-        folder = self.folder(owner, identity)
-        if folder["is_inbox"]:
-            raise ValueError("Папку «Входящие» удалить нельзя")
-        inbox = self.ensure_user(owner)
+        """Hide any folder, preserving the archive under its stable historical ID."""
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            self.folder(owner, identity)
+            folder = self.folder(owner, identity)
+            if folder["removed"]:
+                raise ValueError("Папка уже удалена")
             if self.one("SELECT 1 FROM notes WHERE owner=? AND deleted=0 AND "
                         "(folder_id=? OR source_folder=?) AND (state IN ('queued','processing') "
                         "OR delivery='sending' OR transcript_delivery='sending')", (owner, identity, identity)) or self.one(
                             "SELECT 1 FROM ai_requests WHERE owner=? AND "
                             "(state IN ('queued','running') OR delivery='sending')", (owner,)):
                 raise ValueError("Дождись завершения обработки записей и ИИ, затем удали папку")
-            self.db.execute("UPDATE notes SET folder_id=?,archive_dirty=1,revision=revision+1 "
-                            "WHERE owner=? AND folder_id=?", (inbox, owner, identity))
-            self.db.execute("UPDATE notes SET source_folder=? WHERE owner=? AND source_folder=?",
-                            (inbox, owner, identity))
-            self.db.execute("UPDATE note_revisions SET folder_id=? WHERE folder_id=? "
-                            "AND note_id IN (SELECT id FROM notes WHERE owner=?)", (inbox, identity, owner))
-            self.db.execute("UPDATE ai_conversations SET folder_id=? WHERE owner=? AND folder_id=?",
-                            (inbox, owner, identity))
-            self.db.execute("DELETE FROM ai_active WHERE owner=? AND folder_id=?", (owner, identity))
-            if self.one("SELECT 1 FROM sqlite_master WHERE name='note_moves'"):
-                self.db.execute("UPDATE note_moves SET target_folder=? WHERE owner=? AND target_folder=?",
-                                (inbox, owner, identity))
+            self.db.execute("UPDATE folders SET removed=1,pin_slot=NULL,normalized=? WHERE owner=? AND id=?",
+                            ("removed:" + identity, owner, identity))
+            remaining = self.folders(owner)
+            active = self.one('SELECT active_folder FROM users WHERE id=?', (owner,))['active_folder']
+            selected = active if any(f['id'] == active for f in remaining) else remaining[0]['id'] if remaining else None
             self.db.execute("UPDATE users SET active_folder=?,action=NULL WHERE id=? AND active_folder=?",
-                            (inbox, owner, identity))
-            # Keep exact historical topic IDs solely for an explicit Delete All request.
+                            (selected, owner, identity))
+            self.db.execute("DELETE FROM ai_active WHERE owner=? AND folder_id=?", (owner, identity))
             if folder["thread_id"]:
                 self.db.execute("INSERT OR IGNORE INTO implicit_topics VALUES (?,?)", (owner, folder["thread_id"]))
-            self.db.execute("DELETE FROM folders WHERE owner=? AND id=?", (owner, identity))
-        return inbox
+        return selected
 
     def create_folder(self, owner: int, name: str, thread: int | None = None):
-        self.ensure_user(owner)
+        self.register_user(owner)
         name = clean_name(name)
         self.check_names(owner, [name])
         if len(self.folders(owner)) >= self.limits.max_folders_per_user:
@@ -271,8 +270,8 @@ class Store:
 
     def rename_folder(self, owner, identity, name):
         folder = self.folder(owner, identity)
-        if folder["is_inbox"]:
-            raise ValueError("Папка «Входящие» имеет постоянное название")
+        if folder["removed"]:
+            raise ValueError("Папка удалена")
         name = clean_name(name)
         self.check_names(owner, [name, *json.loads(folder["aliases"])], identity)
         with self.db:
@@ -295,7 +294,8 @@ class Store:
             self.db.execute("UPDATE folders SET thread_id=? WHERE id=? AND owner=?", (thread, identity, owner))
 
     def select(self, owner, identity):
-        self.folder(owner, identity)
+        if self.folder(owner, identity)["removed"]:
+            raise ValueError("Папка удалена. Выбери другую")
         with self.db:
             self.db.execute("UPDATE users SET active_folder=? WHERE id=?", (identity, owner))
 
@@ -312,6 +312,8 @@ class Store:
         if existing:
             return existing, False
         source_folder = self.folder(owner, folder)
+        if source_folder['removed']:
+            raise ValueError('Выбери существующую папку')
         counters = self.one("SELECT count(*) AS n, coalesce(sum(max(audio_bytes,declared_bytes)),0) AS bytes, "
                             "coalesce(sum(state IN ('queued','processing')),0) AS pending "
                             "FROM notes WHERE owner=? AND deleted=0", (owner,))
@@ -397,7 +399,8 @@ class Store:
             raise ValueError("Invalid note fields")
         before = self.note(owner, identity)
         if "folder_id" in fields:
-            self.folder(owner, fields["folder_id"])
+            if self.folder(owner, fields["folder_id"])["removed"]:
+                raise ValueError("Папка удалена. Выбери другую")
         assignments = ",".join(f"{key}=?" for key in fields)
         if before["state"] == "ready" and any(k in fields and fields[k] != before[k] for k in ("folder_id", "title")):
             assignments += ",revision=revision+1"

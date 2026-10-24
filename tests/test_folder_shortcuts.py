@@ -109,7 +109,8 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         work = bot.store.create_folder(1, "Работа")
         await receive(bot, "/start")
         await bot.callback(1, None, 500, f"unpin:{work['id']}")
-        assert "📌 Работа" not in labels(bot) and "✓ 📌 Работа" not in labels(bot)
+        assert bot.store.folder(1, work['id'])['pin_slot'] is None
+        assert bot.folder_pages[1] == 1  # The selected folder remains visible on its unpinned page.
         assert "Закрепить внизу" in str(bot.telegram.sent[-1])
         await bot.callback(1, None, 500, f"pin:{work['id']}")
         assert "✓ 📌 Работа" in labels(bot)

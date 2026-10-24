@@ -23,15 +23,18 @@ def test_folder_deletion_keeps_files_notes_versions_ai_history_and_other_users(t
         inbox = store.delete_folder(1, folder["id"])
         bot.flush_ai_archive()
         saved = store.note(1, note["id"])
-        assert saved["folder_id"] == saved["source_folder"] == store.current_folder(1) == inbox
+        assert saved["folder_id"] == saved["source_folder"] == folder["id"]
+        assert store.current_folder(1) == inbox
+        assert store.folder(1, folder["id"])["removed"]
+        assert folder["id"] not in {f["id"] for f in store.folders(1)}
         assert saved["transcript"] == transcript and bot.archive.audio(saved).read_bytes() == original
-        assert bot.ai_state.conversation(1, conversation)["folder_id"] == inbox
-        assert store.one("SELECT folder_id FROM note_revisions WHERE note_id=?", (note["id"],))["folder_id"] == inbox
+        assert bot.ai_state.conversation(1, conversation)["folder_id"] == folder["id"]
+        assert store.one("SELECT folder_id FROM note_revisions WHERE note_id=?", (note["id"],))["folder_id"] == folder["id"]
         assert store.folder(2, other["id"])["thread_id"] == 200
         assert store.is_implicit_topic(1, 100)
         assert store.all("PRAGMA foreign_key_check") == []
         assert store.one("PRAGMA quick_check")["quick_check"] == "ok"
-        assert "Проект: Входящие" in (bot.archive.directory(saved) / "note.md").read_text()
+        assert "Проект: Проект" in (bot.archive.directory(saved) / "note.md").read_text()
         assert bot.telegram.sent == []
     asyncio.run(run())
 
@@ -50,8 +53,6 @@ def test_delete_folder_confirmation_is_owner_scoped_cancelable_expiring_and_bloc
         with pytest.raises(ValueError):
             await bot.callback(1, None, 500, f"confirmdrop:{token}")
         with pytest.raises(ValueError):
-            store.delete_folder(1, store.ensure_user(1))
-        with pytest.raises(ValueError):
             store.delete_folder(1, other["id"])
         await bot.callback(1, None, 500, f"dropfolder:{folder['id']}")
         token, identity, name, _ = bot.folder_delete_confirmations[1]
@@ -65,9 +66,8 @@ def test_delete_folder_confirmation_is_owner_scoped_cancelable_expiring_and_bloc
         await bot.callback(1, None, 500, f"dropfolder:{folder['id']}")
         token = bot.folder_delete_confirmations[1][0]
         await bot.callback(1, None, 500, f"confirmdrop:{token}")
-        with pytest.raises(ValueError):
-            store.folder(1, folder["id"])
-        assert store.note(1, note["id"])["folder_id"] == store.ensure_user(1)
+        assert store.folder(1, folder["id"])["removed"]
+        assert store.note(1, note["id"])["folder_id"] == folder["id"]
         with pytest.raises(ValueError):
             await bot.callback(1, None, 500, f"confirmdrop:{token}")
     asyncio.run(run())
