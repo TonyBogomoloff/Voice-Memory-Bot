@@ -294,7 +294,7 @@ class AIStore:
                 if access == "none" or (command["action"] in {"create_note", "update_note"} and access != "write"):
                     raise ValueError("Доступ к заметкам выключен в настройках ИИ")
                 context = self.note_context(owner, self.request(owner, note_id)["conversation_id"])
-                if context and command["action"] != "list_folders" and (command["action"] not in {"read_note", "update_note"}
+                if context and command["action"] != "list_folders" and (command["action"] not in {"read_note", "update_note", "get_message_folder"}
                                 or command["note_id"] != context["note_id"]):
                     raise ValueError("Этот диалог относится только к выбранной записи")
                 result = self._operation(owner, note_id, command)
@@ -307,6 +307,11 @@ class AIStore:
     def _operation(self, owner, request_id, command):
         from .store import clean_name, new_id
         action = command["action"]
+        if action == "get_message_folder":
+            note = self.store.note(owner, command["note_id"])
+            folder = self.store.folder(owner, note["folder_id"])
+            return {"note_id": note["id"],
+                    "folder": {k: folder[k] for k in ("id", "name", "mode")}}
         if action == "list_folders":
             return {"folders": [{"id": f["id"], "name": f["name"], "aliases": json.loads(f["aliases"]),
                                   "mode": f["mode"]} for f in self.store.folders(owner)]}

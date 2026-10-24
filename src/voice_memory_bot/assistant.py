@@ -9,7 +9,7 @@ from pathlib import Path
 from .providers import CodexRouter, ProviderError
 from .store import normalize
 
-ACTIONS = {"reply", "search_notes", "read_note", "list_folders", "move_note", "delete_note",
+ACTIONS = {"reply", "search_notes", "read_note", "get_message_folder", "list_folders", "move_note", "delete_note",
            "create_note", "update_note", "create_image", "edit_image"}
 STEP_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -44,6 +44,11 @@ reply: message содержит законченный ответ или уто�
 search_notes: query (слова, до 200 символов; '' = последние), folder_id ('' = все). Результат ограничен;
 при has_more уточни поиск. Поиск по словам, а не семантический. Можно пробовать отдельные ключевые слова.
 read_note: note_id из результатов или квитанций прошлых действий. Читай перед каждым изменением.
+get_message_folder: получить актуальную папку сообщения: folder.id, folder.name, folder.mode.
+note_id обязателен: selected_note.id для выбранной записи, reply_note_id для сообщения из ответа,
+context_note_id для явно выбранного контекста, request_note_id для текущего запроса, id для найденной записи.
+На вопрос о папке вызови этот инструмент. Не подменяй папку выбранной записи папкой разговора.
+После переноса вызови заново. Если точного ID нет, уточни; не угадывай по цитате.
 list_folders: получить ВСЕ доступные папки и их псевдонимы. Вызывай перед выбором папки для переноса.
 move_note: перенести ОДНУ запись. note_id и revision из read_note; folder_id из list_folders.
 Если точного названия/псевдонима папки нет, folder_id='', title=название, которое попросил пользователь.
