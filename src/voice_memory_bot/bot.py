@@ -44,20 +44,25 @@ def transcript_chunks(text, limit=3900):
         yield text[start:]
 
 
-HOME = keyboard([button("📁 Папки", "folders"), button("🔎 Поиск", "search")],
+HOME = keyboard([button("📂 Все папки", "folders"), button("＋ Новая папка", "create")],
+                [button("📝 Записи", "notes"), button("🔎 Поиск", "search")],
                 [button("🤖 ИИ", "aiopen"), button("📦 Экспорт всего", "export:all")],
                 [button("⚙️ Настройки", "settings:all"), button("ℹ️ Помощь", "help")],
                 [button("🗑 Удалить всё", "deleteall")])
 
 HELP = """🎙 Voice Memory Bot
 
-Нажми «📁 Папки» внизу и открой нужную папку. Новые голосовые, тексты и фото сохраняются туда.
-Выбор запоминается. Без выбора записи попадают во «Входящие».
+Выбери папку на нижней клавиатуре или через «📂 Все папки».
+Новые голосовые, тексты и фото сохраняются туда. Активная папка отмечена ✓.
+Внизу помещаются до 4 закреплённых папок. Закрепить или убрать папку можно в её карточке.
+«☰ Меню» открывает записи, создание папки, поиск, ИИ, экспорт и настройки.
+Выбор и закрепления запоминаются. Без выбора записи попадают во «Входящие».
 Внутри папки можно изменить название, посмотреть записи, скачать архив или удалить папку.
 При удалении папки записи сохраняются во «Входящих»; сначала бот попросит подтверждение.
 Расшифровка появится рядом с голосовым. Для переноса: «Опции» → «Переместить».
 Папки общие с Mini App; темы Telegram больше не используются для выбора папки.
-/start — показать кнопки внизу
+/start — показать папки внизу
+/menu — открыть меню действий
 /app — открыть Mini App
 
 /folders — записи и управление папками
@@ -99,6 +104,7 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
         self.init_ai(assistant)
         self.init_cleanup()
         self.folder_delete_confirmations = {}
+        self.folder_keyboards = {}
         self.web = None
 
     async def start(self):
@@ -107,7 +113,8 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
         if webhook.get("url"):
             raise ProviderError("webhook_present_stop_before_polling")
         await self.telegram.call("setMyCommands", commands=[
-            {"command": "start", "description": "Открыть Voice Memory"},
+            {"command": "start", "description": "Показать папки внизу"},
+            {"command": "menu", "description": "Меню действий"},
             *([{"command": "app", "description": "Открыть Mini App"}] if self.config.web_url else []),
             {"command": "folders", "description": "Записи и папки"},
             {"command": "new", "description": "Создать папку"},
@@ -221,7 +228,8 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
         if callback and not move_callback:
             await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
         navigation = message.get("text", "").strip()
-        if (callback or navigation.startswith("/") or navigation in MENU_COMMANDS) and not self.rate_allowed(owner):
+        if (callback or navigation.startswith("/") or navigation in MENU_COMMANDS
+                or self.is_folder_button(navigation)) and not self.rate_allowed(owner):
             if move_callback:
                 await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
             return
@@ -251,6 +259,8 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
             text = message.get("text", "").strip()
             if text in MENU_COMMANDS:
                 return await self.command(owner, thread, MENU_COMMANDS[text], "")
+            if self.is_folder_button(text):
+                return await self.select_folder_button(owner, thread, text)
             if text.startswith("/"):
                 command, _, argument = text.partition(" ")
                 return await self.command(owner, thread, command.split("@")[0].lower(), argument.strip())
@@ -334,6 +344,8 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
             return await self.new_ai_conversation(owner, thread, self.store.current_folder(owner, thread))
         if command == "/start":
             return await self.show_home(owner, thread)
+        if command == "/menu":
+            return await self.show_main_menu(owner, thread)
         if command in {"/help", "/privacy"}:
             return await self.show(owner, HELP, thread, HOME)
         if command == "/cancel":
@@ -394,6 +406,7 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
         self.store.set_action(owner, None)
         folders = self.store.folders(owner)
         active = self.store.current_folder(owner)
+        await self.refresh_folder_keyboard(owner, thread)
         rows = []
         page = max(0, min(page, (len(folders) - 1) // 8))
         for folder in folders[page * 8:(page + 1) * 8]:
@@ -419,6 +432,7 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
         folder = self.store.folder(owner, identity)
         self.store.set_action(owner, None)
         self.store.select(owner, identity)
+        await self.refresh_folder_keyboard(owner, thread)
         page = max(0, page)
         notes = self.store.notes(owner, identity, offset=page * 8, limit=9)
         text = f"📁 {folder['name']}"
@@ -437,6 +451,9 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
         if not folder["is_inbox"]:
             rows[-1].append(button("✏️ Название", f"rename:{identity}"))
             rows.append([button("🗑 Удалить папку", f"dropfolder:{identity}")])
+        pin_action = "unpin" if folder["pin_slot"] is not None else "pin"
+        rows.append([button("📌 Убрать снизу" if pin_action == "unpin" else "📌 Закрепить внизу",
+                            f"{pin_action}:{identity}")])
         target_mode = "notes" if folder["mode"] == "chat" else "chat"
         rows.append([button("Режим → " + ("Заметки" if target_mode == "notes" else "Диалог с ИИ"),
                             f"aimode:{identity}:{target_mode}")])
@@ -532,6 +549,8 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
             return await self.command(owner, thread, "/new" if action == "create" else "/search", "")
         if action == "folders":
             return await self.show_folders(owner, thread, message_id, int(identity or 0))
+        if action == "notes":
+            return await self.show_notes(owner, thread, self.store.current_folder(owner), edit_id=message_id)
         if action == "folder":
             return await self.show_notes(owner, thread, identity, int(pieces[2]), message_id)
         if action == "select":

@@ -1,0 +1,154 @@
+import asyncio
+import sqlite3
+
+import pytest
+from test_commands import bot as bot
+from test_commands import receive
+
+from voice_memory_bot.config import Limits
+from voice_memory_bot.store import Store
+
+
+def reply_keyboard(bot):
+    return next(payload["keyboard"] for method, payload in reversed(bot.telegram.sent)
+                if method == "sendMessage" and "keyboard" in (payload.get("keyboard") or {}))
+
+
+def labels(bot):
+    return [button["text"] for row in reply_keyboard(bot)["keyboard"] for button in row]
+
+
+def test_upgrade_seeds_four_pins_per_owner_and_restart_preserves_unpinning(tmp_path):
+    path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.executescript("""
+            CREATE TABLE users (id INTEGER PRIMARY KEY, active_folder TEXT, action TEXT);
+            CREATE TABLE folders (
+                id TEXT PRIMARY KEY, owner INTEGER NOT NULL REFERENCES users(id),
+                name TEXT NOT NULL, normalized TEXT NOT NULL, aliases TEXT NOT NULL DEFAULT '[]',
+                thread_id INTEGER, is_inbox INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(owner, normalized), UNIQUE(owner, thread_id)
+            );
+        """)
+        for owner in (1, 2):
+            db.execute("INSERT INTO users(id,active_folder) VALUES (?,?)", (owner, f"{owner}-5"))
+            for number, name in enumerate(("Входящие", "А", "Б", "В", "Г", "Д")):
+                db.execute("INSERT INTO folders(id,owner,name,normalized,is_inbox) VALUES (?,?,?,?,?)",
+                           (f"{owner}-{number}", owner, name, name.casefold(), int(number == 0)))
+        before = db.execute("SELECT id,owner,name,thread_id FROM folders ORDER BY id").fetchall()
+    store = Store(path, Limits())
+    try:
+        for owner in (1, 2):
+            assert [f["id"] for f in store.pinned_folders(owner)] == [f"{owner}-{n}" for n in range(4)]
+            assert store.current_folder(owner) == f"{owner}-5"
+        assert [tuple(r) for r in store.db.execute(
+            "SELECT id,owner,name,thread_id FROM folders ORDER BY id")] == before
+        for folder in store.pinned_folders(1):
+            store.set_folder_pin(1, folder["id"], False)
+    finally:
+        store.close()
+    reopened = Store(path, Limits())
+    try:
+        assert reopened.pinned_folders(1) == []
+        assert len(reopened.pinned_folders(2)) == 4
+        assert reopened.current_folder(1) == "1-5"
+        assert reopened.one("PRAGMA quick_check")["quick_check"] == "ok"
+        assert reopened.all("PRAGMA foreign_key_check") == []
+    finally:
+        reopened.close()
+
+
+def test_pin_limit_owner_isolation_and_freed_slot(bot):
+    store = bot.store
+    folders = [store.create_folder(1, str(n)) for n in range(4)]
+    assert [f["pin_slot"] for f in store.pinned_folders(1)] == [1, 2, 3, 4]
+    assert folders[-1]["pin_slot"] is None
+    before = store.pinned_folders(1)
+    with pytest.raises(ValueError, match="уже 4"):
+        store.set_folder_pin(1, folders[-1]["id"], True)
+    assert store.pinned_folders(1) == before
+    with pytest.raises(ValueError, match="не найдена"):
+        store.set_folder_pin(2, folders[0]["id"], False)
+    store.set_folder_pin(1, folders[0]["id"], False)
+    store.set_folder_pin(1, folders[-1]["id"], True)
+    store.set_folder_pin(1, folders[-1]["id"], True)
+    assert store.folder(1, folders[-1]["id"])["pin_slot"] == 2
+    store.delete_folder(1, folders[-1]["id"])
+    replacement = store.create_folder(1, "Новая")
+    assert replacement["pin_slot"] == 2
+    assert len(store.pinned_folders(1)) == 4
+
+
+def test_folder_keys_select_before_input_or_ai_and_plain_names_are_notes(bot):
+    async def run():
+        work = bot.store.create_folder(1, "Работа")
+        chat = bot.store.create_folder(1, "Диалог")
+        bot.ai_state.mode(1, chat["id"], "chat")
+        await receive(bot, "/start")
+        assert labels(bot) == ["✓ 📌 Входящие", "📌 Работа", "📌 Диалог", "📂 Все папки", "☰ Меню"]
+        assert reply_keyboard(bot)["is_persistent"]
+        await receive(bot, "📌 Диалог", 2)
+        assert "✓ 📌 Диалог" in labels(bot)
+        assert "диалог с ИИ" in bot.telegram.sent[-1][1]["text"]
+        await receive(bot, "/new", 3)
+        await receive(bot, "📌 Работа", 4)
+        assert bot.store.action(1) is None
+        assert bot.store.current_folder(1) == work["id"]
+        # A delayed button with the previous check mark is still a navigation action.
+        await receive(bot, "✓ 📌 Входящие", 5)
+        assert bot.store.current_folder(1) == bot.store.ensure_user(1)
+        assert bot.store.notes(1) == []
+        assert bot.store.all("SELECT * FROM ai_requests") == []
+        await receive(bot, "Работа", 6)
+        assert bot.store.notes(1)[0]["transcript"] == "Работа"
+    asyncio.run(run())
+
+
+def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
+    async def run():
+        work = bot.store.create_folder(1, "Работа")
+        await receive(bot, "/start")
+        await bot.callback(1, None, 500, f"unpin:{work['id']}")
+        assert "📌 Работа" not in labels(bot) and "✓ 📌 Работа" not in labels(bot)
+        assert "Закрепить внизу" in str(bot.telegram.sent[-1])
+        await bot.callback(1, None, 500, f"pin:{work['id']}")
+        assert "✓ 📌 Работа" in labels(bot)
+        await bot.callback(1, None, 500, f"rename:{work['id']}")
+        await receive(bot, "Проекты", 2)
+        assert "✓ 📌 Проекты" in labels(bot) and "📌 Работа" not in labels(bot)
+        await receive(bot, "📌 Работа", 3)
+        assert "устарела" in bot.telegram.sent[-1][1]["text"]
+        assert bot.store.current_folder(1) == work["id"]
+        await bot.callback(1, None, 500, f"dropfolder:{work['id']}")
+        token = bot.folder_delete_confirmations[1][0]
+        await bot.callback(1, None, 500, f"confirmdrop:{token}")
+        await receive(bot, "✓ 📌 Проекты", 4)
+        assert labels(bot) == ["✓ 📌 Входящие", "📂 Все папки", "☰ Меню"]
+        assert bot.store.notes(1) == []
+    asyncio.run(run())
+
+
+def test_menu_keeps_all_actions_and_long_folder_names_are_distinct(bot):
+    async def run():
+        prefix = "Длинное название папки " * 3
+        first = bot.store.create_folder(1, prefix + "А")
+        second = bot.store.create_folder(1, prefix + "Б")
+        bot.store.create_folder(1, "Четвёртая")
+        hidden = bot.store.create_folder(1, "Пятая")
+        await receive(bot, "/start")
+        assert len(reply_keyboard(bot)["keyboard"]) == 3
+        assert "📌 " + first["name"] in labels(bot)
+        assert "📌 " + second["name"] in labels(bot)
+        assert "📌 " + hidden["name"] not in labels(bot)
+        await receive(bot, "📌 " + second["name"], 2)
+        assert bot.store.current_folder(1) == second["id"]
+        await receive(bot, "☰ Меню", 3)
+        callbacks = {button["callback_data"] for row in bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"]
+                     for button in row}
+        assert {"folders", "create", "notes", "search", "aiopen", "export:all", "settings:all"} <= callbacks
+        await bot.callback(1, None, 500, "notes")
+        assert second["name"] in bot.telegram.sent[-1][1]["text"]
+        await receive(bot, "📂 Все папки", 4)
+        assert hidden["name"] in str(bot.telegram.sent[-1])
+        assert bot.store.notes(1) == []
+    asyncio.run(run())

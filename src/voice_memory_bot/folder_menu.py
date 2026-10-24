@@ -8,14 +8,10 @@ MENU_COMMANDS = {
     "📁 Папки": "/folders", "📝 Записи": "/notes",
     "＋ Новая папка": "/new", "🔎 Поиск": "/search",
     "🤖 ИИ": "/ai", "⚙️ Настройки": "/settings",
-    "⌂ Меню": "/start", "✖️ Отмена": "/cancel",
+    "📂 Все папки": "/folders", "☰ Меню": "/menu",
+    "⌂ Меню": "/menu", "✖️ Отмена": "/cancel",
 }
-MAIN_MENU = {
-    "keyboard": [[{"text": label} for label in row] for row in (
-        ("📁 Папки", "📝 Записи"), ("＋ Новая папка", "🔎 Поиск"), ("🤖 ИИ", "⚙️ Настройки"))],
-    "resize_keyboard": True, "is_persistent": True,
-    "input_field_placeholder": "Голосовое, текст или фото в выбранную папку",
-}
+FOLDER_PREFIXES = ("📌 ", "✓ 📌 ")
 
 
 class FolderMenuMixin:
@@ -28,21 +24,71 @@ class FolderMenuMixin:
     def note_controls(self, note, thread):
         return {"inline_keyboard": [[{"text": "Опции", "callback_data": f"options:{note['id']}"}]]}
 
+    def folder_keyboard(self, owner):
+        active = self.store.current_folder(owner)
+        buttons = [{"text": ("✓ " if folder["id"] == active else "") + f"📌 {folder['name']}"}
+                   for folder in self.store.pinned_folders(owner)]
+        return {"keyboard": [buttons[i:i + 2] for i in range(0, len(buttons), 2)] + [
+                    [{"text": "📂 Все папки"}, {"text": "☰ Меню"}]],
+                "resize_keyboard": True, "is_persistent": True,
+                "input_field_placeholder": "Голосовое, текст или фото в выбранную папку"}
+
+    @staticmethod
+    def is_folder_button(text):
+        return text.startswith(FOLDER_PREFIXES) and "\n" not in text
+
+    async def select_folder_button(self, owner, thread, text):
+        # Reply keyboards send text. Use full names, never truncated labels or a reused slot number.
+        # Stale or unpinned names refresh navigation instead of becoming notes.
+        for folder in self.store.pinned_folders(owner):
+            if text in {prefix + folder["name"] for prefix in FOLDER_PREFIXES}:
+                self.store.select(owner, folder["id"])
+                self.store.set_action(owner, None)
+                self.folder_delete_confirmations.pop(owner, None)
+                return await self.refresh_folder_keyboard(owner, thread, force=True)
+        self.store.set_action(owner, None)
+        await self.refresh_folder_keyboard(owner, thread, force=True,
+            notice="Эта кнопка устарела. Выбери папку внизу или открой «Все папки».")
+
+    async def refresh_folder_keyboard(self, owner, thread=None, *, force=False, notice=None):
+        folder = self.store.folder(owner, self.store.current_folder(owner))
+        keys = self.folder_keyboard(owner)
+        signature = (folder["id"], folder["name"], folder["mode"], keys)
+        if not force and self.folder_keyboards.get(owner) == signature:
+            return
+        if folder["mode"] == "chat":
+            text = f"🤖 «{folder['name']}» — диалог с ИИ. Пришли текст или голосовое."
+        else:
+            text = f"🎙 Сейчас сохраняю в «{folder['name']}». Пришли голосовое, текст или фото."
+        if notice:
+            text = notice + "\n\n" + text
+        await self.telegram.text(owner, text, thread, keys)
+        self.folder_keyboards[owner] = signature
+
     async def show_home(self, owner, thread=None):
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
-        folder = self.store.folder(owner, self.store.current_folder(owner))
-        text = (f"🎙 Сейчас сохраняю в «{folder['name']}».\n"
-                "Пришли голосовое, текст или фото. Для другой папки нажми «📁 Папки» внизу.")
+        hint = "Переключай папки внизу. Остальные — в «Все папки», действия — в «Меню»."
         if self.config.web_url:
-            text += "\nMini App: /app"
-        await self.show(owner, text, thread, MAIN_MENU)
+            hint += "\nMini App: /app"
+        await self.refresh_folder_keyboard(owner, thread, force=True, notice=hint)
+
+    async def show_main_menu(self, owner, thread=None, edit_id=None):
+        from .bot import HOME
+        self.store.set_action(owner, None)
+        self.folder_delete_confirmations.pop(owner, None)
+        await self.refresh_folder_keyboard(owner, thread)
+        folder = self.store.folder(owner, self.store.current_folder(owner))
+        await self.show(owner, f"☰ Меню\nВыбрана папка «{folder['name']}».", thread, HOME, edit_id)
 
     async def folder_menu_callback(self, owner, thread, message_id, data):
         from .bot import button, keyboard
         action, _, identity = data.partition(":")
         if action == "home":
-            await self.show_home(owner, thread)
+            await self.show_main_menu(owner, thread, message_id)
+        elif action in {"pin", "unpin"}:
+            self.store.set_folder_pin(owner, identity, action == "pin")
+            await self.show_notes(owner, thread, identity, edit_id=message_id)
         elif action == "dropfolder":
             folder = self.store.folder(owner, identity)
             if folder["is_inbox"]:
@@ -72,6 +118,7 @@ class FolderMenuMixin:
                 raise ValueError("Дождись завершения обработки или экспорта, затем удали папку")
             self.store.delete_folder(owner, folder_id)
             self.folder_delete_confirmations.pop(owner, None)
+            await self.refresh_folder_keyboard(owner, thread)
             await self.show(owner, f"Папка «{name}» удалена. Записи сохранены во «Входящих».", thread,
                             keyboard([button("📁 Папки", "folders"), button("⌂ Меню", "home")]), message_id)
         else:

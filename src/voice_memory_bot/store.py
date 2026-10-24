@@ -13,6 +13,8 @@ from .ai_store import migrate_ai
 from .cleanup import migrate_cleanup
 from .config import Limits
 
+MAX_PINNED_FOLDERS = 4
+
 
 def normalize(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().replace("ё", "е").split())
@@ -100,6 +102,19 @@ class Store:
         migrate_cleanup(self.db)
         from .web_store import migrate_web
         migrate_web(self.db)
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            if "pin_slot" not in {row["name"] for row in self.all("PRAGMA table_info(folders)")}:
+                self.db.execute("ALTER TABLE folders ADD COLUMN pin_slot INTEGER "
+                                "CHECK(pin_slot BETWEEN 1 AND 4)")
+                for user in self.all("SELECT id FROM users"):
+                    folders = self.all("SELECT id FROM folders WHERE owner=? "
+                                       "ORDER BY is_inbox DESC, normalized LIMIT ?",
+                                       (user["id"], MAX_PINNED_FOLDERS))
+                    for slot, folder in enumerate(folders, 1):
+                        self.db.execute("UPDATE folders SET pin_slot=? WHERE id=?", (slot, folder["id"]))
+            self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS folder_pin_slot "
+                            "ON folders(owner,pin_slot) WHERE pin_slot IS NOT NULL")
 
     def close(self):
         self.db.close()
@@ -118,14 +133,34 @@ class Store:
             if folder:
                 return folder["id"]
             identity = new_id()
-            self.db.execute("INSERT INTO folders(id,owner,name,normalized,is_inbox) VALUES (?,?,?,?,1)",
-                            (identity, owner, "Входящие", normalize("Входящие")))
+            self.db.execute("INSERT INTO folders(id,owner,name,normalized,is_inbox,pin_slot) VALUES (?,?,?,?,1,?)",
+                            (identity, owner, "Входящие", normalize("Входящие"), self.free_pin_slot(owner)))
             return identity
 
     def folders(self, owner: int):
         return self.all("SELECT f.*, (SELECT count(*) FROM notes n WHERE n.folder_id=f.id "
                         "AND n.deleted=0 AND n.entry_type='note') AS count FROM folders f WHERE owner=? "
                         "ORDER BY is_inbox DESC, normalized", (owner,))
+
+    def pinned_folders(self, owner):
+        return self.all("SELECT * FROM folders WHERE owner=? AND pin_slot IS NOT NULL ORDER BY pin_slot",
+                        (owner,))
+
+    def free_pin_slot(self, owner):
+        used = {folder["pin_slot"] for folder in self.pinned_folders(owner)}
+        return next((slot for slot in range(1, MAX_PINNED_FOLDERS + 1) if slot not in used), None)
+
+    def set_folder_pin(self, owner, identity, pinned):
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            folder = self.folder(owner, identity)
+            slot = folder["pin_slot"] if pinned else None
+            if pinned and slot is None:
+                slot = self.free_pin_slot(owner)
+                if slot is None:
+                    raise ValueError("Внизу уже 4 папки. Открой одну из них и нажми «Убрать снизу», "
+                                     "затем закрепи нужную.")
+            self.db.execute("UPDATE folders SET pin_slot=? WHERE owner=? AND id=?", (slot, owner, identity))
 
     def export_format(self, owner: int) -> str:
         row = self.one("SELECT text_format FROM user_export_settings WHERE owner=?", (owner,))
@@ -207,8 +242,9 @@ class Store:
             raise ValueError("Достигнут лимит папок")
         identity = new_id()
         with self.db:
-            self.db.execute("INSERT INTO folders(id,owner,name,normalized,thread_id) VALUES (?,?,?,?,?)",
-                            (identity, owner, name, normalize(name), thread))
+            self.db.execute("BEGIN IMMEDIATE")
+            self.db.execute("INSERT INTO folders(id,owner,name,normalized,thread_id,pin_slot) VALUES (?,?,?,?,?,?)",
+                            (identity, owner, name, normalize(name), thread, self.free_pin_slot(owner)))
         return self.folder(owner, identity)
 
     def import_topic(self, owner, name, thread):

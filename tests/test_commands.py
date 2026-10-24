@@ -21,7 +21,7 @@ async def receive(bot, text, message_id=1, thread=None):
 
 
 @pytest.mark.parametrize("command, extra_folders", [
-    ("/start", set()), ("/help", set()), ("/privacy", set()), ("/folders", set()),
+    ("/start", set()), ("/menu", set()), ("/help", set()), ("/privacy", set()), ("/folders", set()),
     ("/new", set()), ("/notes", set()), ("/search", set()), ("/export", set()),
     ("/settings", set()), ("/newchat", set()), ("/cancel", set()), ("/unknown", set()),
     ("/START@your_audio_notes_bot payload", set()),
@@ -37,7 +37,7 @@ def test_commands_do_not_import_unknown_threads_as_folders(bot, command, extra_f
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("command", ["/start", "/folders"])
+@pytest.mark.parametrize("command", ["/start", "/menu", "/folders"])
 def test_navigation_commands_cancel_pending_folder_input(bot, command):
 
     async def run():
