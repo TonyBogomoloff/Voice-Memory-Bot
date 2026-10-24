@@ -67,10 +67,8 @@ class FolderMenuMixin:
         # Stale or unpinned names refresh navigation instead of becoming notes.
         for folder in self.store.folders(owner):
             if text in {prefix + folder["name"] for prefix in FOLDER_PREFIXES}:
-                self.store.select(owner, folder["id"])
-                self.store.set_action(owner, None)
                 self.folder_delete_confirmations.pop(owner, None)
-                return await self.refresh_folder_keyboard(owner, thread, force=True)
+                return await self.show_notes(owner, thread, folder["id"])
         self.store.set_action(owner, None)
         await self.refresh_folder_keyboard(owner, thread, force=True,
             notice="Эта кнопка устарела. Выбери папку внизу или открой «Все папки».")

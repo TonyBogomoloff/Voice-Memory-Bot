@@ -6,11 +6,14 @@ import json
 import os
 import signal
 import tempfile
+from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
 
 import httpx
 
 from .config import LLMConfig
+
+silent_delivery = ContextVar("silent_delivery", default=False)
 
 
 class ProviderError(Exception):
@@ -58,7 +61,10 @@ class Telegram:
             raise ProviderError("telegram_transport_unknown") from None
         if not isinstance(body, dict) or not body.get("ok"):
             code = body.get("error_code", response.status_code) if isinstance(body, dict) else response.status_code
-            raise TelegramError(int(code), method, body.get("description") if isinstance(body, dict) else "")
+            error = TelegramError(int(code), method, body.get("description") if isinstance(body, dict) else "")
+            if isinstance(body, dict):
+                error.retry_after = body.get("parameters", {}).get("retry_after", 5)
+            raise error
         result = body["result"]
         self.remember_result(result, payload.get("chat_id"), payload.get("message_thread_id"))
         return result
@@ -70,6 +76,7 @@ class Telegram:
     async def text(self, owner, text, thread=None, keyboard=None, reply_to=None):
         return await self.call("sendMessage", chat_id=owner, text=text[:4000],
                                message_thread_id=thread or None, reply_markup=keyboard,
+                               disable_notification=True if silent_delivery.get() else None,
                                reply_parameters={"message_id": reply_to, "allow_sending_without_reply": thread is not None}
                                if reply_to else None,
                                link_preview_options={"is_disabled": True})

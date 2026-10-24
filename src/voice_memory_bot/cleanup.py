@@ -28,15 +28,17 @@ def migrate_cleanup(db):
 class CleanupStore:
     def __init__(self, store):
         self.store, self.db = store, store.db
+        if "sent_at" not in {r[1] for r in self.db.execute("PRAGMA table_info(telegram_messages)")}:
+            self.db.execute("ALTER TABLE telegram_messages ADD COLUMN sent_at REAL")
 
-    def remember(self, owner, message_id, thread=None):
+    def remember(self, owner, message_id, thread=None, sent_at=None):
         # Only identifiers are needed; do not retain another copy of message contents.
         if type(owner) is not int or owner <= 0 or type(message_id) is not int or message_id <= 0:
             return
         with self.db:
-            self.db.execute("INSERT INTO telegram_messages VALUES (?,?,?) ON CONFLICT(owner,message_id) "
+            self.db.execute("INSERT INTO telegram_messages(owner,message_id,thread_id,sent_at) VALUES (?,?,?,?) ON CONFLICT(owner,message_id) "
                             "DO UPDATE SET thread_id=coalesce(excluded.thread_id,telegram_messages.thread_id)",
-                            (owner, message_id, thread))
+                            (owner, message_id, thread, time.time() if sent_at is None else sent_at))
 
     def job(self, owner):
         return self.store.one("SELECT * FROM deletion_jobs WHERE owner=?", (owner,))

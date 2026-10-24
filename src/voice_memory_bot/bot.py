@@ -15,6 +15,7 @@ from .archive import Archive
 from .cleanup import CleanupMixin
 from .config import Config
 from .folder_menu import MENU_COMMANDS, FolderMenuMixin
+from .folder_view import FolderViewMixin
 from .message_store import MessageStore
 from .providers import CodexRouter, Groq, ProviderError, Telegram
 from .routing import fallback_title
@@ -90,7 +91,7 @@ HELP = """🎙 Voice Memory Bot
 Автосинхронизация с другими сервисами пока не подключена."""
 
 
-class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
+class Bot(FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
     def __init__(self, config: Config, store: Store, telegram: Telegram, groq: Groq, router: CodexRouter,
                  assistant=None):
         self.config, self.store = config, store
@@ -107,6 +108,7 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
         self.folder_keyboards = {}
         self.folder_pages = {}
         self.web = None
+        self.init_folder_view()
 
     async def start(self):
         me = await self.telegram.call("getMe")
@@ -145,6 +147,7 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
                 group.create_task(self.dispatch())
                 group.create_task(self.worker())
                 group.create_task(self.ai_worker())
+                group.create_task(self.folder_view_worker())
         finally:
             if self.web:
                 await self.web.close()
@@ -216,6 +219,12 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
 
     async def handle(self, update):
         callback = update.get("callback_query")
+        sender = (callback or update.get("message", {})).get("from", {})
+        async with self.view_locks[sender.get("id")]:
+            return await self._handle(update)
+
+    async def _handle(self, update):
+        callback = update.get("callback_query")
         message = update.get("message") or (callback or {}).get("message", {})
         sender = callback.get("from", {}) if callback else message.get("from", {})
         owner = sender.get("id")
@@ -224,7 +233,7 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
         if message["chat"]["id"] != owner:
             return
         thread = message.get("message_thread_id")
-        self.cleanup.remember(owner, message.get("message_id"), thread)
+        self.cleanup.remember(owner, message.get("message_id"), thread, message.get("date"))
         move_callback = callback and callback.get("data", "").startswith(("place:", "move:", "newfor:"))
         if callback and not move_callback:
             await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
@@ -431,7 +440,7 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
             f"📁 Твои папки\nСейчас сохраняю в «{name}».\nОткрой папку, чтобы выбрать её для новых записей.")
         await self.show(owner, text, thread, keyboard(*rows), edit_id)
 
-    async def show_notes(self, owner, thread, identity, page=0, edit_id=None):
+    async def show_notes_menu(self, owner, thread, identity, page=0, edit_id=None):
         folder = self.store.folder(owner, identity)
         self.store.set_action(owner, None)
         self.store.select(owner, identity)
@@ -976,6 +985,9 @@ class Bot(FolderMenuMixin, CleanupMixin, AIBotMixin):
 
     async def worker(self):
         while True:
+            if self.view_rendering:
+                await asyncio.sleep(.2)
+                continue
             note = self.store.claim_note()
             if note is None:
                 # Processing may have finished just before a crash and before delivery began.

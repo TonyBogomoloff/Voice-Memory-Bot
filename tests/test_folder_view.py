@@ -1,0 +1,145 @@
+import asyncio
+
+import pytest
+from test_commands import bot as bot
+from test_commands import receive
+
+from voice_memory_bot.folder_view import RENEW_AFTER
+from voice_memory_bot.providers import ProviderError, TelegramError
+
+
+def saved(bot, folder, text, mid):
+    note, _ = bot.store.add_note(1, folder, {'message_id': mid}, 'text', transcript=text)
+    bot.store.update_note(1, note['id'], state='ready', delivery='sent', transcript_delivery='sent', title=text)
+    bot.cleanup.remember(1, mid)
+    return note
+
+
+def test_switch_renders_only_selected_folder_and_preserves_archive(bot, tmp_path):
+    async def run():
+        inbox = bot.store.ensure_user(1)
+        work = bot.store.create_folder(1, 'Работа')['id']
+        first = saved(bot, inbox, 'Текст первой папки', 1001)
+        second = saved(bot, work, 'Текст второй папки', 1002)
+        original = tmp_path / 'notes' / 'original.ogg'
+        original.parent.mkdir(exist_ok=True)
+        original.write_bytes(b'original audio')
+        before = bot.store.all('SELECT * FROM notes ORDER BY id')
+        bot.cleanup.remember(2, 2001)
+        bot.cleanup.remember(1, 3001, 99)
+        await bot.show_notes(1, None, work)
+        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        assert {1001, 1002} <= deleted and not {2001, 3001} & deleted
+        texts = [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage']
+        assert 'Текст второй папки' in texts and 'Текст первой папки' not in texts
+        bot.telegram.sent.clear()
+        await bot.show_notes(1, None, inbox)
+        assert any(p.get('text') == 'Текст первой папки' for _, p in bot.telegram.sent)
+        assert bot.store.all('SELECT * FROM notes ORDER BY id') == before
+        assert original.read_bytes() == b'original audio'
+        await receive(bot, 'Новая надиктовка', 4001)
+        assert bot.store.notes(1)[0]['folder_id'] == inbox
+        assert bot.store.note(1, first['id']) and bot.store.note(1, second['id'])
+    asyncio.run(run())
+
+
+def test_renewal_uses_oldest_send_not_recent_activity_and_survives_restart(bot):
+    async def run():
+        inbox = bot.store.ensure_user(1)
+        await bot.show_notes(1, None, inbox)
+        with bot.store.db:
+            bot.store.db.execute('UPDATE telegram_messages SET sent_at=1000')
+        bot.cleanup.remember(1, 9001, sent_at=1000 + RENEW_AFTER - 10)
+        # Editing/receiving the same ID must not extend the original deletion deadline.
+        old = bot.store.one('SELECT message_id FROM telegram_messages WHERE sent_at=1000')['message_id']
+        bot.cleanup.remember(1, old)
+        bot.init_folder_view()
+        bot.telegram.sent.clear()
+        await bot.refresh_due_views(now=1000 + RENEW_AFTER - 1)
+        assert bot.telegram.sent == []
+        await bot.refresh_due_views(now=1000 + RENEW_AFTER)
+        assert any(m == 'deleteMessage' and p['message_id'] == old for m, p in bot.telegram.sent)
+        assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
+        bot.telegram.sent.clear()
+        await bot.refresh_due_views(now=1000 + RENEW_AFTER + 1)
+        assert bot.telegram.sent == []
+    asyncio.run(run())
+
+
+def test_processing_defers_deletion_but_selects_destination_immediately(bot):
+    async def run():
+        inbox = bot.store.ensure_user(1)
+        work = bot.store.create_folder(1, 'Работа')['id']
+        await receive(bot, 'Ещё сохраняется', 1001)
+        note = bot.store.notes(1)[0]
+        await bot.show_notes(1, None, work)
+        assert bot.store.current_folder(1) == work
+        assert not any(m == 'deleteMessage' for m, _ in bot.telegram.sent)
+        assert bot.store.note(1, note['id'])['folder_id'] == inbox
+        bot.store.update_note(1, note['id'], state='ready', delivery='sent', transcript_delivery='sent')
+        await bot.refresh_due_views()
+        assert any(m == 'deleteMessage' for m, _ in bot.telegram.sent)
+        assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
+    asyncio.run(run())
+
+
+def test_failed_delete_remains_retryable_and_expired_id_stays_available_to_delete_all(bot):
+    async def run():
+        inbox = bot.store.ensure_user(1)
+        bot.cleanup.remember(1, 1001, sent_at=1)
+        call = bot.telegram.call
+        error = ProviderError('telegram_transport_unknown')
+
+        async def fail(method, **payload):
+            if method == 'deleteMessage' and payload['message_id'] == 1001:
+                raise error
+            return await call(method, **payload)
+
+        bot.telegram.call = fail
+        with pytest.raises(ProviderError):
+            await bot.show_notes(1, None, inbox)
+        assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 1
+        assert bot.store.one('SELECT * FROM telegram_messages WHERE message_id=1001')
+        error = TelegramError(400, 'deleteMessage', "message can't be deleted")
+        await bot.refresh_due_views()
+        assert bot.store.one('SELECT * FROM telegram_messages WHERE message_id=1001')['view_blocked'] == 1
+        assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
+        bot.cleanup.begin(1)
+        await bot.refresh_due_views()
+        assert bot.store.all('SELECT * FROM folder_views') == []
+        assert 1001 in [t['identity'] for t in bot.cleanup.targets(1, 'message')]
+    asyncio.run(run())
+
+
+def test_rate_limit_retries_only_refused_send_and_keeps_unsaved_source(bot, monkeypatch):
+    async def run():
+        inbox = bot.store.ensure_user(1)
+        note, _ = bot.store.add_note(1, inbox, {'message_id': 1001}, 'voice', 'file', 'ogg', 12, 1)
+        bot.store.update_note(1, note['id'], state='asr_failed', delivery='sent', transcript_delivery='unknown')
+        bot.cleanup.remember(1, 1001)
+        call = bot.telegram.call
+        refused = False
+
+        async def limited(method, **payload):
+            nonlocal refused
+            if method == 'sendMessage' and not refused:
+                refused = True
+                raise TelegramError(429, method, 'Too Many Requests')
+            return await call(method, **payload)
+
+        async def no_wait(seconds):
+            pass
+
+        monkeypatch.setattr(asyncio, 'sleep', no_wait)
+        bot.telegram.call = limited
+        await bot.show_notes(1, None, inbox)
+        assert refused
+        assert not any(m == 'deleteMessage' and p['message_id'] == 1001 for m, p in bot.telegram.sent)
+        assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
+        assert bot.store.one('SELECT * FROM telegram_messages WHERE message_id=1001')
+        bot.store.set_action(1, 'create')
+        with bot.store.db:
+            bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')
+        await bot.refresh_due_views()
+        assert bot.store.action(1) == 'create'
+    asyncio.run(run())

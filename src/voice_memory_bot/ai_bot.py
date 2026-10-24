@@ -278,6 +278,9 @@ class AIBotMixin:
 
     async def ai_worker(self):
         while True:
+            if self.view_rendering:
+                await asyncio.sleep(.2)
+                continue
             try:
                 self.flush_ai_archive()
                 request = self.ai_state.claim()
