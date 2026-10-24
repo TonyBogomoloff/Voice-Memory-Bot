@@ -60,7 +60,7 @@ def migrate_ai(db):
     """)
     with db:
         columns = {r[1] for r in db.execute("PRAGMA table_info(ai_requests)")}
-        for name in ("input_text", "result_note_id"):
+        for name in ("input_text", "result_note_id", "reply_context"):
             if name not in columns:
                 db.execute(f"ALTER TABLE ai_requests ADD COLUMN {name} TEXT")
         db.execute("UPDATE ai_requests SET state='queued' WHERE state='running'")
@@ -170,7 +170,7 @@ class AIStore:
                               "JOIN notes n ON n.id=a.note_id WHERE a.owner=? AND a.result_note_id=? "
                               "AND n.deleted=0", (owner, note_id))
 
-    def enqueue(self, owner, note_id, trigger, thread=None, reply_to=None, conversation=None):
+    def enqueue(self, owner, note_id, trigger, thread=None, reply_to=None, conversation=None, *, reply_context=None):
         note = self.store.note(owner, note_id)
         existing = self.request(owner, note_id)
         if existing:
@@ -189,6 +189,7 @@ class AIStore:
             self.db.execute("INSERT INTO ai_requests(note_id,owner,conversation_id,trigger,thread_id,reply_to,created_at) "
                             "VALUES (?,?,?,?,?,?,?)", (note_id, owner, conversation, trigger, thread, reply_to,
                                                       note["created_at"]))
+            self.db.execute("UPDATE ai_requests SET reply_context=? WHERE note_id=?", (reply_context, note_id))
             if trigger == "miniapp":
                 text = note["content"] if note["content"] is not None else note["transcript"]
                 self.db.execute("UPDATE ai_requests SET input_text=? WHERE note_id=?", (text, note_id))

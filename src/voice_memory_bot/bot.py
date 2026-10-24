@@ -303,7 +303,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             if text.startswith("/"):
                 command, _, argument = text.partition(" ")
                 return await self.command(owner, thread, command.split("@")[0].lower(), argument.strip())
-            if self.store.action(owner) and not self.store.action(owner).startswith("ai_note:"):
+            if (not self.reply_input(owner, message) and self.store.action(owner)
+                    and not self.store.action(owner).startswith("ai_note:")):
                 if text:
                     return await self.input_action(owner, thread, text)
                 naming_action = self.store.action(owner)
@@ -319,8 +320,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             if not self.store.folders(owner):
                 return await self.ask_first_folder(owner, thread)
             folder = self.source_folder(owner, thread, message)["id"]
-            if not message.get("photo"):
-                self.check_ai_capacity(owner, folder, message)
+            self.check_ai_capacity(owner, folder, message)
             if text:
                 note, created = self.store.add_note(owner, folder, message, "text", transcript=message["text"])
             else:
@@ -350,6 +350,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                 # The worker uses the same lock, so a quick ASR cannot outrun the status checkpoint.
                 async with self.note_locks[note["id"]]:
                     if note["kind"] == "photo":
+                        if self.reply_input(owner, message):
+                            self.capture_ai_input(note, message)
                         return
                     if note["kind"] == "text":
                         self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
@@ -1076,6 +1078,9 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
     async def process_photo(self, note):
         owner, identity = note["owner"], note["id"]
         try:
+            source = json.loads(note.get("source_json") or "{}")
+            if self.reply_input(owner, source):
+                self.capture_ai_input(note, {**source, "message_thread_id": note["source_thread"]})
             path = self.archive.audio(note)
             if path.exists():
                 size = path.stat().st_size
@@ -1085,6 +1090,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                 size, checksum = await self.telegram.download(note["file_id"], path, self.config.limits.max_file_bytes)
             self.store.update_note(owner, identity, audio_bytes=size, sha256=checksum, state="ready",
                                    title=(note["transcript"] or "Фото")[:80], routing="manual", error=None)
+            await self.route_ai(self.store.note(owner, identity), detect=False)
             note = self.store.note(owner, identity)
             self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
             await self.clear_status(note)

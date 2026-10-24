@@ -336,7 +336,7 @@ class Store:
                  message.get("reply_to_message", {}).get("message_id"),
                  json.dumps({key: message[key] for key in (
                      "message_id", "date", "text", "entities", "caption", "caption_entities",
-                     "voice", "video_note", "video", "audio", "document", "photo") if key in message},
+                     "voice", "video_note", "video", "audio", "document", "photo", "reply_to_message") if key in message},
                      ensure_ascii=False),
                  media.get("file_name"), media.get("mime_type")))
         return self.note(owner, identity), True

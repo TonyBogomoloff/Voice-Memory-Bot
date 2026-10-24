@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
 
@@ -28,9 +29,28 @@ class AIBotMixin:
         self.ai_engine = AssistantEngine(self.ai_state, self.assistant, self.config.llm.model, self.ai_models, self.archive)
         self.ai_delivery_locks = defaultdict(asyncio.Lock)
 
+    def reply_input(self, owner, message):
+        reply = message.get("reply_to_message") or {}
+        if not reply.get("message_id") or "forum_topic_created" in reply:
+            return None
+        if reply.get("chat", {}).get("id", owner) != owner:
+            return None
+        return reply
+
+    def reply_context(self, owner, reply):
+        text = reply.get("text") or reply.get("caption")
+        if not text:
+            saved = self.store.one(
+                "SELECT n.transcript,n.content FROM notes n JOIN note_messages m ON m.note_id=n.id "
+                "AND m.owner=n.owner WHERE m.owner=? AND m.message_id=? AND n.deleted=0 AND m.deleted=0",
+                (owner, reply["message_id"]))
+            if saved:
+                text = saved["content"] if saved["content"] is not None else saved["transcript"]
+        return (text or "Текст исходного сообщения недоступен.")[:40000]
+
     def check_ai_capacity(self, owner, folder_id, message):
         folder = self.store.folder(owner, folder_id)
-        reply = self.ai_state.reply_conversation(owner, message.get("reply_to_message", {}).get("message_id"))
+        reply = self.reply_input(owner, message)
         action = self.store.action(owner) or ""
         if action.startswith("ai_note:"):
             context = self.ai_state.note_context(owner, action.split(":", 1)[1])
@@ -44,19 +64,24 @@ class AIBotMixin:
 
     def capture_ai_input(self, note, message, *, scoped=False):
         owner = note["owner"]
-        conversation = self.ai_state.reply_conversation(owner, message.get("reply_to_message", {}).get("message_id"))
+        source = json.loads(note.get("source_json") or "{}")
+        if "reply_to_message" in source:
+            message = {**message, "reply_to_message": source["reply_to_message"]}
+        reply = self.reply_input(owner, message)
+        conversation = self.ai_state.reply_conversation(owner, reply["message_id"]) if reply else None
         action = self.store.action(owner) or ""
-        if scoped and action.startswith("ai_note:"):
+        if scoped and not reply and action.startswith("ai_note:"):
             conversation = action.split(":", 1)[1]
             context = self.ai_state.note_context(owner, conversation)
             if context:
                 self.store.note(owner, context["note_id"])
-        if conversation or note["input_mode"] == "chat":
-            trigger = "reply" if conversation else "folder"
-            if not conversation and not self.ai_state.request(owner, note["id"]):
+        if reply or conversation or note["input_mode"] == "chat":
+            trigger = "reply" if reply or conversation else "folder"
+            if not reply and not conversation and not self.ai_state.request(owner, note["id"]):
                 conversation = self.ai_state.active(owner, note["source_folder"])
             self.ai_state.enqueue(owner, note["id"], trigger,
-                                  message.get("message_thread_id"), message["message_id"], conversation)
+                                  message.get("message_thread_id"), message["message_id"], conversation,
+                                  reply_context=self.reply_context(owner, reply) if reply else None)
             if scoped and action.startswith("ai_note:"):
                 self.store.set_action(owner, None)
 
@@ -99,7 +124,7 @@ class AIBotMixin:
             rows.append([key("Изменить имена", "ainames")])
         rows.extend([[key("Доступ: " + access_labels[settings['notes_access']], "aiaccessmenu")],
                      [key("Модель: " + selected, "aimodels")]])
-        text += "\n\nВ ИИ-папке все сообщения идут в диалог. Ответ на реплику ИИ продолжает разговор."
+        text += "\n\nВ ИИ-папке все сообщения идут в диалог. Ответ на любое сообщение запускает ИИ с текстом этого сообщения как контекстом."
         text += "\nПри доступе к заметкам модель получает найденные записи по мере запроса."
         await self.show_bottom(owner, text, thread, keys(*rows), screen="aisettings",
                                back="settings:all", edit_id=edit_id)
