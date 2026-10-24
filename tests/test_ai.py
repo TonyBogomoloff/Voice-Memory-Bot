@@ -89,6 +89,7 @@ def test_chat_voice_history_reply_new_conversation_and_model_change(bot):
     async def run():
         folder = bot.store.create_folder(1, "Разговор", 100)
         bot.ai_state.mode(1, folder["id"], "chat")
+        bot.store.select(1, folder["id"])
         first = await receive(bot, thread=100, voice=True)
         assert first["entry_type"] == "ai" and bot.router.calls == 0 and bot.groq.calls == 1
         await bot.process_ai(bot.ai_state.claim())
@@ -274,6 +275,7 @@ def test_folder_mode_snapshot_and_reply_survive_restart_before_asr(bot, tmp_path
     async def run():
         folder = bot.store.create_folder(1, "ИИ", thread=100)
         bot.ai_state.mode(1, folder["id"], "chat")
+        bot.store.select(1, folder["id"])
         note, _ = bot.store.add_note(1, folder["id"], {"message_id": 10, "message_thread_id": 100},
                                       "text", transcript="Привет")
         bot.ai_state.mode(1, folder["id"], "notes")
@@ -341,6 +343,7 @@ def test_ai_queue_rejects_new_input_before_archiving_and_context_is_bounded(bot)
     async def run():
         folder = bot.store.create_folder(1, "ИИ", 100)
         bot.ai_state.mode(1, folder["id"], "chat")
+        bot.store.select(1, folder["id"])
         bot.store.limits = replace(bot.store.limits, max_pending_per_user=1)
         first = await receive(bot, "Привет", thread=100)
         await bot.handle({"message": {"message_id": 102, "text": "Ещё", "message_thread_id": 100,

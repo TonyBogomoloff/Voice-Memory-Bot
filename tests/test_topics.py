@@ -8,19 +8,18 @@ from test_mvp import store as store
 from voice_memory_bot.providers import Telegram
 
 
-def test_native_folder_wins_over_stale_selection_and_spoken_folder(tmp_path, store):
+def test_custom_folder_wins_over_legacy_telegram_topic_and_spoken_folder(tmp_path, store):
     async def run():
-        first = store.create_folder(1, "Test1", thread=100)
+        store.create_folder(1, "Test1", thread=100)
         second = store.create_folder(1, "Test2", thread=200)
         store.select(1, second["id"])
         bot = make_bot(tmp_path, store)
-        bot.topics_enabled = True
         async def transcript(_):
             return "Сохрани в папку Test2. Ещё одна заметка."
         async def classifier(*args):
             raise AssertionError("Folder routing must not depend on an LLM")
         bot.groq.transcribe, bot.router.classify = transcript, classifier
-        for message_id, thread, folder in [(10, 100, first), (20, 200, second), (30, 100, first)]:
+        for message_id, thread, folder in [(10, 100, second), (20, 200, second), (30, 100, second)]:
             bot.telegram.sent.clear()
             await receive_voice(bot, message_id, thread)
             await bot.process(store.claim_note())
@@ -32,7 +31,7 @@ def test_native_folder_wins_over_stale_selection_and_spoken_folder(tmp_path, sto
     asyncio.run(run())
 
 
-def test_old_ignored_topic_is_imported_from_its_telegram_metadata(tmp_path, store):
+def test_old_topic_metadata_never_imports_a_new_folder(tmp_path, store):
     async def run():
         store.mark_implicit_topic(1, 100)
         bot = make_bot(tmp_path, store)
@@ -43,7 +42,8 @@ def test_old_ignored_topic_is_imported_from_its_telegram_metadata(tmp_path, stor
                                  "forum_topic_created": {"name": "Test1", "is_name_implicit": True}}}})
         await bot.process(store.claim_note())
         note = store.notes(1)[0]
-        assert store.folder(1, note["folder_id"])["name"] == "Test1"
+        assert note["folder_id"] == store.ensure_user(1)
+        assert store.folder_for_thread(1, 100) is None
         assert note["source_thread"] == note["result_thread"] == 100
         assert not any(m == "createForumTopic" for m, _ in bot.telegram.sent)
     asyncio.run(run())
@@ -52,11 +52,10 @@ def test_old_ignored_topic_is_imported_from_its_telegram_metadata(tmp_path, stor
 @pytest.mark.parametrize("recover_at", ["status", "transcript", "never"])
 def test_missing_topic_replies_to_source_and_uses_only_confirmed_topic(tmp_path, store, recover_at):
     async def run():
-        folder = store.create_folder(1, "Test1", 100)
+        store.create_folder(1, "Test1", 100)
         other = store.create_folder(1, "Test2", 200)
         store.select(1, other["id"])
         bot = make_bot(tmp_path, store)
-        bot.topics_enabled = True
         # Telegram message IDs must not collide with the incoming message in this fixture.
         bot.telegram.message_sequence = 1000
         call = bot.telegram.call
@@ -71,7 +70,7 @@ def test_missing_topic_replies_to_source_and_uses_only_confirmed_topic(tmp_path,
         await receive_voice(bot, thread=None)
         await bot.process(store.claim_note())
         note = store.notes(1)[0]
-        assert note["folder_id"] == (store.ensure_user(1) if recover_at == "never" else folder["id"])
+        assert note["folder_id"] == other["id"]
         assert note["source_thread"] == note["result_thread"] == (None if recover_at == "never" else 100)
         sends = [p for m, p in bot.telegram.sent if m == "sendMessage"]
         assert len(sends) == 2 and sends[0]["reply_to"] == 10

@@ -11,7 +11,6 @@ from voice_memory_bot.store import Store
 def bot(tmp_path):
     store = Store(tmp_path / "archive.sqlite3", Limits())
     app = make_bot(tmp_path, store)
-    app.topics_enabled = True
     yield app
     store.close()
 
@@ -40,7 +39,6 @@ def test_commands_do_not_import_unknown_threads_as_folders(bot, command, extra_f
 
 @pytest.mark.parametrize("command", ["/start", "/folders"])
 def test_navigation_commands_cancel_pending_folder_input(bot, command):
-    bot.topics_enabled = False
 
     async def run():
         await receive(bot, "/new")

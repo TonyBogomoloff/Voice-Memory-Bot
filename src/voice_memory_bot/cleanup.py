@@ -186,13 +186,12 @@ class CleanupMixin:
         return True
 
     async def delete_telegram_snapshot(self, owner):
-        from .bot import missing_topic
         for target in self.cleanup.targets(owner, "topic"):
             identity = target["identity"]
             try:
                 await self.telegram.call("deleteForumTopic", chat_id=owner, message_thread_id=identity)
             except ProviderError as exc:
-                if not missing_topic(exc):
+                if getattr(exc, "reason", None) not in {"thread_not_found", "thread_invalid", "topic_deleted"}:
                     log.warning("topic cleanup failed owner=%s error=%s", owner, exc)
                     if str(exc) != "telegram_400":
                         return

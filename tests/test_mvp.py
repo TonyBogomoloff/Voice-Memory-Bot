@@ -11,7 +11,7 @@ import pytest
 from voice_memory_bot.archive import Archive
 from voice_memory_bot.bot import Bot
 from voice_memory_bot.config import Config, Limits, LLMConfig
-from voice_memory_bot.providers import CodexRouter, Groq, ProviderError, Telegram, TelegramError
+from voice_memory_bot.providers import CodexRouter, Groq, ProviderError, Telegram
 from voice_memory_bot.routing import decide
 from voice_memory_bot.store import Store
 
@@ -110,16 +110,15 @@ def test_import_of_bot_created_topic_reuses_pending_folder(store):
     assert len(store.folders(1)) == 2
 
 
-def test_implicit_telegram_threads_are_real_folders(tmp_path, store):
+def test_telegram_service_events_do_not_create_custom_folders(tmp_path, store):
     async def run():
         bot = make_bot(tmp_path, store)
         base = {"from": {"id": 1}, "chat": {"id": 1, "type": "private"}, "message_thread_id": 99}
         await bot.handle({"message": {**base, "message_id": 1, "forum_topic_created": {
             "name": "Новая заметка", "is_name_implicit": True}}})
         await bot.handle({"message": {**base, "message_id": 2, "text": "Идея для будущего"}})
-        folder = store.folder_for_thread(1, 99)
-        assert folder["name"] == "Новая заметка"
-        assert store.notes(1)[0]["source_folder"] == folder["id"]
+        assert store.folder_for_thread(1, 99) is None
+        assert store.notes(1)[0]["source_folder"] == store.ensure_user(1)
     asyncio.run(run())
 
 
@@ -305,6 +304,7 @@ async def receive_voice(bot, message_id=10, thread=100):
 def test_voice_transcript_is_delivered_without_calling_folder_classifier(tmp_path, store):
     async def run():
         game = store.create_folder(1, "Игра", thread=100)
+        store.select(1, game["id"])
         bot = make_bot(tmp_path, store)
         async def unused_router(*args):
             raise AssertionError("A folder classifier must not run for an ordinary note")
@@ -343,7 +343,7 @@ def test_long_transcript_is_sent_as_complete_text_messages(tmp_path, store):
     asyncio.run(run())
 
 
-def test_voice_options_move_publishes_then_removes_source_with_only_toast(tmp_path, store):
+def test_voice_options_move_changes_archive_with_only_toast(tmp_path, store):
     async def run():
         store.create_folder(1, "Игра", thread=100)
         work = store.create_folder(1, "Работа", thread=200)
@@ -364,16 +364,9 @@ def test_voice_options_move_publishes_then_removes_source_with_only_toast(tmp_pa
             "message": {"message_id": message_id, "message_thread_id": 100,
                         "chat": {"id": 1, "type": "private"}}}})
         assert store.note(1, note["id"])["folder_id"] == work["id"]
-        assert any(method == "sendVoice" and payload["message_thread_id"] == 200
-                   for method, payload in bot.telegram.sent)
-        assert any(method == "sendMessage" and payload["thread"] == 200
-                   and payload["text"] == note["transcript"] for method, payload in bot.telegram.sent)
-        assert all(method != "editMessageText" for method, _ in bot.telegram.sent)
+        assert not any(method.startswith("send") or method == "deleteMessage" for method, _ in bot.telegram.sent)
         assert bot.telegram.sent[-1] == ("answerCallbackQuery", {
-            "callback_query_id": "move-click", "text": "Запись перенесена."})
-        assert all(p["thread"] == 200 for m, p in bot.telegram.sent if m == "sendMessage")
-        deleted = [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"]
-        assert 10 in deleted and message_id in deleted
+            "callback_query_id": "move-click", "text": "Перенесено в «Работа»."})
     asyncio.run(run())
 
 
@@ -468,57 +461,18 @@ def test_transcript_migration_keeps_delivery_history_and_failed_asr_retryable(tm
 
 
 @pytest.mark.parametrize("kind", ["voice", "text"])
-def test_deleted_destination_topic_is_recreated_after_rejected_first_send(tmp_path, store, kind):
+def test_move_does_not_contact_deleted_telegram_topics(tmp_path, store, kind):
     async def run():
-        game = store.create_folder(1, "Игра", thread=100)
+        target = store.create_folder(1, "Игра", thread=100)
         bot = make_bot(tmp_path, store)
-        bot.topics_enabled = True
         note = add(store, kind=kind, file_id="voice-id" if kind == "voice" else None,
-                   transcript="Сохрани в проект Игра. Мысль.")
-        call = bot.telegram.call
-        async def deleted_topic(method, **kwargs):
-            if kwargs.get("message_thread_id", kwargs.get("thread")) == 100 and method.startswith("send"):
-                raise TelegramError(400, method, "Bad Request: message thread not found")
-            return await call(method, **kwargs)
-        bot.telegram.call = deleted_topic
+                   transcript="Длинная идея. " * 700)
         await bot.process(store.claim_note())
-        await bot.move(1, note["id"], game["id"], None)
-        saved = store.note(1, note["id"])
-        assert saved["delivery"] == "sent" and saved["result_thread"] == 123
-        assert store.folder(1, game["id"])["thread_id"] == 123
-        assert sum(method == "createForumTopic" for method, _ in bot.telegram.sent) == 1
-        texts = [payload for method, payload in bot.telegram.sent if method == "sendMessage"]
-        assert [p["thread"] for p in texts] == [None, 123]
-        assert all(p["text"] == note["transcript"] for p in texts)
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("kind", ["voice", "text"])
-def test_partial_destination_delivery_is_not_repeated_when_topic_disappears(tmp_path, store, kind):
-    async def run():
-        game = store.create_folder(1, "Игра", thread=100)
-        bot = make_bot(tmp_path, store)
-        bot.topics_enabled = True
-        note = add(store, kind=kind, file_id="voice-id" if kind == "voice" else None,
-                   transcript="Сохрани в проект Игра. " + "Длинная идея. " * 700)
-        call, sent_parts = bot.telegram.call, 0
-        async def removed_midway(method, **kwargs):
-            nonlocal sent_parts
-            if kwargs.get("message_thread_id", kwargs.get("thread")) == 100 and method.startswith("send"):
-                if sent_parts:
-                    raise TelegramError(400, method, "Bad Request: message thread not found")
-                sent_parts += 1
-            return await call(method, **kwargs)
-        bot.telegram.call = removed_midway
-        await bot.process(store.claim_note())
-        await bot.move(1, note["id"], game["id"], None)
-        saved = store.note(1, note["id"])
-        assert saved["transcript_delivery"] == "sent" and bot.messages.get(1, note["id"])["state"] == "unknown"
-        assert store.folder(1, game["id"])["thread_id"] == 100
-        before = list(bot.telegram.sent)
-        await bot.deliver(saved)
-        assert bot.telegram.sent == before
-        assert all(method != "createForumTopic" for method, _ in before)
+        bot.telegram.sent.clear()
+        bot.telegram.fail_delivery = True
+        await bot.move(1, note["id"], target["id"], None)
+        assert store.note(1, note["id"])["folder_id"] == target["id"]
+        assert bot.telegram.sent == []
     asyncio.run(run())
 
 

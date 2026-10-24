@@ -34,9 +34,10 @@ def photo_bot(tmp_path, store):
 
 
 @pytest.mark.parametrize("caption", ["", "Сохрани в проект Работа. Подпись к снимку."])
-def test_photo_controls_archive_and_move_remove_only_source_messages(tmp_path, store, caption):
+def test_photo_controls_archive_and_move_preserve_source_messages(tmp_path, store, caption):
     async def run():
         game = store.create_folder(1, "Игра", thread=100)
+        store.select(1, game["id"])
         work = store.create_folder(1, "Работа", thread=200)
         bot = photo_bot(tmp_path, store)
         await receive_photo(bot, caption)
@@ -45,7 +46,6 @@ def test_photo_controls_archive_and_move_remove_only_source_messages(tmp_path, s
         method, controls = bot.telegram.sent[0]
         assert method == "sendMessage" and controls["thread"] == 100
         assert controls["keyboard"]["inline_keyboard"] == [[{
-            "text": "✍️ Записать сюда", "callback_data": "record:100"}, {
             "text": "Опции", "callback_data": f"options:{note['id']}"}]]
         await bot.process(store.claim_note())
         note = store.note(1, note["id"])
@@ -68,20 +68,13 @@ def test_photo_controls_archive_and_move_remove_only_source_messages(tmp_path, s
         await bot.callback(1, 100, control_id, f"pick:{note['id']}:0")
         bot.telegram.sent.clear()
         notification = await bot.callback(1, 100, control_id, f"place:{note['id']}:{work['id']}")
-        sent_photo = bot.telegram.sent[0]
-        assert sent_photo[0] == "sendPhoto"
-        assert sent_photo[1]["photo"] == "photo-original" and sent_photo[1]["message_thread_id"] == 200
-        assert sent_photo[1]["caption"] == (caption or None)
-        assert sent_photo[1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Опции"
-        assert [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"] == [10, control_id]
-        assert notification == "Запись перенесена."
-        assert all(m != "sendMessage" for m, _ in bot.telegram.sent)
-        destination_ids = bot.messages.in_thread(1, note["id"], 200)
-        assert len(destination_ids) == 1
-        bot.telegram.sent.clear()
+        assert bot.telegram.sent == []
+        assert notification == "Перенесено в «Работа»."
+        assert store.note(1, note["id"])["folder_id"] == work["id"]
+        assert bot.messages.in_thread(1, note["id"], 100) == [10, control_id]
         await bot.move(1, note["id"], game["id"], 200)
-        assert bot.telegram.sent[0][0] == "sendPhoto"
-        assert [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"] == destination_ids
+        assert bot.telegram.sent == []
+        assert store.note(1, note["id"])["folder_id"] == game["id"]
     asyncio.run(run())
 
 
@@ -110,9 +103,10 @@ def test_photo_failed_download_can_retry_without_losing_controls(tmp_path, store
     asyncio.run(run())
 
 
-def test_photo_uncertain_move_keeps_original_and_controls(tmp_path, store):
+def test_photo_move_works_without_telegram_delivery(tmp_path, store):
     async def run():
         game = store.create_folder(1, "Игра", thread=100)
+        store.select(1, game["id"])
         work = store.create_folder(1, "Работа", thread=200)
         bot = photo_bot(tmp_path, store)
         await receive_photo(bot)
@@ -127,6 +121,6 @@ def test_photo_uncertain_move_keeps_original_and_controls(tmp_path, store):
         bot.telegram.sent.clear()
         await bot.move(1, note["id"], work["id"], 100)
         assert all(m != "deleteMessage" for m, _ in bot.telegram.sent)
-        assert store.note(1, note["id"])["folder_id"] == game["id"]
+        assert store.note(1, note["id"])["folder_id"] == work["id"]
         assert bot.messages.in_thread(1, note["id"], 100) == [10, note["transcript_message_id"]]
     asyncio.run(run())

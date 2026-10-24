@@ -221,15 +221,18 @@ def test_failed_asr_retains_original_and_retry_does_not_send_telegram(tmp_path, 
     asyncio.run(run())
 
 
-def test_app_command_and_home_open_registered_url(tmp_path, store):
+def test_app_command_opens_registered_url_but_home_keeps_folder_keyboard(tmp_path, store):
     async def run():
         bot = make_bot(tmp_path, store)
         bot.config = replace(bot.config, web_url="https://audio-notes.example.test")
         await bot.command(1, None, "/app", "")
         assert bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"][0][0]["web_app"]["url"] == bot.config.web_url
-        from voice_memory_bot.bot import HOME
-        await bot.show(1, "Menu", keys=HOME)
-        assert bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"][0][0]["web_app"]["url"] == bot.config.web_url
+        await bot.command(1, None, "/start", "")
+        menu = bot.telegram.sent[-1][1]["keyboard"]
+        assert menu["is_persistent"] and menu["keyboard"][0][0]["text"] == "📁 Папки"
+        assert "web_app" not in str(menu)
+        await bot.configure_menu()
+        assert all(p["menu_button"] == {"type": "commands"} for m, p in bot.telegram.sent if m == "setChatMenuButton")
     asyncio.run(run())
 
 

@@ -97,12 +97,12 @@ class AIBotMixin:
                 name, number = f"ИИ {number}", number + 1
             folder = self.store.create_folder(owner, name)
             self.ai_state.mode(owner, folder["id"], "chat")
-        target = await self.ensure_topic(owner, folder["id"])
-        await self.ensure_record_panel(owner, target)
+        self.store.select(owner, folder["id"])
+        self.store.set_action(owner, None)
         conversation = self.ai_state.active(owner, folder["id"])
         response = await self.show(owner, f"🤖 Папка «{folder['name']}» — диалог с ИИ.\n"
                                    "Отправь текст или голосовое. Можно попросить найти, создать или изменить заметку.",
-                                   target or thread, keys([key("Новый разговор", f"ainew:{folder['id']}")],
+                                   thread, keys([key("Новый разговор", f"ainew:{folder['id']}")],
                                    [key("История разговоров", f"ailist:{folder['id']}:0"), key("Настройки", "aisettings")]))
         self.ai_state.link(owner, response["message_id"], conversation)
 

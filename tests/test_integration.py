@@ -7,7 +7,7 @@ from test_mvp import store as store
 from test_photos import photo_bot, receive_photo
 
 
-def test_edited_voice_move_preserves_original_and_blocks_concurrent_ai_edit(bot, tmp_path):
+def test_edited_voice_move_preserves_original_and_invalidates_stale_ai_edit(bot, tmp_path):
     async def run():
         source = bot.store.create_folder(1, "Проект", 100)
         target = bot.store.create_folder(1, "Архив", 200)
@@ -20,28 +20,14 @@ def test_edited_voice_move_preserves_original_and_blocks_concurrent_ai_edit(bot,
         assert tool(bot, request["id"], command)["ok"]
         bot.flush_ai_archive()
         edited = bot.store.note(1, note["id"])
-        source_ids = bot.messages.in_thread(1, note["id"], 100)
-        entered, release = asyncio.Event(), asyncio.Event()
-        publish = bot.publish_note
-        async def paused_publish(*args):
-            entered.set()
-            await release.wait()
-            return await publish(*args)
-        bot.publish_note = paused_publish
+        tool(bot, request["id"], step("read_note", note_id=note["id"]))
         bot.telegram.sent.clear()
-        move = asyncio.create_task(bot.move(1, note["id"], target["id"], 100))
-        await asyncio.wait_for(entered.wait(), 2)
-        try:
-            tool(bot, request["id"], step("read_note", note_id=note["id"]))
-            blocked = tool(bot, request["id"], {**command, "revision": 1, "content": "Гонка"})
-            assert "error" in blocked
-            assert bot.store.note(1, note["id"])["content"] == edited["content"]
-        finally:
-            release.set()
-            await move
-        sent = [p for m, p in bot.telegram.sent if m == "sendMessage"]
-        assert sent[0]["text"] == edited["content"] and sent[0]["reply_to"] is None
-        assert [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"] == source_ids
+        await bot.move(1, note["id"], target["id"], 100)
+        blocked = tool(bot, request["id"], {**command, "revision": 1, "content": "Гонка"})
+        assert "error" in blocked
+        assert bot.store.note(1, note["id"])["content"] == edited["content"]
+        assert bot.telegram.sent == []
+        bot.flush_ai_archive()
         saved = bot.store.note(1, note["id"])
         assert saved["folder_id"] == target["id"] and saved["transcript"] == note["transcript"]
         assert (bot.archive.directory(saved) / "transcript.txt").read_text() == note["transcript"]
@@ -70,10 +56,8 @@ def test_edited_photo_caption_moves_in_full_and_audio_export_stays_empty(tmp_pat
                     title="Фото", content=content))["ok"]
         app.telegram.sent.clear()
         await app.move(1, note["id"], target["id"], 100)
-        assert app.telegram.sent[0][0] == "sendPhoto"
-        assert app.telegram.sent[0][1]["caption"] is None
-        texts = [p["text"] for m, p in app.telegram.sent if m == "sendMessage"]
-        assert "".join(texts) == content
+        assert app.telegram.sent == []
+        assert store.note(1, note["id"])["content"] == content
         assert store.note(1, note["id"])["transcript"] == "Исходная подпись"
         app.telegram.sent.clear()
         await app.send_export(1, 200, target["id"], "voice")

@@ -1,102 +1,64 @@
 import asyncio
 
-from test_mvp import make_bot
+from test_commands import receive
+from test_mvp import make_bot, receive_voice
 from test_mvp import store as store
 
-
-def message(identity, prompt, **content):
-    return {"message_id": identity, "from": {"id": 1}, "chat": {"id": 1, "type": "private"},
-            "reply_to_message": {"message_id": prompt}, **content}
+from voice_memory_bot.config import Limits
+from voice_memory_bot.store import Store
 
 
-def test_record_prompts_route_interleaved_voice_after_restart(tmp_path, store):
+def test_folder_selection_survives_restart_and_pending_audio_keeps_its_destination(tmp_path, store):
     async def run():
-        store.create_folder(1, "Test1", thread=100)
-        store.create_folder(1, "Test2", thread=200)
+        first = store.create_folder(1, "Работа", 100)
+        second = store.create_folder(1, "Личное", 200)
         bot = make_bot(tmp_path, store)
-        bot.telegram.message_sequence = 1000
-        await bot.start_recording(1, 100)
-        await bot.start_recording(1, 200)
-        assert bot.telegram.sent[-1][1]["keyboard"]["force_reply"] is True
-        bot = make_bot(tmp_path, store)
-        bot.telegram.message_sequence = 2000
-        for identity, prompt, thread in [(10, 1002, 200), (11, 1001, 100)]:
-            await bot.handle({"message": message(identity, prompt,
-                voice={"file_id": "voice", "file_size": 32044, "duration": 1})})
-            await bot.process(store.claim_note())
-            note = store.one("SELECT * FROM notes WHERE message_id=?", (identity,))
-            assert note["source_thread"] == note["result_thread"] == thread
-            assert note["delivery"] == "sent"
-        assert not any(method == "sendVoice" for method, _ in bot.telegram.sent)
-        assert bot.recording_reply(2, message(12, 1001)) is None
-        assert bot.recording_reply(1, message(12, 1001, message_thread_id=200)) is None
+        await bot.callback(1, None, 500, f"folder:{first['id']}:0")
+        await receive_voice(bot, message_id=10, thread=200)
+        await bot.callback(1, None, 500, f"folder:{second['id']}:0")
+        store.close()
+        restarted = Store(tmp_path / "archive.sqlite3", Limits())
+        try:
+            bot = make_bot(tmp_path, restarted)
+            await bot.process(restarted.claim_note())
+            await receive_voice(bot, message_id=20, thread=None)
+            await bot.process(restarted.claim_note())
+            assert restarted.one("SELECT folder_id FROM notes WHERE message_id=10")["folder_id"] == first["id"]
+            assert restarted.one("SELECT folder_id FROM notes WHERE message_id=20")["folder_id"] == second["id"]
+            assert restarted.current_folder(2) == restarted.ensure_user(2)
+            assert restarted.folder(1, first["id"])["thread_id"] == 100
+            assert not any(m in {"createForumTopic", "sendVoice"} for m, _ in bot.telegram.sent)
+        finally:
+            restarted.close()
     asyncio.run(run())
 
 
-def test_old_topic_panel_names_existing_topic_once(tmp_path, store):
+def test_bottom_buttons_create_rename_search_and_cancel_without_archiving_ui_input(tmp_path, store):
     async def run():
-        store.mark_implicit_topic(1, 100)
         bot = make_bot(tmp_path, store)
-        bot.topics_enabled = True
-        bot.telegram.message_sequence = 1000
-        await bot.install_record_panels()
-        count = len(bot.telegram.sent)
-        await bot.install_record_panels()
-        assert len(bot.telegram.sent) == count
-        await bot.start_recording(1, 100)
-        prompt = bot.telegram.message_sequence
-        await bot.handle({"message": message(10, prompt, text="Test1")})
-        assert store.folder_for_thread(1, 100)["name"] == "Test1"
-        assert not store.notes(1)
-        assert store.one("SELECT purpose FROM record_prompts WHERE message_id=?", (prompt,))["purpose"] == "done"
-        assert bot.telegram.sent[-1][1]["keyboard"]["force_reply"] is True
-        assert not any(method == "createForumTopic" for method, _ in bot.telegram.sent)
+        await receive(bot, "/start")
+        assert bot.telegram.sent[-1][1]["keyboard"]["is_persistent"]
+        await receive(bot, "＋ Новая папка", 2)
+        await receive(bot, "Работа", 3)
+        folder = next(f for f in store.folders(1) if f["name"] == "Работа")
+        assert store.current_folder(1) == folder["id"]
+        await bot.callback(1, None, 500, f"rename:{folder['id']}")
+        await receive(bot, "Проекты", 4)
+        assert store.folder(1, folder["id"])["name"] == "Проекты"
+        await receive(bot, "🔎 Поиск", 5)
+        await receive(bot, "＋ Новая папка", 6)
+        await receive_voice(bot, 7, None)
+        assert store.notes(1) == [] and store.action(1) == "create"
+        await bot.callback(1, None, 500, "home")
+        await receive(bot, "Идея", 8)
+        await bot.process(store.claim_note())
+        assert [n["transcript"] for n in store.notes(1)] == ["Идея"]
+        await receive(bot, "🔎 Поиск", 9)
+        await receive(bot, "идея", 10)
+        assert store.notes(1)[0]["id"] in str(bot.telegram.sent[-1])
+        assert store.action(1) is None
+        assert not any(m in {"createForumTopic", "editForumTopic"} for m, _ in bot.telegram.sent)
+        for data in ("record:999", f"recordlink:999:{folder['id']}"):
+            await bot.callback(1, None, 500, data)
+        assert len(store.folders(1)) == 2
     asyncio.run(run())
-
-
-def test_uncertain_panel_is_not_duplicated_after_restart(tmp_path, store):
-    async def run():
-        store.create_folder(1, "Test1", thread=100)
-        bot = make_bot(tmp_path, store)
-        bot.topics_enabled = True
-        bot.telegram.fail_delivery = True
-        await bot.ensure_record_panel(1, 100)
-        bot = make_bot(tmp_path, store)
-        bot.topics_enabled = True
-        await bot.ensure_record_panel(1, 100)
-        assert not bot.telegram.sent
-        assert store.one("SELECT state FROM record_panels WHERE thread_id=100")["state"] == "unknown"
-    asyncio.run(run())
-
-
-def test_existing_archive_can_be_linked_without_duplicate_or_lost_notes(tmp_path, store):
-    async def run():
-        folder = store.create_folder(1, "Test2", thread=100)
-        note, _ = store.add_note(1, folder["id"], {"message_id": 10}, "text", transcript="keep")
-        store.mark_implicit_topic(1, 200)
-        bot = make_bot(tmp_path, store)
-        bot.topics_enabled = True
-        bot.telegram.message_sequence = 1000
-        await bot.install_record_panels()
-        await bot.start_recording(1, 200)
-        prompt = bot.telegram.message_sequence
-        await bot.handle({"message": message(20, prompt, text="Test2")})
-        assert store.folder(1, folder["id"])["thread_id"] == 100
-        callback = bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"][0][0]["callback_data"]
-        await bot.callback(1, 200, 2000, callback)
-        assert store.folder(1, folder["id"])["thread_id"] == 200
-        assert store.note(1, note["id"])["folder_id"] == folder["id"]
-        assert len([f for f in store.folders(1) if f["name"] == "Test2"]) == 1
-        assert bot.recording_reply(1, message(21, prompt)) is None
-        assert not any(method in {"createForumTopic", "deleteForumTopic", "sendVoice"} for method, _ in bot.telegram.sent)
-    asyncio.run(run())
-
-
-def test_import_does_not_silently_make_duplicate_folder(store):
-    import pytest
-    folder = store.create_folder(1, "Test2", thread=100)
-    store.aliases(1, folder["id"], ["Second"])
-    for name in ["Test2", "TEST2", "Second"]:
-        with pytest.raises(ValueError):
-            store.import_topic(1, name, 200)
-    assert store.folder_for_thread(1, 200) is None

@@ -158,11 +158,45 @@ class Store:
     def is_implicit_topic(self, owner, thread):
         return bool(self.one("SELECT 1 FROM implicit_topics WHERE owner=? AND thread_id=?", (owner, thread)))
 
-    def current_folder(self, owner: int, thread: int | None):
+    def current_folder(self, owner: int, thread: int | None = None):
         inbox = self.ensure_user(owner)
-        native = self.folder_for_thread(owner, thread)
-        if native:
-            return native["id"]
+        selected = self.one("SELECT f.id FROM users u JOIN folders f "
+                            "ON f.id=u.active_folder AND f.owner=u.id WHERE u.id=?", (owner,))
+        return selected["id"] if selected else inbox
+
+    def delete_folder(self, owner, identity):
+        """Remove the container atomically; keep all notes, files, revisions and AI history."""
+        folder = self.folder(owner, identity)
+        if folder["is_inbox"]:
+            raise ValueError("Папку «Входящие» удалить нельзя")
+        inbox = self.ensure_user(owner)
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            self.folder(owner, identity)
+            if self.one("SELECT 1 FROM notes WHERE owner=? AND deleted=0 AND "
+                        "(folder_id=? OR source_folder=?) AND (state IN ('queued','processing') "
+                        "OR delivery='sending' OR transcript_delivery='sending')", (owner, identity, identity)) or self.one(
+                            "SELECT 1 FROM ai_requests WHERE owner=? AND "
+                            "(state IN ('queued','running') OR delivery='sending')", (owner,)):
+                raise ValueError("Дождись завершения обработки записей и ИИ, затем удали папку")
+            self.db.execute("UPDATE notes SET folder_id=?,archive_dirty=1,revision=revision+1 "
+                            "WHERE owner=? AND folder_id=?", (inbox, owner, identity))
+            self.db.execute("UPDATE notes SET source_folder=? WHERE owner=? AND source_folder=?",
+                            (inbox, owner, identity))
+            self.db.execute("UPDATE note_revisions SET folder_id=? WHERE folder_id=? "
+                            "AND note_id IN (SELECT id FROM notes WHERE owner=?)", (inbox, identity, owner))
+            self.db.execute("UPDATE ai_conversations SET folder_id=? WHERE owner=? AND folder_id=?",
+                            (inbox, owner, identity))
+            self.db.execute("DELETE FROM ai_active WHERE owner=? AND folder_id=?", (owner, identity))
+            if self.one("SELECT 1 FROM sqlite_master WHERE name='note_moves'"):
+                self.db.execute("UPDATE note_moves SET target_folder=? WHERE owner=? AND target_folder=?",
+                                (inbox, owner, identity))
+            self.db.execute("UPDATE users SET active_folder=?,action=NULL WHERE id=? AND active_folder=?",
+                            (inbox, owner, identity))
+            # Keep exact historical topic IDs solely for an explicit Delete All request.
+            if folder["thread_id"]:
+                self.db.execute("INSERT OR IGNORE INTO implicit_topics VALUES (?,?)", (owner, folder["thread_id"]))
+            self.db.execute("DELETE FROM folders WHERE owner=? AND id=?", (owner, identity))
         return inbox
 
     def create_folder(self, owner: int, name: str, thread: int | None = None):
