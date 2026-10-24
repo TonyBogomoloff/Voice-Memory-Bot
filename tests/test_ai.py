@@ -111,7 +111,7 @@ def test_chat_voice_history_reply_new_conversation_and_model_change(bot):
         await bot.process_ai(bot.ai_state.claim())
         assert bot.ai_state.request(1, third["id"])["conversation_id"] != old
         assert bot.assistant.calls[-1][0]["history"] == []
-        assert len(bot.store.notes(1)) == 3
+        assert len(bot.store.notes(1)) == 2
         assert all(n["ai_generated_from"] for n in bot.store.notes(1))
         assert len(bot.ai_state.history(1, old)) == 2
     asyncio.run(run())

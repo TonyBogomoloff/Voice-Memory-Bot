@@ -52,7 +52,8 @@ def test_whole_reply_chain_includes_every_user_and_ai_message(bot, action):
         jobs = bot.store.all('SELECT * FROM ai_message_jobs WHERE request_id=?', (request['id'],))
         assert len(jobs) == len(expected) == 29 and all(j['state'] == 'done' for j in jobs)
         if action == 'move_notes':
-            assert {n['id'] for n in bot.store.notes(1, folder['id'], limit=-1)} == expected
+            visible = {identity for identity in expected if bot.store.note(1, identity)['entry_type'] != 'ai_history'}
+            assert {n['id'] for n in bot.store.notes(1, folder['id'], limit=-1)} == visible
             assert {n['id'] for n in bot.ai_state.conversation_notes(1, conversation, exclude=request['id'])} == expected
             # Re-rendered answer must still lead to the same conversation after moving.
             answer = next(n for n in bot.store.notes(1, folder['id']) if n['ai_generated_from'])

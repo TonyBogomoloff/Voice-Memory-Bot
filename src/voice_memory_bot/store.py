@@ -384,13 +384,14 @@ class Store:
 
     def export_notes(self, owner: int, folder=None):
         # Export all saved data even if a storage quota was lowered after the notes were created.
-        sql, args = "SELECT * FROM notes WHERE owner=? AND deleted=0", [owner]
+        sql, args = "SELECT * FROM notes WHERE owner=? AND deleted=0 AND entry_type!='ai_history'", [owner]
         if folder:
             self.folder(owner, folder)
             sql += " AND folder_id=?"
             args.append(folder)
         notes = self.all(sql + " ORDER BY created_at, id", args)
         selected = {n["id"]: n for n in notes}
+        history_only = {n['id'] for n in self.all("SELECT id FROM notes WHERE owner=? AND entry_type='ai_history'", (owner,))}
         tables = {r["name"] for r in self.all("SELECT name FROM sqlite_master WHERE type='table'")}
         if "ai_requests" in tables:
             for row in self.all("SELECT note_id,response AS ai_response,state AS ai_state,conversation_id,"
@@ -399,7 +400,7 @@ class Store:
                 result_note_id = row.pop("result_note_id")
                 if note_id in selected:
                     # A standalone answer already includes the complete original text.
-                    if result_note_id in selected:
+                    if result_note_id in selected or result_note_id in history_only:
                         row.pop("ai_response")
                     selected[note_id].update(row)
         if "note_revisions" in tables:

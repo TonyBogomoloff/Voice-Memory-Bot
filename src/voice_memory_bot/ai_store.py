@@ -268,6 +268,12 @@ class AIStore:
                 result = result_text(self.store, self.store.note(owner, note_id), text)
                 self.db.execute("UPDATE ai_requests SET result_note_id=? WHERE owner=? AND note_id=?",
                                 (result["id"], owner, note_id))
+                # Keep exact message IDs and conversation context, but only the newest
+                # accepted answer is a saved note. Telegram messages and files remain intact.
+                self.db.execute("UPDATE notes SET entry_type='ai_history' WHERE owner=? "
+                    "AND deleted=0 AND entry_type='note' AND id IN (SELECT result_note_id FROM ai_requests "
+                    "WHERE owner=? AND conversation_id=? AND note_id!=?)",
+                    (owner, owner, request['conversation_id'], note_id))
             self.db.execute("UPDATE ai_requests SET response=?,state='ready',error=NULL WHERE owner=? AND note_id=?",
                             (text, owner, note_id))
 

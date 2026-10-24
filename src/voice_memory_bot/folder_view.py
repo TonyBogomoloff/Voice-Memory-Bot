@@ -133,7 +133,7 @@ class FolderViewMixin:
         page = view['page'] if identity == view['folder_id'] else 0
         thread = view['thread_id']
         bottom = self.bottom_state(owner) if restore_screen else None
-        count = self.store.one('SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0',
+        count = self.store.one("SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0 AND entry_type='note'",
                                (owner, identity))['n']
         page = min(page, max(0, (count - 1) // 8))
         with self.store.db:
