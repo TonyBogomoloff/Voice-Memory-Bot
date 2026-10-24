@@ -61,7 +61,7 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
         await receive(bot, "Это обычная заметка", 1011)
         note = bot.store.notes(1)[0]
         assert note["folder_id"] == folder and note["transcript"] == "Это обычная заметка"
-        assert last_message(bot)["keyboard"]["inline_keyboard"][0][0]["text"] == "Опции"
+        assert [b["text"] for b in last_message(bot)["keyboard"]["inline_keyboard"][0]] == ["Переместить", "Удалить", "ИИ"]
     asyncio.run(run())
 
 
@@ -158,7 +158,7 @@ def test_duplicate_search_titles_resolve_exact_notes_and_paginate(bot):
         expected = bot.store.note(1, action.split(":")[1])["transcript"]
         await receive(bot, label, 3005)
         assert last_message(bot)["text"] == expected
-        assert last_message(bot)["keyboard"]["inline_keyboard"][0][0]["text"] == "Опции"
+        assert [b["text"] for b in last_message(bot)["keyboard"]["inline_keyboard"][0]] == ["Переместить", "Удалить", "ИИ"]
         assert len(bot.store.notes(1, limit=50)) == 12
     asyncio.run(run())
 
@@ -172,10 +172,10 @@ def test_note_options_remain_attached_and_do_not_change_bottom_screen(bot):
         method, payload = bot.telegram.sent[-1]
         assert method == "editMessageReplyMarkup"
         actions = {b["callback_data"] for row in payload["reply_markup"]["inline_keyboard"] for b in row}
-        assert {f"pick:{note['id']}:0", f"text:{note['id']}", f"aiask:{note['id']}"} <= actions
+        assert {f"pick:{note['id']}:0", f"delete:{note['id']}", f"aiask:{note['id']}"} <= actions
         assert "folders" not in actions and bot.bottom_state(1)["screen"] == "settings:all"
         await bot.callback(1, None, note["transcript_message_id"], f"collapse:{note['id']}")
-        assert bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Опции"
+        assert bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Переместить"
     asyncio.run(run())
 
 

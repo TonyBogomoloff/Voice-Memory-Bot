@@ -22,6 +22,7 @@ def keys(*rows):
 class AIBotMixin:
     def init_ai(self, assistant=None):
         self.ai_state = AIStore(self.store, is_busy=lambda identity: self.note_locks[identity].locked())
+        self.ai_state.archive_replies()
         self.ai_models = tuple(dict.fromkeys((self.config.llm.model, *self.config.assistant_models)))
         self.assistant = assistant or CodexAssistant(self.config.llm)
         self.ai_engine = AssistantEngine(self.ai_state, self.assistant, self.config.llm.model, self.ai_models, self.archive)
@@ -307,6 +308,11 @@ class AIBotMixin:
                     keys(*controls) if index == len(chunks) - 1 else None,
                     reply_to=None if force else reply_to)
                 self.ai_state.link(owner, sent["message_id"], current["conversation_id"])
+                result = self.store.one("SELECT * FROM notes WHERE owner=? AND id=? AND deleted=0",
+                                        (owner, current["result_note_id"]))
+                if result:
+                    self.messages.record(result, sent["message_id"], thread if force else current["thread_id"],
+                                         "ai_response")
             self.ai_state.update_request(owner, identity, delivery="sent")
         except ProviderError:
             self.ai_state.update_request(owner, identity, delivery="unknown")

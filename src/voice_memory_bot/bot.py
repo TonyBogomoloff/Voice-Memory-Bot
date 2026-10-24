@@ -576,9 +576,14 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             self.messages.record(note, response["message_id"], thread, "view")
             return
         content = note.get("content") if note.get("content") is not None else note["transcript"]
+        answer = self.ai_state.result_request(owner, identity)
+        if answer:
+            content = "🤖 " + (content or "")
         for chunk in transcript_chunks(content or note["title"] or "Запись без расшифровки"):
             response = await self._show(owner, chunk, thread, self.note_controls(note, thread))
             self.messages.record(note, response["message_id"], thread, "view")
+            if answer:
+                self.ai_state.link(owner, response["message_id"], answer["conversation_id"])
 
     async def edit_note_buttons(self, owner, message_id, keys):
         try:

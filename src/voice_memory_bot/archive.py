@@ -211,7 +211,7 @@ class Archive:
                         data = self.history_markdown(grouped, folder, audio_names).encode("utf-8")
                     fields = ("id", "title", "created_at", "kind", "duration", "state", "routing", "transcript",
                               "content", "entry_type", "revision", "revisions", "ai_response", "ai_state",
-                              "conversation_id", "ai_model", "original_name", "mime_type", "origin")
+                              "conversation_id", "ai_model", "ai_generated_from", "original_name", "mime_type", "origin")
                     details = [{k: n[k] for k in fields if k in n} for n in grouped]
                     yield name, data, {"kind": "history", "folder_id": folder_id, "notes": details}
                 for note in grouped:

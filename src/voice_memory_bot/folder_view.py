@@ -156,6 +156,9 @@ class FolderViewMixin:
             notes = self.store.notes(owner, identity, limit=count)
             for note in reversed(notes):
                 content = note.get('content') if note.get('content') is not None else note['transcript']
+                answer = self.ai_state.result_request(owner, note['id'])
+                if answer:
+                    content = '🤖 ' + (content or '')
                 if note['kind'] == 'photo' and note['file_id']:
                     response = await self.view_send(self.telegram.call, 'sendPhoto', chat_id=owner, photo=note['file_id'],
                         message_thread_id=thread, disable_notification=True,
@@ -164,8 +167,10 @@ class FolderViewMixin:
                 for chunk in transcript_chunks(content or note['title'] or 'Запись без расшифровки'):
                     response = await self.view_send(self.telegram.text, owner, chunk, thread, self.note_controls(note, thread))
                     self.messages.record(note, response['message_id'], thread, 'view')
+                    if answer:
+                        self.ai_state.link(owner, response['message_id'], answer['conversation_id'])
                 request = self.ai_state.request(owner, note['id'])
-                if request and request['response']:
+                if request and request['response'] and not request['result_note_id']:
                     instruction_id = response['message_id']
                     for chunk in transcript_chunks('🤖 ' + request['response']):
                         response = await self.view_send(self.telegram.text, owner, chunk, thread,

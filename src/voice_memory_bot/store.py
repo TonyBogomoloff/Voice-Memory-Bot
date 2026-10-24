@@ -375,9 +375,13 @@ class Store:
         tables = {r["name"] for r in self.all("SELECT name FROM sqlite_master WHERE type='table'")}
         if "ai_requests" in tables:
             for row in self.all("SELECT note_id,response AS ai_response,state AS ai_state,conversation_id,"
-                                "model AS ai_model FROM ai_requests WHERE owner=?", (owner,)):
+                                "model AS ai_model,result_note_id FROM ai_requests WHERE owner=?", (owner,)):
                 note_id = row.pop("note_id")
+                result_note_id = row.pop("result_note_id")
                 if note_id in selected:
+                    # A standalone answer already includes the complete original text.
+                    if result_note_id in selected:
+                        row.pop("ai_response")
                     selected[note_id].update(row)
         if "note_revisions" in tables:
             rows = self.all("SELECT r.* FROM note_revisions r JOIN notes n ON n.id=r.note_id "

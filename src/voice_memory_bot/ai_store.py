@@ -165,6 +165,11 @@ class AIStore:
         self.store.note(owner, note_id)
         return self.store.one("SELECT * FROM ai_requests WHERE owner=? AND note_id=?", (owner, note_id))
 
+    def result_request(self, owner, note_id):
+        return self.store.one("SELECT a.note_id,a.conversation_id FROM ai_requests a "
+                              "JOIN notes n ON n.id=a.note_id WHERE a.owner=? AND a.result_note_id=? "
+                              "AND n.deleted=0", (owner, note_id))
+
     def enqueue(self, owner, note_id, trigger, thread=None, reply_to=None, conversation=None):
         note = self.store.note(owner, note_id)
         existing = self.request(owner, note_id)
@@ -195,12 +200,28 @@ class AIStore:
         from .web_store import result_text
         request = self.request(owner, note_id)
         with self.db:
-            if request["trigger"] == "miniapp" and not request["result_note_id"]:
+            if not request["result_note_id"]:
                 result = result_text(self.store, self.store.note(owner, note_id), text)
                 self.db.execute("UPDATE ai_requests SET result_note_id=? WHERE owner=? AND note_id=?",
                                 (result["id"], owner, note_id))
             self.db.execute("UPDATE ai_requests SET response=?,state='ready',error=NULL WHERE owner=? AND note_id=?",
                             (text, owner, note_id))
+
+    def archive_replies(self):
+        """Expose old successful replies without replaying AI calls or Telegram sends."""
+        requests = self.store.all("SELECT a.* FROM ai_requests a JOIN notes n ON n.id=a.note_id "
+                                  "WHERE a.state='ready' AND a.result_note_id IS NULL "
+                                  "AND a.response IS NOT NULL AND n.deleted=0 ORDER BY a.created_at")
+        from .web_store import result_text
+        for request in requests:
+            if not request["response"].strip():
+                continue
+            with self.db:
+                note = self.store.note(request["owner"], request["note_id"])
+                # The historical response time was not recorded; retain the request's date.
+                result = result_text(self.store, note, request["response"], created_at=request["created_at"])
+                self.db.execute("UPDATE ai_requests SET result_note_id=? WHERE owner=? AND note_id=?",
+                                (result["id"], request["owner"], request["note_id"]))
 
     def claim(self):
         row = self.store.one("""SELECT a.* FROM ai_requests a JOIN notes n ON n.id=a.note_id

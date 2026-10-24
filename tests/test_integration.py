@@ -21,12 +21,14 @@ def test_edited_voice_move_preserves_original_and_invalidates_stale_ai_edit(bot,
         bot.flush_ai_archive()
         edited = bot.store.note(1, note["id"])
         tool(bot, request["id"], step("read_note", note_id=note["id"]))
+        expected_ids = set(bot.messages.in_thread(1, note["id"], 100))
         bot.telegram.sent.clear()
         await bot.move(1, note["id"], target["id"], 100)
         blocked = tool(bot, request["id"], {**command, "revision": 1, "content": "Гонка"})
         assert "error" in blocked
         assert bot.store.note(1, note["id"])["content"] == edited["content"]
-        assert bot.telegram.sent == []
+        assert all(method == "deleteMessage" for method, _ in bot.telegram.sent)
+        assert {payload["message_id"] for _, payload in bot.telegram.sent} == expected_ids
         bot.flush_ai_archive()
         saved = bot.store.note(1, note["id"])
         assert saved["folder_id"] == target["id"] and saved["transcript"] == note["transcript"]
@@ -54,9 +56,11 @@ def test_edited_photo_caption_moves_in_full_and_audio_export_stays_empty(tmp_pat
         tool(app, request["id"], step("read_note", note_id=note["id"]))
         assert tool(app, request["id"], step("update_note", note_id=note["id"], revision=0,
                     title="Фото", content=content))["ok"]
+        expected_ids = set(app.messages.in_thread(1, note["id"], 100))
         app.telegram.sent.clear()
         await app.move(1, note["id"], target["id"], 100)
-        assert app.telegram.sent == []
+        assert all(method == "deleteMessage" for method, _ in app.telegram.sent)
+        assert {payload["message_id"] for _, payload in app.telegram.sent} == expected_ids
         assert store.note(1, note["id"])["content"] == content
         assert store.note(1, note["id"])["transcript"] == "Исходная подпись"
         app.telegram.sent.clear()

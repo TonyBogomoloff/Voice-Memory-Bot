@@ -1,6 +1,6 @@
 """Additional metadata for browser uploads in the existing private archive."""
 
-import uuid
+import time
 
 
 def migrate_web(db):
@@ -46,6 +46,22 @@ def create_text(store, owner, folder, text, key, context=None, generated_from=No
     return store.note(owner, note["id"]), True
 
 
-def result_text(store, source, text):
-    return create_text(store, source["owner"], source["folder_id"], text, uuid.uuid4().hex,
-                       generated_from=source["id"])[0]
+def result_text(store, source, text, *, created_at=None):
+    """Archive an accepted AI result inside the caller's transaction.
+
+    Intake quotas must not discard a reply after its request has been accepted.
+    This also preserves complete historical replies without the web-input length limit.
+    """
+    from .store import new_id
+    store.note(source["owner"], source["id"])
+    identity = new_id()
+    message = store.one("SELECT min(0,coalesce(min(message_id),0))-1 AS id FROM notes WHERE owner=?",
+                        (source["owner"],))["id"]
+    store.db.execute("""INSERT INTO notes(id,owner,folder_id,source_folder,message_id,source_thread,
+        kind,extension,created_at,state,transcript,title,origin,ai_generated_from,routing,
+        delivery,transcript_delivery,archive_dirty)
+        VALUES (?,?,?,?,?,?,'text','txt',?,'ready',?,'Ответ ИИ',?,?,'manual','sent','sent',1)""",
+        (identity, source["owner"], source["folder_id"], source["folder_id"], message, source["source_thread"],
+         time.time() if created_at is None else created_at, text,
+         "web" if source["origin"] == "web" else "ai", source["id"]))
+    return store.note(source["owner"], identity)

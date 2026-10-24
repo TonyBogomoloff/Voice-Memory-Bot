@@ -108,7 +108,8 @@ def test_chat_voice_history_reply_new_conversation_and_model_change(bot):
         await bot.process_ai(bot.ai_state.claim())
         assert bot.ai_state.request(1, third["id"])["conversation_id"] != old
         assert bot.assistant.calls[-1][0]["history"] == []
-        assert bot.store.notes(1) == []
+        assert len(bot.store.notes(1)) == 3
+        assert all(n["ai_generated_from"] for n in bot.store.notes(1))
         assert len(bot.ai_state.history(1, old)) == 2
     asyncio.run(run())
 
@@ -260,8 +261,8 @@ def test_restart_replays_receipts_without_duplicate_mutation_or_unknown_send(bot
             provider = Assistant()
             engine = AssistantEngine(state, provider, bot.config.llm.model, bot.ai_models)
             await engine.run(state.claim())
-            assert len(reopened.notes(1)) == 1
-            assert reopened.notes(1)[0]["id"] == result["id"]
+            assert len(reopened.notes(1)) == 2
+            assert reopened.note(1, result["id"])["transcript"] == "Текст"
             assert provider.calls[0][0]["steps"][0]["result"]["id"] == result["id"]
         finally:
             reopened.close()
@@ -288,7 +289,8 @@ def test_provider_failure_after_write_reports_receipt_and_retry_does_not_write_t
         assert "Создано: План" in bot.telegram.sent[-1][1]["text"]
         await bot.callback(1, None, 99, f"airetry:{note['id']}")
         await bot.process_ai(bot.ai_state.claim())
-        assert len(bot.store.notes(1)) == 1 and bot.ai_state.request(1, note["id"])["state"] == "ready"
+        assert len(bot.store.notes(1)) == 2 and bot.ai_state.request(1, note["id"])["state"] == "ready"
+        assert sum(n["title"] == "План" for n in bot.store.notes(1)) == 1
     asyncio.run(run())
 
 
@@ -356,7 +358,7 @@ def test_revoke_write_access_while_model_is_generating(bot):
             return step(message="Доступ выключен")
         bot.assistant.respond = respond
         await bot.process_ai(bot.ai_state.claim())
-        assert bot.store.notes(1) == []
+        assert [n["transcript"] for n in bot.store.notes(1)] == ["Доступ выключен"]
     asyncio.run(run())
 
 
@@ -457,7 +459,7 @@ def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
         await bot.show_note(1, note['id'], 100)
         assert bot.telegram.sent[-1][0] == 'sendPhoto'
         assert bot.telegram.sent[-1][1]['photo'] == note['file_id']
-        assert not any(m == 'deleteMessage' and p['message_id'] == note['message_id']
+        assert not any(m == 'deleteMessage' and p['message_id'] == note['result_message_id']
                        for m, p in bot.telegram.sent)
         assert calls[-1][0]['selected_note']['kind'] == 'photo'
         assert calls[-1][1] == [bot.archive.audio(note)]

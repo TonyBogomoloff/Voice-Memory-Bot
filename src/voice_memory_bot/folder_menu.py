@@ -71,10 +71,14 @@ class FolderMenuMixin:
     def note_controls(self, note, thread):
         if note.get("entry_type") == "ai" or self.ai_state.request(note["owner"], note["id"]):
             return {"inline_keyboard": []}
-        return {"inline_keyboard": [[
+        rows = [[
             {"text": "Переместить", "callback_data": f"pick:{note['id']}:0"},
             {"text": "Удалить", "callback_data": f"delete:{note['id']}"},
-            {"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]}
+            {"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]
+        answer = self.ai_state.result_request(note["owner"], note["id"])
+        if answer:
+            rows[0][-1] = {"text": "Продолжить", "callback_data": f"aicontinue:{answer['note_id']}"}
+        return {"inline_keyboard": rows}
 
     def folder_keyboard_pages(self, owner):
         pinned = self.store.pinned_folders(owner)
