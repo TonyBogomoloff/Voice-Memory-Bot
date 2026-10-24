@@ -119,6 +119,8 @@ class FolderMenuMixin:
         # Stale or unpinned names refresh navigation instead of becoming notes.
         for folder in self.store.folders(owner):
             if text in {prefix + folder["name"] for prefix in FOLDER_PREFIXES}:
+                if folder["id"] == self.store.current_folder(owner):
+                    return
                 self.folder_delete_confirmations.pop(owner, None)
                 return await self.show_notes(owner, thread, folder["id"], command_message_id=message_id)
         self.store.set_action(owner, None)

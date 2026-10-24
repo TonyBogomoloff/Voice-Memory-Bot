@@ -275,3 +275,27 @@ def test_switch_removes_navigation_commands_including_deferred_render_and_restar
         assert any(m == 'deleteMessage' and p['message_id'] == 7003 for m, p in bot.telegram.sent)
         assert bot.store.note(1, note['id'])['transcript'] == 'Обработка'
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("prefix", ["📌 ", "✓ 📌 "])
+def test_selected_folder_button_does_not_clear_or_replay_notes(bot, prefix):
+    async def run():
+        inbox = bot.store.ensure_user(1)
+        work = bot.store.create_folder(1, 'Работа')['id']
+        saved(bot, inbox, 'Первая запись', 1001)
+        saved(bot, work, 'Рабочая запись', 1002)
+        await receive(bot, '📌 Работа', 2001)
+        before = bot.store.one('SELECT * FROM folder_views WHERE owner=1')
+        notes = bot.store.all('SELECT * FROM notes ORDER BY id')
+        bot.telegram.sent.clear()
+        await receive(bot, prefix + 'Работа', 2002)
+        assert all(method == 'deleteMessage' and payload['message_id'] == 2002
+                   for method, payload in bot.telegram.sent)
+        assert bot.store.one('SELECT * FROM folder_views WHERE owner=1') == before
+        assert bot.store.all('SELECT * FROM notes ORDER BY id') == notes
+        assert bot.store.current_folder(1) == work
+        bot.telegram.sent.clear()
+        await receive(bot, '📌 Входящие', 2003)
+        assert bot.store.current_folder(1) == inbox
+        assert any(payload.get('text') == 'Первая запись' for _, payload in bot.telegram.sent)
+    asyncio.run(run())
