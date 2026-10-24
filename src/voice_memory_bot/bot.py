@@ -570,6 +570,11 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
 
     async def show_note(self, owner, identity, thread, edit_id=None):
         note = self.store.note(owner, identity)
+        if note["kind"] == "photo" and note["file_id"]:
+            response = await self.telegram.call("sendPhoto", chat_id=owner, photo=note["file_id"],
+                message_thread_id=thread, reply_markup=self.note_controls(note, thread))
+            self.messages.record(note, response["message_id"], thread, "view")
+            return
         content = note.get("content") if note.get("content") is not None else note["transcript"]
         for chunk in transcript_chunks(content or note["title"] or "Запись без расшифровки"):
             response = await self._show(owner, chunk, thread, self.note_controls(note, thread))

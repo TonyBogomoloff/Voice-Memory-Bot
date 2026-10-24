@@ -166,8 +166,11 @@ class FolderViewMixin:
                     self.messages.record(note, response['message_id'], thread, 'view')
                 request = self.ai_state.request(owner, note['id'])
                 if request and request['response']:
+                    instruction_id = response['message_id']
                     for chunk in transcript_chunks('🤖 ' + request['response']):
-                        response = await self.view_send(self.telegram.text, owner, chunk, thread, self.note_controls(note, thread))
+                        response = await self.view_send(self.telegram.text, owner, chunk, thread,
+                            {'inline_keyboard': [[{'text': 'Опции', 'callback_data': f"aioptions:{note['id']}"}]]},
+                            reply_to=instruction_id)
                         self.ai_state.link(owner, response['message_id'], request['conversation_id'])
             if bottom and bottom['screen'] != 'root':
                 if self.store.action(owner):
@@ -210,6 +213,9 @@ class FolderViewMixin:
         now = time.time() if now is None else now
         for view in self.store.all('SELECT * FROM folder_views'):
             owner = view['owner']
+            # Keep the selected source and reply anchors visible throughout the conversation.
+            if (self.store.action(owner) or "").startswith("ai_note:"):
+                continue
             if owner not in self.config.allowed_user_ids or self.view_locks[owner].locked():
                 continue
             if not self.store.folders(owner) and not view['screen']:

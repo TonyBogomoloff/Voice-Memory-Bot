@@ -73,6 +73,8 @@ class AIBotMixin:
         if request is None:
             return False
         current = self.store.note(owner, identity)
+        if request["trigger"] == "name" and current["transcript_message_id"]:
+            await self.edit_note_buttons(owner, current["transcript_message_id"], keys())
         self.store.update_note(owner, identity, state="ready", routing="ai", requested_folder=None,
                                title=" ".join((note["transcript"] or "").split())[:80] or "Диалог с ИИ",
                                delivery=current["transcript_delivery"],
@@ -276,13 +278,15 @@ class AIBotMixin:
         if force:
             note = self.store.note(owner, identity)
             text = "Ты: " + (note["transcript"] or "") + "\n\n" + text
+        note = self.store.note(owner, identity)
+        reply_to = note["transcript_message_id"]
         chunks = list(transcript_chunks(text))
         self.ai_state.update_request(owner, identity, delivery="sending")
         try:
             for index, chunk in enumerate(chunks):
                 sent = await self.telegram.text(owner, chunk, thread if force else current["thread_id"],
                     keys([key("Опции", f"aioptions:{identity}")]) if index == len(chunks) - 1 else None,
-                    reply_to=None if force else current["reply_to"])
+                    reply_to=None if force else reply_to)
                 self.ai_state.link(owner, sent["message_id"], current["conversation_id"])
             self.ai_state.update_request(owner, identity, delivery="sent")
         except ProviderError:
