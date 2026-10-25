@@ -21,6 +21,7 @@ from .folder_menu import MENU_COMMANDS, OPTION_ACTIONS, FolderMenuMixin
 from .folder_naming import FolderNamingMixin
 from .folder_view import FolderViewMixin
 from .message_store import MessageStore
+from .note_service import NoteService
 from .providers import CodexRouter, Groq, ProviderError, Telegram
 from .reply_move import ReplyMoveMixin
 from .routing import fallback_title
@@ -93,6 +94,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         self.recent = defaultdict(deque)
         self.export_locks = defaultdict(asyncio.Lock)
         self.note_locks = defaultdict(asyncio.Lock)
+        self.notes = NoteService(store, self.messages, self.archive, telegram, self.note_locks)
         self.export_tasks = set()
         self.init_ai(assistant)
         self.init_cleanup()
@@ -767,17 +769,11 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         if action == "canceldelete":
             return await self.remove_menu_message(owner, message_id)
         if action == "confirmarchive":
-            if note["state"] == "processing" or self.note_locks[identity].locked():
-                raise ValueError("Дождись завершения обработки, затем удали запись")
-            self.store.delete(owner, identity)
-            self.archive.delete(note)
+            note = self.notes.delete(owner, identity)
             await self.remove_menu_message(owner, message_id)
             return await self._show(owner, "Запись удалена из базы. Сообщения в Telegram остались.", thread)
         if action == "confirmdelete":
-            if note["state"] == "processing" or self.note_locks[identity].locked():
-                raise ValueError("Дождись завершения обработки, затем удали запись")
-            self.store.delete(owner, identity)
-            self.archive.delete(note)
+            note = self.notes.delete(owner, identity)
             result = await self.announce_note_deletion(note, thread)
             await self.remove_menu_message(owner, message_id)
             return result
@@ -800,10 +796,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         if not note:
             return await self._show(owner, "Не нашёл запись в базе. Ответь на исходное сообщение или расшифровку.", thread)
         identity = note["id"]
-        if note["state"] == "processing" or self.note_locks[identity].locked():
-            raise ValueError("Дождись завершения обработки, затем удали запись")
-        self.store.delete(owner, identity)
-        self.archive.delete(note)
+        note = self.notes.delete(owner, identity)
         target = (message.get("reply_to_message") or {}).get("message_id")
         return await self.announce_note_deletion(note, thread, target)
 
@@ -826,31 +819,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         return result
 
     async def delete_note_messages(self, note, *, details=False):
-        owner, identity = note["owner"], note["id"]
-        receipts = self.store.all(
-            "SELECT message_id,deleted FROM note_messages WHERE owner=? AND note_id=?",
-            (owner, identity))
-        removed = {row["message_id"] for row in receipts if row["deleted"]}
-        targets = {row["message_id"] for row in receipts if not row["deleted"]}
-        # Legacy records retain only these exact IDs. Never infer nearby messages.
-        targets.update(note[field] for field in (
-            "message_id", "status_message_id", "transcript_message_id", "result_message_id")
-            if note.get(field) and note[field] > 0 and note[field] not in removed)
-        remaining = retryable = 0
-        for target in sorted(targets):
-            try:
-                await self.telegram.call("deleteMessage", chat_id=owner, message_id=target)
-            except ProviderError as exc:
-                if getattr(exc, "reason", None) != "delete_target_missing":
-                    remaining += 1
-                    retryable += getattr(exc, "reason", None) != "delete_forbidden"
-                    log.warning("note cleanup failed note_id=%s error=%s", identity, exc)
-                    continue
-            self.messages.removed(owner, identity, target)
-            with self.store.db:
-                self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
-                                      (owner, target))
-        return {"remaining": remaining, "retryable": retryable} if details else remaining
+        return await self.notes.delete_note_messages(note, details=details)
 
     async def search(self, owner, thread, query):
         if not 1 <= len(query) <= 200:
@@ -967,50 +936,10 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 await self.show(owner, message, thread)
 
     async def move(self, owner, identity, folder_id, thread):
-        note = self.store.note(owner, identity)
-        folder = self.store.folder(owner, folder_id)
-        if folder['removed']:
-            raise ValueError('Папка удалена. Выбери другую')
-        if note["state"] in {"processing", "queued"} or self.note_locks[identity].locked():
-            raise ValueError("Дождись завершения обработки, затем перенеси запись")
-        async with self.note_locks[identity]:
-            if folder_id == note["folder_id"]:
-                return "Запись уже в этой папке."
-            if note["file_id"] and not note["audio_bytes"]:
-                raise ValueError("Сначала повтори сохранение файла, затем перенеси запись")
-            move = self.messages.move_archive(note, folder_id)
-            result = await self.cleanup_move(move)
-            return f"Перенесено в «{folder['name']}»." if result == "Запись перенесена." else result
+        return await self.notes.move(owner, identity, folder_id)
 
     async def cleanup_move(self, move):
-        owner, identity = move["owner"], move["note_id"]
-        remaining = {row["message_id"] for row in self.store.all(
-            "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0",
-            (owner, identity))}
-        transient, forbidden = False, False
-        for message_id in json.loads(move["source_ids"]):
-            if message_id not in remaining:
-                continue
-            try:
-                await self.telegram.call("deleteMessage", chat_id=owner, message_id=message_id)
-            except ProviderError as exc:
-                reason = getattr(exc, "reason", None)
-                if reason == "delete_forbidden":
-                    forbidden = True
-                    continue
-                if reason != "delete_target_missing":
-                    transient = True
-                    continue
-            self.messages.removed(owner, identity, message_id)
-            with self.store.db:
-                self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
-                                      (owner, message_id))
-        if transient:
-            self.messages.state(owner, identity, "cleanup")
-            return "Запись перенесена. Удаляю исходные сообщения…"
-        self.messages.state(owner, identity, "blocked" if forbidden else "done")
-        return ("Запись перенесена, но Telegram не разрешил удалить часть исходных сообщений."
-                if forbidden else "Запись перенесена.")
+        return await self.notes.cleanup_move(move)
 
     async def probe_duration(self, path):
         process = await asyncio.create_subprocess_exec("ffprobe", "-v", "error", "-show_entries",

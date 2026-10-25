@@ -114,9 +114,9 @@ class NoteActions:
                 result["message"] = "Запись уже в этой папке."
                 self.save_result(request, index, result, identity)
                 return result
-            self.bot.messages.move_archive(note, folder["id"], commit=False)
+            self.bot.notes.move_archive(note, folder["id"], commit=False)
         else:
-            self.store.delete(owner, identity, commit=False)
+            self.bot.notes.delete_archive(owner, identity, commit=False)
             result["message"] = "Запись удалена из архива. Завершаю удаление файлов и сообщений…"
         self.store.db.execute("INSERT INTO ai_message_jobs VALUES (?,?,?,?,?,'pending',?)",
                               (request, index, owner, identity, action, time.time()))

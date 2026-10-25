@@ -118,6 +118,12 @@ class MessageStore:
         with self.db:
             self.db.execute("UPDATE note_messages SET deleted=1 WHERE owner=? AND note_id=? AND message_id=?",
                             (owner, identity, message_id))
+            self.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?", (owner, message_id))
+
+    def receipts(self, owner, identity):
+        # Deleted notes still need their exact receipts for asynchronous cleanup.
+        return self.store.all("SELECT message_id,deleted FROM note_messages WHERE owner=? AND note_id=?",
+                              (owner, identity))
 
     def pending(self):
         return self.store.one("SELECT m.* FROM note_moves m JOIN notes n ON n.id=m.note_id "
