@@ -334,14 +334,14 @@ class AIBotMixin:
         if request["state"] not in {"queued", "running"}:
             return
         # Checkpoint before sending: an ambiguous network failure must not create duplicates.
-        with self.store.db:
+        with self.store.transaction():
             inserted = self.store.db.execute("INSERT OR IGNORE INTO ai_progress VALUES (?,0)", (identity,)).rowcount
         if not inserted:
             return
         try:
             sent = await self.telegram.text(owner, "Думаю…", request["thread_id"],
                                             reply_to=note["transcript_message_id"])
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute("UPDATE ai_progress SET message_id=? WHERE note_id=?",
                                       (sent["message_id"], identity))
             self.ai_state.link(owner, sent["message_id"], request["conversation_id"])
@@ -379,7 +379,7 @@ class AIBotMixin:
             self.ai_state.link(owner, sent["message_id"], request["conversation_id"])
             # Cache Telegram's copy for reopening the photo and folder navigation.
             photos = sent.get("photo") or []
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute("UPDATE notes SET file_id=coalesce(?,file_id),result_message_id=?,"
                     "result_thread=?,transcript_message_id=?,transcript_delivery='sent' WHERE owner=? AND id=?",
                     (photos[-1]["file_id"] if photos else None, sent["message_id"], target_thread,

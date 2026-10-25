@@ -55,7 +55,7 @@ class ReplyMoveMixin:
         if not note:
             return await self._show(owner, "В этой папке нет подходящей записи. Пришли сообщение или ответь на сохранённую запись.", thread)
         token = new_id()
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("INSERT INTO reply_moves(token,owner,note_id,command_id) VALUES (?,?,?,?)",
                                   (token, owner, note["id"], message["message_id"]))
         self.store.set_action(owner, None)
@@ -81,7 +81,7 @@ class ReplyMoveMixin:
         rows.extend([[button("＋ Новая папка", f"rnew:{token}")], [button("Отмена", f"rcancel:{token}")]])
         result = await self.show_bottom(owner, "В какую папку ты хочешь перенести сообщение?", thread,
                                   keyboard(*rows), screen=f"replymove:{token}", keep=True)
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                   (result["message_id"], owner, token))
 
@@ -94,7 +94,7 @@ class ReplyMoveMixin:
             await self.remove_menu_message(owner, session["command_id"])
         if self.store.action(owner) == f"replymove:{token}":
             self.store.set_action(owner, None)
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("DELETE FROM reply_moves WHERE owner=? AND token=?", (owner, token))
 
     async def reply_move_callback(self, owner, thread, message_id, data):
@@ -120,7 +120,7 @@ class ReplyMoveMixin:
             self.store.set_action(owner, f"replymove:{token}")
             result = await self.show_bottom(owner, "Как назвать новую папку?", thread,
                 keyboard([button("Отмена", f"rcancel:{token}")]), screen=f"replymove:{token}", keep=True)
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                       (result["message_id"], owner, token))
         elif action == "rmove":
@@ -140,7 +140,7 @@ class ReplyMoveMixin:
             raise ValueError("Дождись завершения обработки, затем перенеси запись")
         if not session["target_folder"]:
             folder = self.store.create_folder(owner, name)
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute("UPDATE reply_moves SET target_folder=? WHERE owner=? AND token=?",
                                       (folder["id"], owner, token))
             session["target_folder"] = folder["id"]

@@ -39,7 +39,7 @@ class FolderViewMixin:
             return
         identity = self.store.current_folder(owner) or ''
         screen = json.dumps({"text": text, "keys": keys}, ensure_ascii=False)
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("INSERT INTO folder_views(owner,folder_id,thread_id,page,dirty,screen) "
                                   "VALUES (?,?,?,0,0,?) ON CONFLICT(owner) DO UPDATE SET "
                                   "thread_id=excluded.thread_id,screen=excluded.screen,dirty=0",
@@ -63,11 +63,11 @@ class FolderViewMixin:
             if any(folder['id'] == identity for folder in folders):
                 self.folder_pages[owner] = index
                 break
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("INSERT INTO folder_views(owner,folder_id,thread_id,page,dirty) VALUES (?,?,?,?,1) ON CONFLICT(owner) "
                                   "DO UPDATE SET folder_id=excluded.folder_id,thread_id=excluded.thread_id,"
                                   "page=excluded.page,dirty=1,screen=NULL", (owner, identity, thread, max(0, page)))
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("UPDATE folder_views SET command_message_id=? WHERE owner=?",
                                   (command_message_id, owner))
         if self.view_busy(owner):
@@ -131,7 +131,7 @@ class FolderViewMixin:
                     leftovers += await self.delete_view_batch(owner, [mid])
                 return leftovers
             if reason == 'delete_forbidden':
-                with self.store.db:
+                with self.store.transaction():
                     self.store.db.execute('UPDATE telegram_messages SET view_blocked=1 '
                                           'WHERE owner=? AND message_id=?', (owner, message_ids[0]))
                 return 1
@@ -139,7 +139,7 @@ class FolderViewMixin:
                 # Keep every receipt after an ambiguous network failure; deletion is idempotent.
                 raise
         targets = [(owner, mid) for mid in message_ids]
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.executemany('DELETE FROM telegram_messages WHERE owner=? AND message_id=?', targets)
             self.store.db.executemany('UPDATE note_messages SET deleted=1 WHERE owner=? AND message_id=?', targets)
             # Telegram reply links are disposable; archived AI conversations remain intact.
@@ -161,7 +161,7 @@ class FolderViewMixin:
         count = self.store.one("SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0 AND entry_type='note'",
                                (owner, identity))['n']
         page = min(page, max(0, (count - 1) // VIEW_PAGE_SIZE))
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute('UPDATE folder_views SET dirty=1,folder_id=?,page=? WHERE owner=?',
                                   (identity, page, owner))
         self.view_rendering.add(owner)
@@ -184,7 +184,7 @@ class FolderViewMixin:
                 screen = json.loads(view['screen'])
                 # Upgrade old saved inline menus through the same bottom navigation path.
                 await self.show(owner, screen['text'], thread, screen['keys'])
-                with self.store.db:
+                with self.store.transaction():
                     self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
                 complete = True
                 return
@@ -231,7 +231,7 @@ class FolderViewMixin:
                 await self.telegram.text(owner,
                     'Часть старых сообщений Telegram уже не разрешает удалить. '
                     'Их можно убрать вручную. Все записи сохранены в архиве.', thread)
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
             complete = True
         finally:
@@ -257,7 +257,7 @@ class FolderViewMixin:
             if bottom:
                 await self.clear_folder_view(owner, view['thread_id'], all_threads=True)
                 await self.send_bottom(owner, view['thread_id'], bottom)
-                with self.store.db:
+                with self.store.transaction():
                     self.store.db.execute('UPDATE folder_views SET dirty=0,folder_id=? WHERE owner=?', ('', owner))
                 return
             screen = json.loads(view['screen']) if view['screen'] else {
@@ -265,7 +265,7 @@ class FolderViewMixin:
                 'keys': {'remove_keyboard': True}}
             await self.clear_folder_view(owner, view['thread_id'], all_threads=True)
             await self.view_send(self.telegram.text, owner, screen['text'], view['thread_id'], screen['keys'])
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute('UPDATE folder_views SET dirty=0,folder_id=? WHERE owner=?', ('', owner))
         finally:
             silent_delivery.reset(token)
@@ -283,7 +283,7 @@ class FolderViewMixin:
                 continue
             if not self.store.folders(owner) and not view['screen']:
                 # Delete All must never resurrect an empty folder or send a new view.
-                with self.store.db:
+                with self.store.transaction():
                     self.store.db.execute('DELETE FROM folder_views WHERE owner=?', (owner,))
                 continue
             oldest = self.store.one('SELECT min(coalesce(sent_at,0)) AS age FROM telegram_messages '

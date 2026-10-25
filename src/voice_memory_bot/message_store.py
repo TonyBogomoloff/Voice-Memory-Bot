@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import time
-from contextlib import nullcontext
 
 
 class MessageStore:
@@ -25,7 +24,7 @@ class MessageStore:
                 source_ids TEXT NOT NULL, state TEXT NOT NULL, error TEXT, updated_at REAL NOT NULL
             );
         """)
-        with self.db:
+        with self.store.transaction():
             # Old versions kept only these exact IDs. Never infer adjacent message IDs.
             for field, thread, kind in (("message_id", "source_thread", "source"),
                                         ("transcript_message_id", "source_thread", "transcript"),
@@ -38,7 +37,7 @@ class MessageStore:
         if message_id <= 0:
             return
         self.store.note(note["owner"], note["id"])
-        with self.db:
+        with self.store.transaction():
             self.db.execute("INSERT OR IGNORE INTO note_messages(owner,message_id,note_id,thread_id,kind) "
                             "VALUES (?,?,?,?,?)", (note["owner"], message_id, note["id"], thread, kind))
 
@@ -48,7 +47,7 @@ class MessageStore:
         current = self.store.note(owner, identity)
         if current["source_thread"] is not None:
             return current
-        with self.db:
+        with self.store.transaction():
             self.db.execute("UPDATE notes SET source_thread=? WHERE owner=? AND id=? AND deleted=0",
                             (thread, owner, identity))
             self.db.execute("UPDATE note_messages SET thread_id=? WHERE owner=? AND note_id=? AND thread_id IS NULL",
@@ -61,7 +60,7 @@ class MessageStore:
             "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND thread_id IS ? "
             "AND deleted=0 ORDER BY message_id", (owner, identity, thread))]
 
-    def move_archive(self, note, folder_id, *, commit=True):
+    def move_archive(self, note, folder_id):
         """Commit the destination and cleanup receipt before deleting messages.
 
         Folders are archive views; opening the target renders the note there.
@@ -73,7 +72,7 @@ class MessageStore:
         source_ids = [row["message_id"] for row in self.store.all(
             "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0 ORDER BY message_id",
             (owner, identity))]
-        with self.db if commit else nullcontext():
+        with self.store.transaction():
             self.db.execute("UPDATE notes SET folder_id=?,routing='manual',requested_folder=NULL,archive_dirty=1,"
                             "revision=revision+? WHERE owner=? AND id=? AND deleted=0",
                             (folder_id, int(current["state"] == "ready" and current["folder_id"] != folder_id),
@@ -87,7 +86,7 @@ class MessageStore:
 
     def begin(self, note, folder_id, thread):
         source_ids = self.in_thread(note["owner"], note["id"], thread)
-        with self.db:
+        with self.store.transaction():
             self.db.execute("INSERT INTO note_moves VALUES (?,?,?,?,?,'publishing',NULL,?) "
                             "ON CONFLICT(note_id) DO UPDATE SET target_folder=excluded.target_folder, "
                             "source_thread=excluded.source_thread,source_ids=excluded.source_ids, "
@@ -99,14 +98,14 @@ class MessageStore:
         return self.store.one("SELECT * FROM note_moves WHERE owner=? AND note_id=?", (owner, identity))
 
     def state(self, owner, identity, state, error=None):
-        with self.db:
+        with self.store.transaction():
             self.db.execute("UPDATE note_moves SET state=?,error=?,updated_at=? WHERE owner=? AND note_id=?",
                             (state, error, time.time(), owner, identity))
 
     def confirm(self, note, folder_id, response, thread):
         self.store.folder(note["owner"], folder_id)
         revision = ",revision=revision+1" if "revision" in note and folder_id != note["folder_id"] else ""
-        with self.db:
+        with self.store.transaction():
             self.db.execute("UPDATE notes SET folder_id=?,routing='manual',requested_folder=NULL,"
                             "delivery='sent',result_message_id=?,result_thread=?" + revision +
                             " WHERE owner=? AND id=? AND deleted=0",
@@ -115,7 +114,7 @@ class MessageStore:
                             (time.time(), note["owner"], note["id"]))
 
     def removed(self, owner, identity, message_id):
-        with self.db:
+        with self.store.transaction():
             self.db.execute("UPDATE note_messages SET deleted=1 WHERE owner=? AND note_id=? AND message_id=?",
                             (owner, identity, message_id))
             self.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?", (owner, message_id))

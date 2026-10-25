@@ -33,7 +33,7 @@ class CleanupStore:
 
     def retire_telegram_cleanup(self):
         # Old Telegram-only retries must never touch new archive entries or notify users.
-        with self.db:
+        with self.store.transaction():
             self.db.execute("DELETE FROM deletion_targets WHERE owner IN "
                             "(SELECT owner FROM deletion_jobs WHERE files_pending=0)")
             self.db.execute("DELETE FROM deletion_jobs WHERE files_pending=0")
@@ -42,7 +42,7 @@ class CleanupStore:
         # Only identifiers are needed; do not retain another copy of message contents.
         if type(owner) is not int or owner <= 0 or type(message_id) is not int or message_id <= 0:
             return
-        with self.db:
+        with self.store.transaction():
             self.db.execute("INSERT INTO telegram_messages(owner,message_id,thread_id,sent_at) VALUES (?,?,?,?) ON CONFLICT(owner,message_id) "
                             "DO UPDATE SET thread_id=coalesce(excluded.thread_id,telegram_messages.thread_id)",
                             (owner, message_id, thread, time.time() if sent_at is None else sent_at))
@@ -93,7 +93,7 @@ class CleanupStore:
                 remember(message.get("message_id"), message.get("message_thread_id"))
         topics.update(thread for thread in messages.values() if thread)
 
-        with self.db:
+        with self.store.transaction():
             # Intent, the Telegram snapshot, and database erasure commit together. A retry
             # only uses this snapshot and never erases notes created after the deletion.
             self.db.execute("INSERT INTO deletion_jobs(owner) VALUES (?) ON CONFLICT(owner) "
@@ -120,11 +120,11 @@ class CleanupStore:
             self.db.executemany("DELETE FROM updates WHERE id=?", updates)
 
     def files_done(self, owner):
-        with self.db:
+        with self.store.transaction():
             self.db.execute("UPDATE deletion_jobs SET files_pending=0 WHERE owner=?", (owner,))
 
     def done(self, owner, kind, identities):
-        with self.db:
+        with self.store.transaction():
             self.db.executemany("DELETE FROM deletion_targets WHERE owner=? AND kind=? AND identity=?",
                                 [(owner, kind, identity) for identity in identities])
             if kind == "topic":
@@ -132,7 +132,7 @@ class CleanupStore:
                                     [(owner, identity) for identity in identities])
 
     def finish(self, owner):
-        with self.db:
+        with self.store.transaction():
             self.db.execute("DELETE FROM deletion_targets WHERE owner=?", (owner,))
             self.db.execute("DELETE FROM deletion_jobs WHERE owner=? AND files_pending=0", (owner,))
 

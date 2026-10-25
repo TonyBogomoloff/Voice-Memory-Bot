@@ -22,7 +22,7 @@ class UpdateQueue:
 
     def ingest(self, updates, allowed):
         # Persist the payload and offset together before the next getUpdates acknowledges it.
-        with self.db:
+        with self.store.transaction():
             for update in updates:
                 message = (update.get('message') or update.get('edited_message')
                            or update.get('callback_query', {}).get('message', {}))
@@ -39,8 +39,7 @@ class UpdateQueue:
         return int(row['value']) if row else 0
 
     def claim(self):
-        with self.db:
-            self.db.execute('BEGIN IMMEDIATE')
+        with self.store.transaction():
             row = self.store.one("SELECT * FROM updates WHERE state='pending' ORDER BY id LIMIT 1")
             if row:
                 self.db.execute("UPDATE updates SET state='processing' WHERE id=?", (row['id'],))
@@ -48,9 +47,9 @@ class UpdateQueue:
 
     def finish(self, identity):
         # Successful payloads should not become a second archive of private messages.
-        with self.db:
+        with self.store.transaction():
             self.db.execute('DELETE FROM updates WHERE id=?', (identity,))
 
     def fail(self, identity):
-        with self.db:
+        with self.store.transaction():
             self.db.execute("UPDATE updates SET state='failed' WHERE id=?", (identity,))

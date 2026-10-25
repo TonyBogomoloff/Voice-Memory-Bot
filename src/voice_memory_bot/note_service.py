@@ -14,11 +14,11 @@ class NoteService:
         self.store, self.messages, self.archive = store, messages, archive
         self.telegram, self.note_locks = telegram, note_locks
 
-    def delete_archive(self, owner, identity, *, commit=True):
+    def delete_archive(self, owner, identity):
         note = self.store.note(owner, identity)
         if note["state"] == "processing" or self.note_locks[identity].locked():
             raise ValueError("Дождись завершения обработки, затем удали запись")
-        self.store.delete(owner, identity, commit=commit)
+        self.store.delete(owner, identity)
         return note
 
     def delete(self, owner, identity):
@@ -26,12 +26,12 @@ class NoteService:
         self.archive.delete(note)
         return note
 
-    def move_archive(self, note, folder_id, *, commit=True):
+    def move_archive(self, note, folder_id):
         if note["state"] in {"processing", "queued"}:
             raise ValueError("Дождись завершения обработки, затем перенеси запись")
         if note["file_id"] and not note["audio_bytes"]:
             raise ValueError("Сначала повтори сохранение файла, затем перенеси запись")
-        return self.messages.move_archive(note, folder_id, commit=commit)
+        return self.messages.move_archive(note, folder_id)
 
     async def move(self, owner, identity, folder_id):
         note = self.store.note(owner, identity)

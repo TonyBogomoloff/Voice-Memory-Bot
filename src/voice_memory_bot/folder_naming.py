@@ -43,7 +43,7 @@ class FolderNamingMixin:
             raise ValueError('Пришли голосовое с названием размером до 20 MB.')
         if media.get('duration', 0) > 60:
             raise ValueError('Для названия папки хватит голосового до одной минуты.')
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute('INSERT OR IGNORE INTO folder_name_inputs(owner,message_id,rename_id) VALUES (?,?,?)',
                                   (owner, mid, rename_id))
         result_word = 'переименована' if rename_id else 'создана'
@@ -72,7 +72,7 @@ class FolderNamingMixin:
                 self.store.reserve_asr(owner, duration)
                 transcript = await self.groq.transcribe(path, prompt=
                     'Folder names / Названия папок.')
-                with self.store.db:
+                with self.store.transaction():
                     self.store.db.execute('INSERT INTO folder_name_inputs(owner,message_id,transcript) VALUES (?,?,?) '
                                           'ON CONFLICT(owner,message_id) DO UPDATE SET transcript=excluded.transcript',
                                           (owner, mid, transcript))
@@ -81,7 +81,7 @@ class FolderNamingMixin:
             await self.show(owner, '✨ Выделяю название папки…', thread, keys, status['message_id'])
             name = receipt['name'] if receipt and receipt['name'] else await self.folder_namer.folder_name(transcript)
             phase = 'rename' if rename_id else 'create'
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute('UPDATE folder_name_inputs SET name=? WHERE owner=? AND message_id=?',
                                       (name, owner, mid))
             verb = 'Переименовываю папку в' if rename_id else 'Создаю папку'
@@ -91,7 +91,7 @@ class FolderNamingMixin:
                 folder = self.store.folder(owner, rename_id)
             else:
                 folder = self.store.create_folder(owner, name)
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute('UPDATE folder_name_inputs SET name=?,folder_id=? WHERE owner=? AND message_id=?',
                                       (name, folder['id'], owner, mid))
             (directory / 'result.json').write_text(json.dumps({'name': name, 'folder_id': folder['id']},

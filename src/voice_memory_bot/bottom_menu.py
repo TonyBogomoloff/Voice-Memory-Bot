@@ -53,7 +53,7 @@ class BottomMenuMixin:
                 # Retain the receipt so the regular view cleanup can retry later.
                 log.info("menu cleanup deferred owner=%s message_id=%s", owner, message_id)
                 return
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?", (owner, message_id))
 
     async def show_bottom(self, owner, text, thread=None, keys=None, *, screen="home", back="root",
@@ -122,7 +122,7 @@ class BottomMenuMixin:
         state["actions"] = actions
         previous = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,))
         # Persist before send: a lost Telegram response must not turn the displayed controls into notes.
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("INSERT INTO bottom_menus(owner,state) VALUES (?,?) ON CONFLICT(owner) "
                                   "DO UPDATE SET state=excluded.state", (owner, json.dumps(state, ensure_ascii=False)))
             self.store.db.executemany("INSERT OR IGNORE INTO bottom_menu_labels(owner,label) VALUES (?,?)",
@@ -139,7 +139,7 @@ class BottomMenuMixin:
             response = await self.view_send(self.telegram.text, owner, text, thread, keys)
         finally:
             silent_delivery.reset(token)
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("UPDATE bottom_menus SET message_id=? WHERE owner=?",
                                   (response["message_id"], owner))
         # Telegram Web drops the keyboard (and can show START) when its carrier is
@@ -188,7 +188,7 @@ class BottomMenuMixin:
                 raise ValueError("Подтверждение устарело. Открой действие заново.")
             # Consume the confirmation before yielding. A duplicate tap cannot repeat it.
             state["actions"].pop(text)
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?",
                                       (json.dumps(state, ensure_ascii=False), owner))
         result = await self.callback(owner, thread, None, action)

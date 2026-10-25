@@ -31,7 +31,7 @@ class FolderMenuMixin:
         return None
 
     def leave_folder_options(self, owner):
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("DELETE FROM folder_options WHERE owner=?", (owner,))
 
     def enter_folder_options(self, owner, identity):
@@ -40,7 +40,7 @@ class FolderMenuMixin:
             raise ValueError('Папка удалена. Выбери другую')
         self.store.select(owner, identity)
         self.store.set_action(owner, None)
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("INSERT INTO folder_options VALUES (?,?) ON CONFLICT(owner) "
                                   "DO UPDATE SET folder_id=excluded.folder_id", (owner, identity))
         return folder
@@ -154,7 +154,7 @@ class FolderMenuMixin:
             if row['state'] != 'pending' or self.folder_update_owner(candidate) != owner:
                 break
             selected.append(candidate)
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.executemany("UPDATE updates SET state='processing' WHERE id=?",
                                       [(item['update_id'],) for item in selected[1:]])
         return selected
@@ -276,7 +276,7 @@ class FolderMenuMixin:
                                       notice=f"Папка «{name}» удалена. Записи доступны через поиск и экспорт.")
             else:
                 await self.clear_folder_view(owner, thread, all_threads=True)
-                with self.store.db:
+                with self.store.transaction():
                     self.store.db.execute('DELETE FROM folder_views WHERE owner=?', (owner,))
                 await self.ask_first_folder(owner, thread)
         else:

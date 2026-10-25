@@ -55,7 +55,7 @@ async def execute_image(engine, request, index):
         folder, source = authorize_image(engine, request, command)
     except ValueError as exc:
         result = {"error": str(exc)}
-        with state.db:
+        with state.store.transaction():
             state.db.execute("UPDATE ai_steps SET result=? WHERE note_id=? AND step=?",
                              (json.dumps(result, ensure_ascii=False), identity, index))
         return result
@@ -68,9 +68,9 @@ async def execute_image(engine, request, index):
     key = hashlib.sha256(f"image:{identity}:{index}".encode()).hexdigest()[:32]
     created_note = None
     try:
-        with state.db:
+        with state.store.transaction():
             note, created = state.store.add_note(owner, folder, {"message_id": -(int(key[:15], 16) + 1)},
-                                                "photo", extension="png", size=len(data), transcript="", commit=False)
+                                                "photo", extension="png", size=len(data), transcript="")
             if not created:
                 raise ValueError("Не удалось сохранить картинку: конфликт идентификатора")
             created_note = note

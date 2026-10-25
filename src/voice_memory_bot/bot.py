@@ -1098,7 +1098,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 log.warning("photo source cleanup deferred note_id=%s", note["id"])
                 return
         self.messages.removed(note["owner"], note["id"], source["message_id"])
-        with self.store.db:
+        with self.store.transaction():
             self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
                                   (note["owner"], source["message_id"]))
 
@@ -1196,7 +1196,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                     log.warning("text source cleanup deferred note_id=%s error=%s", identity, exc)
                     return
             self.messages.removed(owner, identity, note["message_id"])
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?",
                                       (owner, note["message_id"]))
 

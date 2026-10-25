@@ -114,9 +114,9 @@ class NoteActions:
                 result["message"] = "Запись уже в этой папке."
                 self.save_result(request, index, result, identity)
                 return result
-            self.bot.notes.move_archive(note, folder["id"], commit=False)
+            self.bot.notes.move_archive(note, folder["id"])
         else:
-            self.bot.notes.delete_archive(owner, identity, commit=False)
+            self.bot.notes.delete_archive(owner, identity)
             result["message"] = "Запись удалена из архива. Завершаю удаление файлов и сообщений…"
         self.store.db.execute("INSERT INTO ai_message_jobs VALUES (?,?,?,?,?,'pending',?)",
                               (request, index, owner, identity, action, time.time()))
@@ -130,8 +130,7 @@ class NoteActions:
                 command = saved["command"]
                 access = self.state.settings(owner)["notes_access"]
                 try:
-                    with self.store.db:
-                        self.store.db.execute("BEGIN IMMEDIATE")
+                    with self.store.transaction():
                         notes = self.validate_many(owner, request, index, command, access)
                         folder = None
                         if command["action"] in {"move_note", "move_notes"}:
@@ -150,7 +149,7 @@ class NoteActions:
                         for single, note in notes:
                             self.apply(owner, request, index, single, note, folder)
                 except ValueError as exc:
-                    with self.store.db:
+                    with self.store.transaction():
                         self.save_result(request, index, {"error": str(exc)})
             await self.cleanup(request, index)
             return self.saved(owner, request, index)["result"]
@@ -179,8 +178,7 @@ class NoteActions:
                 # Replayed taps never create a folder or move a note again.
                 return pending.get("message", "Этот выбор уже закрыт")
             access = self.state.settings(owner)["notes_access"]
-            with self.store.db:
-                self.store.db.execute("BEGIN IMMEDIATE")
+            with self.store.transaction():
                 if target == "cancel":
                     result = {"cancelled": True, "message": "Перенос отменён."}
                     self.save_result(request, index, result)
@@ -189,7 +187,7 @@ class NoteActions:
                     if target == "new":
                         folder = matching_folder(self.store.folders(owner), pending["name"])
                         if folder is None:
-                            folder = self.store.create_folder(owner, pending["name"], commit=False)
+                            folder = self.store.create_folder(owner, pending["name"])
                     elif target in {f["id"] for f in pending["folders"]}:
                         folder = self.store.folder(owner, target)
                     else:
@@ -204,7 +202,7 @@ class NoteActions:
                 self.finish_choice(owner, request, result.get("message", "Перенос выполнен."))
             await self.cleanup(request, index)
             result = self.saved(owner, request, index)["result"]
-            with self.store.db:
+            with self.store.transaction():
                 self.finish_choice(owner, request, result.get("message", "Перенос выполнен."))
             self.bot.flush_ai_archive()
             return result.get("message", "Перенос выполнен.")
@@ -248,7 +246,7 @@ class NoteActions:
                         message = "Запись была перенесена, затем удалена."
             except OSError:
                 state, message = "pending", "Изменение сохранено. Завершаю обновление файлов архива…"
-            with self.store.db:
+            with self.store.transaction():
                 self.store.db.execute("UPDATE ai_message_jobs SET state=?,updated_at=? WHERE request_id=? AND step=? AND note_id=?",
                                       (state, time.time(), request, index, identity))
                 saved = self.store.one("SELECT result FROM ai_steps WHERE note_id=? AND step=?", (request, index))

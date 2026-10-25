@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import time
 
+from .database import transaction
+
 
 def migrate_ai(db):
     """Additive migration; raw transcripts and existing note IDs remain unchanged."""
-    with db:
+    with transaction(db):
         for table, fields in {
             "folders": {"mode": "TEXT NOT NULL DEFAULT 'notes'"},
             "notes": {"entry_type": "TEXT NOT NULL DEFAULT 'note'", "content": "TEXT",
@@ -72,7 +74,7 @@ def migrate_ai(db):
         );
         INSERT OR IGNORE INTO ai_message_jobs SELECT * FROM ai_note_jobs;
     """)
-    with db:
+    with transaction(db):
         columns = {r[1] for r in db.execute("PRAGMA table_info(ai_requests)")}
         for name in ("input_text", "result_note_id", "reply_context"):
             if name not in columns:
@@ -88,7 +90,7 @@ class AIStore:
 
     def settings(self, owner):
         self.store.register_user(owner)
-        with self.db:
+        with self.store.transaction():
             self.db.execute("INSERT OR IGNORE INTO ai_settings(owner) VALUES (?)", (owner,))
         row = self.store.one("SELECT * FROM ai_settings WHERE owner=?", (owner,))
         row["names"] = json.loads(row["names"])
@@ -111,14 +113,14 @@ class AIStore:
         if "wake_enabled" in fields and type(fields["wake_enabled"]) is not bool:
             raise ValueError("Некорректный переключатель")
         assignments = ",".join(f"{k}=?" for k in fields)
-        with self.db:
+        with self.store.transaction():
             self.db.execute(f"UPDATE ai_settings SET {assignments} WHERE owner=?", [*fields.values(), owner])
 
     def mode(self, owner, folder_id, mode):
         self.store.folder(owner, folder_id)
         if mode not in {"notes", "chat"}:
             raise ValueError("Неизвестный режим папки")
-        with self.db:
+        with self.store.transaction():
             self.db.execute("UPDATE folders SET mode=? WHERE id=? AND owner=?", (mode, folder_id, owner))
 
     def conversation(self, owner, identity):
@@ -131,7 +133,7 @@ class AIStore:
         from .store import new_id
         self.store.folder(owner, folder_id)
         identity = new_id()
-        with self.db:
+        with self.store.transaction():
             self.db.execute("INSERT INTO ai_conversations VALUES (?,?,?,?)",
                             (identity, owner, folder_id, time.time()))
             if active:
@@ -155,7 +157,7 @@ class AIStore:
         if len(content) > 40000:
             raise ValueError("Текст слишком длинный для ИИ. Раздели запись на части до 40000 символов")
         conversation = self.new_conversation(owner, note["folder_id"], active=False)
-        with self.db:
+        with self.store.transaction():
             self.db.execute("INSERT INTO ai_note_context VALUES (?,?,?,?,?)",
                             (conversation, owner, note_id, note["title"] or "Запись", content))
         return conversation
@@ -220,7 +222,7 @@ class AIStore:
 
     def link(self, owner, message_id, conversation):
         self.conversation(owner, conversation)
-        with self.db:
+        with self.store.transaction():
             self.db.execute("INSERT OR REPLACE INTO ai_links VALUES (?,?,?)", (owner, message_id, conversation))
 
     def request(self, owner, note_id):
@@ -247,7 +249,7 @@ class AIStore:
         else:
             conversation = (self.active(owner, folder["id"]) if folder["mode"] == "chat"
                             else self.new_conversation(owner, folder["id"], active=False))
-        with self.db:
+        with self.store.transaction():
             self.db.execute("INSERT INTO ai_requests(note_id,owner,conversation_id,trigger,thread_id,reply_to,created_at) "
                             "VALUES (?,?,?,?,?,?,?)", (note_id, owner, conversation, trigger, thread, reply_to,
                                                       note["created_at"]))
@@ -257,7 +259,7 @@ class AIStore:
 
     def finish_reply(self, owner, note_id, text):
         request = self.request(owner, note_id)
-        with self.db:
+        with self.store.transaction():
             if not request["result_note_id"] and not self.command_reply(owner, note_id):
                 result = result_text(self.store, self.store.note(owner, note_id), text)
                 self.db.execute("UPDATE ai_requests SET result_note_id=? WHERE owner=? AND note_id=?",
@@ -286,7 +288,7 @@ class AIStore:
         for request in requests:
             if not request["response"].strip() or self.command_reply(request["owner"], request["note_id"]):
                 continue
-            with self.db:
+            with self.store.transaction():
                 note = self.store.note(request["owner"], request["note_id"])
                 # The historical response time was not recorded; retain the request's date.
                 result = result_text(self.store, note, request["response"], created_at=request["created_at"])
@@ -304,7 +306,7 @@ class AIStore:
                 AND b.state IN ('queued','running') AND bn.deleted=0 AND bn.state!='asr_failed')
             ORDER BY a.created_at LIMIT 1""")
         if row:
-            with self.db:
+            with self.store.transaction():
                 self.db.execute("UPDATE ai_requests SET state='running' WHERE note_id=?", (row["note_id"],))
         return row
 
@@ -314,7 +316,7 @@ class AIStore:
         if not fields or not fields.keys() <= {"state", "model", "response", "error", "delivery"}:
             raise ValueError("Некорректное поле запроса")
         assignments = ",".join(f"{k}=?" for k in fields)
-        with self.db:
+        with self.store.transaction():
             self.db.execute(f"UPDATE ai_requests SET {assignments} WHERE note_id=? AND owner=?",
                             [*fields.values(), note_id, owner])
 
@@ -335,7 +337,7 @@ class AIStore:
     def save_command(self, owner, note_id, step, command):
         if not self.request(owner, note_id):
             raise ValueError("Запрос не найден")
-        with self.db:
+        with self.store.transaction():
             self.db.execute("INSERT OR IGNORE INTO ai_steps(note_id,step,command) VALUES (?,?,?)",
                             (note_id, step, json.dumps(command, ensure_ascii=False)))
 
@@ -346,7 +348,7 @@ class AIStore:
             return saved["result"]
         command = saved["command"]
         access = self.settings(owner)["notes_access"]
-        with self.db:
+        with self.store.transaction():
             try:
                 if access == "none" or (command["action"] in {"create_note", "update_note"} and access != "write"):
                     raise ValueError("Доступ к заметкам выключен в настройках ИИ")
@@ -467,7 +469,7 @@ class AIStore:
         old = self.store.one("SELECT * FROM note_revisions WHERE note_id=? AND revision=?", (note_id, revision - 1))
         if not old:
             raise ValueError("Предыдущая версия не найдена")
-        with self.db:
+        with self.store.transaction():
             self._snapshot(note)
             self.db.execute("UPDATE notes SET title=?,content=?,folder_id=?,revision=revision+1,archive_dirty=1 "
                             "WHERE id=? AND owner=?", (old["title"], old["content"], old["folder_id"], note_id, owner))

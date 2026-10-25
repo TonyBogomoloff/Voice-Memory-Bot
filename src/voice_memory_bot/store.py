@@ -6,12 +6,12 @@ import sqlite3
 import time
 import unicodedata
 import uuid
-from contextlib import nullcontext
 from pathlib import Path
 
 from .ai_store import migrate_ai
 from .cleanup import migrate_cleanup
 from .config import Limits
+from .database import transaction
 from .update_queue import UpdateQueue
 
 MAX_PINNED_FOLDERS = 4
@@ -89,8 +89,7 @@ class Store:
             CREATE INDEX IF NOT EXISTS usage_time ON asr_usage(owner, at);
         """)
         # Add checkpoints without replaying results already delivered by older versions.
-        with self.db:
-            self.db.execute("BEGIN")
+        with self.transaction():
             columns = {row["name"] for row in self.all("PRAGMA table_info(notes)")}
             if "status_message_id" not in columns:
                 self.db.execute("ALTER TABLE notes ADD COLUMN status_message_id INTEGER")
@@ -106,7 +105,7 @@ class Store:
             self.db.execute("UPDATE updates SET state='pending' WHERE state='processing'")
         migrate_ai(self.db)
         migrate_cleanup(self.db)
-        with self.db:
+        with self.transaction():
             for name, declaration in {
                 "origin": "TEXT NOT NULL DEFAULT 'telegram'",
                 "original_name": "TEXT",
@@ -116,8 +115,7 @@ class Store:
             }.items():
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE notes ADD COLUMN {name} {declaration}")
-        with self.db:
-            self.db.execute("BEGIN IMMEDIATE")
+        with self.transaction():
             if "pin_slot" not in {row["name"] for row in self.all("PRAGMA table_info(folders)")}:
                 self.db.execute("ALTER TABLE folders ADD COLUMN pin_slot INTEGER "
                                 "CHECK(pin_slot BETWEEN 1 AND 4)")
@@ -132,6 +130,9 @@ class Store:
             self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS folder_pin_slot "
                             "ON folders(owner,pin_slot) WHERE pin_slot IS NOT NULL")
 
+    def transaction(self):
+        return transaction(self.db)
+
     def close(self):
         self.db.close()
 
@@ -143,11 +144,11 @@ class Store:
         return [dict(r) for r in self.db.execute(sql, args)]
 
     def register_user(self, owner: int):
-        with self.db:
+        with self.transaction():
             self.db.execute("INSERT OR IGNORE INTO users(id) VALUES (?)", (owner,))
 
     def ensure_user(self, owner: int) -> str:
-        with self.db:
+        with self.transaction():
             self.db.execute("INSERT OR IGNORE INTO users(id) VALUES (?)", (owner,))
             folder = self.one("SELECT id FROM folders WHERE owner=? AND is_inbox=1 AND removed=0", (owner,))
             if folder:
@@ -171,8 +172,7 @@ class Store:
         return next((slot for slot in range(1, MAX_PINNED_FOLDERS + 1) if slot not in used), None)
 
     def set_folder_pin(self, owner, identity, pinned):
-        with self.db:
-            self.db.execute("BEGIN IMMEDIATE")
+        with self.transaction():
             folder = self.folder(owner, identity)
             if folder['removed']:
                 raise ValueError('Папка удалена')
@@ -192,7 +192,7 @@ class Store:
         if type(enabled) is not bool:
             raise ValueError("Выбери, показывать ли кнопки у сообщений")
         self.register_user(owner)
-        with self.db:
+        with self.transaction():
             self.db.execute("INSERT INTO user_message_settings(owner,buttons_enabled) VALUES (?,?) "
                             "ON CONFLICT(owner) DO UPDATE SET buttons_enabled=excluded.buttons_enabled",
                             (owner, int(enabled)))
@@ -205,7 +205,7 @@ class Store:
         if text_format not in {"pdf", "markdown"}:
             raise ValueError("Выбери PDF или Markdown")
         self.register_user(owner)
-        with self.db:
+        with self.transaction():
             self.db.execute("INSERT INTO user_export_settings(owner,text_format) VALUES (?,?) "
                             "ON CONFLICT(owner) DO UPDATE SET text_format=excluded.text_format",
                             (owner, text_format))
@@ -222,7 +222,7 @@ class Store:
         return None
 
     def mark_implicit_topic(self, owner, thread):
-        with self.db:
+        with self.transaction():
             self.db.execute("INSERT OR IGNORE INTO implicit_topics VALUES (?,?)", (owner, thread))
 
     def is_implicit_topic(self, owner, thread):
@@ -237,8 +237,7 @@ class Store:
 
     def delete_folder(self, owner, identity):
         """Hide any folder, preserving the archive under its stable historical ID."""
-        with self.db:
-            self.db.execute("BEGIN IMMEDIATE")
+        with self.transaction():
             folder = self.folder(owner, identity)
             if folder["removed"]:
                 raise ValueError("Папка уже удалена")
@@ -260,17 +259,14 @@ class Store:
                 self.db.execute("INSERT OR IGNORE INTO implicit_topics VALUES (?,?)", (owner, folder["thread_id"]))
         return selected
 
-    def create_folder(self, owner: int, name: str, thread: int | None = None, *, commit=True):
-        if commit:
-            self.register_user(owner)
+    def create_folder(self, owner: int, name: str, thread: int | None = None):
+        self.register_user(owner)
         name = clean_name(name)
         self.check_names(owner, [name])
         if len(self.folders(owner)) >= self.limits.max_folders_per_user:
             raise ValueError("Достигнут лимит папок")
         identity = new_id()
-        with self.db if commit else nullcontext():
-            if commit:
-                self.db.execute("BEGIN IMMEDIATE")
+        with self.transaction():
             self.db.execute("INSERT INTO folders(id,owner,name,normalized,thread_id,pin_slot) VALUES (?,?,?,?,?,?)",
                             (identity, owner, name, normalize(name), thread, self.free_pin_slot(owner)))
         return self.folder(owner, identity)
@@ -303,7 +299,7 @@ class Store:
             raise ValueError("Папка удалена")
         name = clean_name(name)
         self.check_names(owner, [name, *json.loads(folder["aliases"])], identity)
-        with self.db:
+        with self.transaction():
             self.db.execute("UPDATE folders SET name=?,normalized=? WHERE id=? AND owner=?",
                             (name, normalize(name), identity, owner))
 
@@ -313,30 +309,30 @@ class Store:
         if len(names) > 10:
             raise ValueError("Максимум 10 псевдонимов")
         self.check_names(owner, [folder["name"], *names], identity)
-        with self.db:
+        with self.transaction():
             self.db.execute("UPDATE folders SET aliases=? WHERE id=? AND owner=?",
                             (json.dumps(names, ensure_ascii=False), identity, owner))
 
     def bind_thread(self, owner, identity, thread):
         self.folder(owner, identity)
-        with self.db:
+        with self.transaction():
             self.db.execute("UPDATE folders SET thread_id=? WHERE id=? AND owner=?", (thread, identity, owner))
 
     def select(self, owner, identity):
         if self.folder(owner, identity)["removed"]:
             raise ValueError("Папка удалена. Выбери другую")
-        with self.db:
+        with self.transaction():
             self.db.execute("UPDATE users SET active_folder=? WHERE id=?", (identity, owner))
 
     def set_action(self, owner, action):
-        with self.db:
+        with self.transaction():
             self.db.execute("UPDATE users SET action=? WHERE id=?", (action, owner))
 
     def action(self, owner):
         return self.one("SELECT action FROM users WHERE id=?", (owner,))["action"]
 
     def add_note(self, owner, folder, message, kind, file_id=None, extension="txt", size=0,
-                 duration=0, transcript=None, *, commit=True):
+                 duration=0, transcript=None):
         existing = self.one("SELECT * FROM notes WHERE owner=? AND message_id=?", (owner, message["message_id"]))
         if existing:
             return existing, False
@@ -355,7 +351,7 @@ class Store:
         identity = new_id()
         media = message.get("document" if kind == "file" else kind)
         media = media if isinstance(media, dict) else {}
-        with self.db if commit else nullcontext():
+        with self.transaction():
             self.db.execute("""INSERT INTO notes(id,owner,folder_id,source_folder,message_id,source_thread,
                 kind,file_id,extension,declared_bytes,duration,created_at,transcript,input_mode,reply_message_id,
                 source_json,original_name,mime_type)
@@ -454,14 +450,14 @@ class Store:
         assignments = ",".join(f"{key}=?" for key in fields)
         if before["state"] == "ready" and any(k in fields and fields[k] != before[k] for k in ("folder_id", "title")):
             assignments += ",revision=revision+1"
-        with self.db:
+        with self.transaction():
             self.db.execute(f"UPDATE notes SET {assignments} WHERE id=? AND owner=? AND deleted=0",
                             [*fields.values(), identity, owner])
 
     def claim_note(self):
         row = self.one("SELECT * FROM notes WHERE state='queued' AND deleted=0 ORDER BY created_at LIMIT 1")
         if row:
-            with self.db:
+            with self.transaction():
                 self.db.execute("UPDATE notes SET state='processing',attempts=attempts+1 WHERE id=?", (row["id"],))
             return self.note(row["owner"], row["id"])
 
@@ -472,7 +468,7 @@ class Store:
         seconds = max(10, seconds)
         if used + seconds > self.limits.daily_asr_seconds:
             raise ValueError("daily_asr_limit")
-        with self.db:
+        with self.transaction():
             self.db.execute("INSERT INTO asr_usage VALUES (?,?,?)", (owner, now, seconds))
             self.db.execute("DELETE FROM asr_usage WHERE at<?", (now - 86400,))
 
@@ -486,9 +482,9 @@ class Store:
             raise ValueError("Пять попыток уже использованы; аудио доступно для выгрузки")
         self.update_note(owner, identity, state="queued", error=None, delivery="pending")
 
-    def delete(self, owner, identity, *, commit=True):
+    def delete(self, owner, identity):
         self.note(owner, identity)
-        with self.db if commit else nullcontext():
+        with self.transaction():
             self.db.execute("UPDATE notes SET deleted=1,transcript=NULL,title='',file_id=NULL,"
                             "content=NULL,source_json=NULL,original_name=NULL,mime_type=NULL,"
                             "requested_folder=NULL,error=NULL WHERE owner=? AND id=?", (owner, identity))
@@ -519,7 +515,7 @@ class Store:
         field = "text" if note["kind"] == "text" else "caption"
         changed = source.get(field, "") != updated.get(field, "")
         replace_text = changed and note["kind"] in {"text", "photo", "file", "video"}
-        with self.db:
+        with self.transaction():
             self.db.execute("UPDATE notes SET source_json=?,archive_dirty=1,revision=revision+?,"
                             "transcript=CASE WHEN ? THEN ? ELSE transcript END,"
                             "content=CASE WHEN ? THEN NULL ELSE content END "
