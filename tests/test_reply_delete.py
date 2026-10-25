@@ -1,9 +1,9 @@
 import asyncio
 
 import pytest
-from test_commands import bot as bot
-from test_commands import receive
-from test_folder_shortcuts import labels
+from support.commands import bot as bot
+from support.commands import receive
+from support.menus import labels
 
 
 @pytest.mark.parametrize('target', [100, 200, None, 300, 999])

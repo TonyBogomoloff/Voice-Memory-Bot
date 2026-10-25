@@ -2,8 +2,7 @@ import asyncio
 import time
 
 import pytest
-from test_mvp import make_bot, receive_voice
-from test_mvp import store as store
+from support.base import make_bot, receive_voice
 
 
 def test_folder_deletion_keeps_files_notes_versions_ai_history_and_other_users(tmp_path, store):

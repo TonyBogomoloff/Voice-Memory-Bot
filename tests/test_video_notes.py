@@ -1,7 +1,6 @@
 import asyncio
 
-from test_mvp import make_bot
-from test_mvp import store as store
+from support.base import make_bot
 
 from voice_memory_bot.archive import media_label
 

@@ -1,8 +1,8 @@
 import asyncio
 
 import pytest
-from test_ai import bot as bot
-from test_ai import ready_note
+from support.ai import bot as bot
+from support.ai import ready_note
 
 
 def test_cancelled_partial_delivery_keeps_receipts_and_never_replays(bot):

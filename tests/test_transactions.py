@@ -1,6 +1,5 @@
 import pytest
-from test_mvp import add
-from test_mvp import store as store
+from support.base import add
 
 from voice_memory_bot.message_store import MessageStore
 

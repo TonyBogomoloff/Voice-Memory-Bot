@@ -1,8 +1,7 @@
 import asyncio
 
 import pytest
-from test_mvp import make_bot, receive_voice
-from test_mvp import store as store
+from support.base import make_bot, receive_voice
 
 
 @pytest.mark.parametrize("screen", ["root", "settings"])

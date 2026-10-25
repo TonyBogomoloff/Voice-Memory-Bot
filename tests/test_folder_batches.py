@@ -1,8 +1,8 @@
 import asyncio
 
 import pytest
-from test_commands import bot as bot
-from test_folder_view import saved
+from support.commands import bot as bot
+from support.folders import saved
 
 from voice_memory_bot.providers import ProviderError, TelegramError
 

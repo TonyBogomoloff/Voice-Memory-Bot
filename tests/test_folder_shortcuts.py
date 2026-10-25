@@ -2,20 +2,12 @@ import asyncio
 import sqlite3
 
 import pytest
-from test_commands import bot as bot
-from test_commands import receive
+from support.commands import bot as bot
+from support.commands import receive
+from support.menus import labels, reply_keyboard
 
 from voice_memory_bot.config import Limits
 from voice_memory_bot.store import Store
-
-
-def reply_keyboard(bot):
-    return next(payload["keyboard"] for method, payload in reversed(bot.telegram.sent)
-                if method == "sendMessage" and "keyboard" in (payload.get("keyboard") or {}))
-
-
-def labels(bot):
-    return [button["text"] for row in reply_keyboard(bot)["keyboard"] for button in row]
 
 
 def test_upgrade_seeds_four_pins_per_owner_and_restart_preserves_unpinning(tmp_path):

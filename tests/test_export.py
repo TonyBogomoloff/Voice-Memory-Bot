@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import json
 import sqlite3
 import threading
 import zipfile
@@ -9,20 +8,12 @@ from urllib.parse import unquote
 
 import pytest
 from pypdf import PdfReader
+from support.exports import ExportTelegram, manifest
 
 from voice_memory_bot.archive import Archive
 from voice_memory_bot.bot import Bot
 from voice_memory_bot.config import Config, Limits
 from voice_memory_bot.store import Store
-
-
-@pytest.fixture
-def store(tmp_path):
-    db = Store(tmp_path / "archive.sqlite3", Limits())
-    db.ensure_user(1)
-    db.ensure_user(2)
-    yield db
-    db.close()
 
 
 def add(store, message=1, owner=1, **values):
@@ -39,8 +30,6 @@ def saved_audio(store, archive, message=1, transcript="Моя голосовая
     return store.note(1, note["id"])
 
 
-def manifest(zipped):
-    return json.loads(zipped.read(next(n for n in zipped.namelist() if n.startswith("manifest-"))))
 
 
 def test_export_snapshot_keeps_selected_records_and_settings_after_edits(tmp_path, store):
@@ -239,19 +228,6 @@ def test_empty_export_preserves_folders_and_preferences(tmp_path, store):
         assert folder["path"] + "/" in zipped.namelist()
 
 
-class ExportTelegram:
-    def __init__(self):
-        self.sent, self.documents = [], []
-
-    async def call(self, method, **values):
-        self.sent.append((method, values))
-        return {"message_id": len(self.sent)}
-
-    async def text(self, owner, text, thread=None, keys=None):
-        return await self.call("sendMessage", chat_id=owner, text=text, reply_markup=keys)
-
-    async def document(self, owner, path, thread=None, caption=None):
-        self.documents.append((owner, path.read_bytes(), caption))
 
 
 def test_export_buttons_settings_scope_and_lowered_quota(tmp_path, store):

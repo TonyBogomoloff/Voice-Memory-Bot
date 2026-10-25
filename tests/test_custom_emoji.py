@@ -3,8 +3,8 @@ import json
 
 import httpx
 import pytest
-from test_commands import bot as bot
-from test_commands import receive
+from support.commands import bot as bot
+from support.commands import receive
 
 from voice_memory_bot.custom_emoji import IDS, KeyboardAliases, themed_markup, themed_payload, themed_text
 from voice_memory_bot.providers import ProviderError, Telegram

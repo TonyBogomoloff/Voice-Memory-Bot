@@ -1,23 +1,12 @@
 import asyncio
 
 import pytest
-from test_commands import bot as bot
-from test_commands import receive
+from support.commands import bot as bot
+from support.commands import receive
+from support.folders import deleted_ids, saved
 
 from voice_memory_bot.folder_view import RENEW_AFTER
 from voice_memory_bot.providers import ProviderError, TelegramError
-
-
-def deleted_ids(bot):
-    return {mid for method, payload in bot.telegram.sent if method in {'deleteMessage', 'deleteMessages'}
-            for mid in payload.get('message_ids', [payload.get('message_id')])}
-
-
-def saved(bot, folder, text, mid):
-    note, _ = bot.store.add_note(1, folder, {'message_id': mid}, 'text', transcript=text)
-    bot.store.update_note(1, note['id'], state='ready', delivery='sent', transcript_delivery='sent', title=text)
-    bot.cleanup.remember(1, mid)
-    return note
 
 
 def test_switch_renders_only_selected_folder_and_preserves_archive(bot, tmp_path):

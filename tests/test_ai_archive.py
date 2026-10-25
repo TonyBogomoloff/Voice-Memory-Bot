@@ -3,8 +3,8 @@ import zipfile
 from dataclasses import replace
 
 import pytest
-from test_ai import bot as bot
-from test_ai import ready_note, step
+from support.ai import bot as bot
+from support.ai import ready_note, step
 
 from voice_memory_bot.ai_store import AIStore
 from voice_memory_bot.store import Store

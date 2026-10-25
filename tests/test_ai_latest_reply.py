@@ -1,8 +1,8 @@
 import asyncio
 
 import pytest
-from test_ai import bot as bot
-from test_ai import receive, step
+from support.ai import bot as bot
+from support.ai import receive, step
 
 from voice_memory_bot.providers import ProviderError
 

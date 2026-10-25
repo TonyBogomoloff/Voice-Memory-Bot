@@ -2,9 +2,9 @@ import asyncio
 import json
 
 import pytest
-from test_ai import bot as bot
-from test_ai import ready_note, step, tool
-from test_ai_note_actions import request_for
+from support.ai import bot as bot
+from support.ai import ready_note, step, tool
+from support.note_actions import request_for
 
 
 def test_folder_is_loaded_only_on_demand_with_full_messages(bot):

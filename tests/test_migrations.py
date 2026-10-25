@@ -1,7 +1,7 @@
 import sqlite3
 
 import pytest
-from test_mvp import add, make_bot
+from support.base import add, make_bot
 
 from voice_memory_bot import migrations
 from voice_memory_bot.ai_store import AIStore

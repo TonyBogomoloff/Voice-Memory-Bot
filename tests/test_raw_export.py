@@ -7,11 +7,11 @@ from io import BytesIO
 
 import httpx
 import pytest
-from test_commands import bot as bot
-from test_commands import receive
-from test_export import ExportTelegram, manifest
-from test_folder_shortcuts import labels
-from test_mvp import make_bot
+from support.base import make_bot
+from support.commands import bot as bot
+from support.commands import receive
+from support.exports import ExportTelegram, manifest
+from support.menus import labels
 
 from voice_memory_bot.config import Config
 from voice_memory_bot.providers import ProviderError, Telegram

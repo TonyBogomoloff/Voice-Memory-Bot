@@ -1,4 +1,4 @@
-"""Opt-in live Groq → Codex → archive check using synthesized, non-personal speech.
+"""Opt-in live Groq → selected folder → archive check with synthetic speech.
 
 No messages are sent to Telegram. Requires ffmpeg with its built-in flite filter.
 """
@@ -36,6 +36,13 @@ class LocalTelegram:
         self.sent += 1
         return {"message_id": self.sent}
 
+    async def call(self, method, **kwargs):
+        if method.startswith("editMessage"):
+            return {"message_id": kwargs["message_id"]}
+        if method == "deleteMessage":
+            return True
+        raise AssertionError(f"unexpected_telegram_method:{method}")
+
 
 async def check(config):
     started = time.monotonic()
@@ -51,9 +58,10 @@ async def check(config):
         groq = Groq(config.groq_voice, config.groq_model)
         try:
             owner = next(iter(config.allowed_user_ids))
-            inbox = store.ensure_user(owner)
+            store.ensure_user(owner)
             project = store.create_folder(owner, "Game")
-            note, _ = store.add_note(owner, inbox, {"message_id": 1}, "voice", "synthetic-only",
+            store.select(owner, project["id"])
+            note, _ = store.add_note(owner, store.current_folder(owner), {"message_id": 1}, "voice", "synthetic-only",
                                      "wav", audio.stat().st_size, 10)
             bot = Bot(config, store, LocalTelegram(audio), groq, CodexRouter(config.llm))
             await bot.process(store.claim_note())
@@ -62,14 +70,15 @@ async def check(config):
             with zipfile.ZipFile(paths[0]) as archive:
                 filename = next(n for n in archive.namelist() if n.endswith(".wav"))
                 original_ok = archive.read(filename) == audio.read_bytes()
-            result = {"asr": config.groq_model, "llm": config.llm.model,
+            result = {"asr": config.groq_model,
                       "transcription_nonempty": bool(saved["transcript"]),
-                      "route_correct": saved["folder_id"] == project["id"],
+                      "selected_folder_preserved": saved["folder_id"] == project["id"],
                       "original_export_unchanged": original_ok, "state": saved["state"],
                       "error": saved["error"], "telegram_messages_sent": 0,
                       "elapsed_seconds": round(time.monotonic() - started, 2)}
             print(json.dumps(result), flush=True)
-            return 0 if all([result["transcription_nonempty"], result["route_correct"], original_ok]) else 1
+            return 0 if all([result["transcription_nonempty"], result["selected_folder_preserved"],
+                             original_ok, saved["state"] == "ready"]) else 1
         finally:
             await groq.close()
             store.close()

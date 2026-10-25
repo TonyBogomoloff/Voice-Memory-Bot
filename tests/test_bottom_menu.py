@@ -1,9 +1,9 @@
 import asyncio
 
-from test_commands import bot as bot
-from test_commands import receive
-from test_folder_shortcuts import labels, reply_keyboard
-from test_mvp import FakeGroq, FakeRouter, FakeTelegram
+from support.base import FakeGroq, FakeRouter, FakeTelegram
+from support.commands import bot as bot
+from support.commands import receive
+from support.menus import labels, reply_keyboard
 
 from voice_memory_bot.bot import Bot
 from voice_memory_bot.bottom_menu import BACK, NEXT, PREVIOUS, ROOT

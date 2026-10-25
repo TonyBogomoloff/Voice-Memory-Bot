@@ -1,8 +1,7 @@
 import asyncio
 
-from test_commands import receive
-from test_mvp import make_bot, receive_voice
-from test_mvp import store as store
+from support.base import make_bot, receive_voice
+from support.commands import receive
 
 from voice_memory_bot.config import Limits
 from voice_memory_bot.store import Store

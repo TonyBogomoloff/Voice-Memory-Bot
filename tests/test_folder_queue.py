@@ -1,8 +1,8 @@
 import asyncio
 
 import pytest
-from test_commands import bot as bot
-from test_folder_view import deleted_ids
+from support.commands import bot as bot
+from support.folders import deleted_ids
 
 
 def event(identity, text, owner=1):

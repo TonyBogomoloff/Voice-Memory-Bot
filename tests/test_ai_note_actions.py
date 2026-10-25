@@ -2,17 +2,11 @@ import asyncio
 import json
 
 import pytest
-from test_ai import bot as bot
-from test_ai import ready_note, receive, step, tool
+from support.ai import bot as bot
+from support.ai import ready_note, receive, step, tool
+from support.note_actions import request_for
 
 from voice_memory_bot.providers import ProviderError
-
-
-def request_for(bot, note=None):
-    request = ready_note(bot, "Перенеси или удали выбранную запись", message_id=901)
-    conversation = bot.ai_state.start_note_conversation(1, note["id"]) if note else None
-    bot.ai_state.enqueue(1, request["id"], "button", conversation=conversation)
-    return request["id"]
 
 
 async def act(bot, request, action, note, **fields):

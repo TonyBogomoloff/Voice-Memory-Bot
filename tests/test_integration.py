@@ -1,10 +1,9 @@
 import asyncio
 import zipfile
 
-from test_ai import bot as bot
-from test_ai import ready_note, receive, step, tool
-from test_mvp import store as store
-from test_photos import photo_bot, receive_photo
+from support.ai import bot as bot
+from support.ai import ready_note, receive, step, tool
+from support.photos import photo_bot, receive_photo
 
 
 def test_edited_voice_move_preserves_original_and_invalidates_stale_ai_edit(bot, tmp_path):

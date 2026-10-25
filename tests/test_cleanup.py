@@ -4,7 +4,7 @@ import time
 
 import httpx
 import pytest
-from test_mvp import FakeGroq, FakeRouter, FakeTelegram
+from support.base import FakeGroq, FakeRouter, FakeTelegram
 
 from voice_memory_bot.bot import HOME, Bot
 from voice_memory_bot.config import Config, Limits

@@ -1,7 +1,7 @@
 import asyncio
 
-from test_commands import bot as bot
-from test_folder_view import saved
+from support.commands import bot as bot
+from support.folders import saved
 
 
 def test_folder_pages_cover_archive_keep_photos_and_clamp_stale_page(bot):

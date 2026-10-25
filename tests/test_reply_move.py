@@ -1,9 +1,9 @@
 import asyncio
 
 import pytest
-from test_commands import bot as bot
-from test_commands import receive
-from test_mvp import make_bot
+from support.base import make_bot
+from support.commands import bot as bot
+from support.commands import receive
 
 
 async def open_move(bot, target=100, command='/move'):

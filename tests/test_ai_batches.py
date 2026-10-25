@@ -1,9 +1,9 @@
 import asyncio
 
 import pytest
-from test_ai import bot as bot
-from test_ai import ready_note, receive, step, tool
-from test_ai_note_actions import request_for
+from support.ai import bot as bot
+from support.ai import ready_note, receive, step, tool
+from support.note_actions import request_for
 
 from voice_memory_bot.ai_store import AIStore
 

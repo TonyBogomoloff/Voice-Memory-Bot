@@ -5,11 +5,11 @@ from email.policy import default
 
 import httpx
 import pytest
-from test_ai import bot as bot
-from test_ai import receive, step
-from test_ai_images import image_assistant, photo
-from test_ai_images import image_cli as image_cli
-from test_photos import PHOTO, receive_photo
+from support.ai import bot as bot
+from support.ai import receive, step
+from support.images import image_assistant, photo
+from support.images import image_cli as image_cli
+from support.photos import PHOTO, receive_photo
 
 from voice_memory_bot.providers import ProviderError, Telegram, TelegramError
 

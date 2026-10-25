@@ -1,8 +1,8 @@
 import asyncio
 
 import pytest
-from test_ai import bot as bot
-from test_ai import ready_note, receive, step
+from support.ai import bot as bot
+from support.ai import ready_note, receive, step
 
 
 @pytest.mark.parametrize('voice', [False, True])
@@ -24,7 +24,7 @@ def test_reply_to_saved_note_starts_ai_with_context(bot, voice):
 def test_photo_reply_passes_image_without_archive_permission(bot):
     async def run():
         bot.ai_state.set_settings(1, notes_access='none')
-        from test_photos import PHOTO
+        from support.photos import PHOTO
         async def download(file_id, path, maximum):
             import hashlib
             path.parent.mkdir(parents=True, exist_ok=True)

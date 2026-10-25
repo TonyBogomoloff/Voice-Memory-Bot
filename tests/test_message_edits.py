@@ -1,7 +1,8 @@
 import asyncio
 import json
 
-from test_commands import bot as bot, receive
+from support.commands import bot as bot
+from support.commands import receive
 
 
 def edit(message_id=101, text="Новый текст", owner=1, date=2):

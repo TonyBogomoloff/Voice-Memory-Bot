@@ -2,8 +2,8 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from test_commands import receive
-from test_mvp import make_bot, receive_voice
+from support.base import make_bot, receive_voice
+from support.commands import receive
 
 from voice_memory_bot.config import Limits
 from voice_memory_bot.providers import ProviderError

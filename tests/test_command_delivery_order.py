@@ -1,9 +1,9 @@
 import asyncio
 
 import pytest
-from test_commands import bot as bot
-from test_commands import receive
-from test_folder_shortcuts import reply_keyboard
+from support.commands import bot as bot
+from support.commands import receive
+from support.menus import reply_keyboard
 
 from voice_memory_bot.bottom_menu import BACK
 from voice_memory_bot.providers import ProviderError

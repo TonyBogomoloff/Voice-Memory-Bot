@@ -1,10 +1,10 @@
 import asyncio
 
 import pytest
-from test_commands import bot as bot
-from test_commands import receive
-from test_mvp import make_bot, receive_voice
-from test_photos import PHOTO, photo_bot, receive_photo
+from support.base import make_bot, receive_voice
+from support.commands import bot as bot
+from support.commands import receive
+from support.photos import PHOTO, photo_bot, receive_photo
 
 from voice_memory_bot.store import Store
 
