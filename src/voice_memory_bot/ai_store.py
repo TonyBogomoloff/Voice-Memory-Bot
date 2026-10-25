@@ -356,7 +356,12 @@ class AIStore:
                     raise ValueError("Доступ к заметкам выключен в настройках ИИ")
                 context = self.note_context(owner, self.request(owner, note_id)["conversation_id"])
                 allowed = {n['id'] for n in self.conversation_notes(owner, self.request(owner, note_id)['conversation_id'])}
-                if context and command["action"] not in {"list_folders", "list_conversation"} and (command["action"] not in {"read_note", "update_note", "get_message_folder"}
+                folder_reads = {n['id'] for s in self.steps(owner, note_id)
+                                if s['command']['action'] == 'read_folder' and s['result']
+                                for n in s['result'].get('notes', [])}
+                if command['action'] == 'read_note':
+                    allowed.update(folder_reads)
+                if context and command["action"] not in {"list_folders", "list_conversation", "read_folder"} and (command["action"] not in {"read_note", "update_note", "get_message_folder"}
                                 or command["note_id"] not in allowed):
                     raise ValueError("Этот диалог относится только к выбранной записи")
                 result = self._operation(owner, note_id, command)
@@ -384,6 +389,26 @@ class AIStore:
         folder_id = command["folder_id"] or None
         if folder_id:
             self.store.folder(owner, folder_id)
+        if action == "read_folder":
+            if not folder_id:
+                raise ValueError("Укажи папку для чтения")
+            folder = self.store.folder(owner, folder_id)
+            notes = self.store.all(
+                "SELECT * FROM notes WHERE owner=? AND folder_id=? AND deleted=0 AND id!=? "
+                "ORDER BY created_at,id", (owner, folder_id, request_id))
+            # Some command replies live only in ai_requests, without a standalone note.
+            replies = {r['note_id']: r['response'] for r in self.store.all(
+                "SELECT a.note_id,a.response FROM ai_requests a JOIN notes n ON n.id=a.note_id "
+                "WHERE a.owner=? AND n.owner=? AND n.folder_id=? AND n.deleted=0 "
+                "AND a.state='ready' AND a.result_note_id IS NULL AND a.response IS NOT NULL",
+                (owner, owner, folder_id))}
+            return {"folder": {k: folder[k] for k in ("id", "name", "mode")},
+                    "notes": [{**{k: n[k] for k in ("id", "title", "kind", "entry_type", "state",
+                                                   "created_at", "revision", "folder_id")},
+                               "role": "assistant" if n["ai_generated_from"] else "user",
+                               "assistant_response": replies.get(n['id']),
+                               "content": n["content"] if n["content"] is not None else n["transcript"] or ""}
+                              for n in notes], "count": len(notes), "complete": True}
         if action == "search_notes":
             matches = self.store.notes(owner, folder_id, query=command["query"] or None, limit=-1)
             return {"notes": [{"id": n["id"], "title": n["title"], "folder_id": n["folder_id"], "kind": n["kind"],
