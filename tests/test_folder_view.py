@@ -205,8 +205,8 @@ def test_old_topic_cleanup_preserves_new_folder_header(bot):
             bot.store.db.execute('INSERT INTO deletion_jobs VALUES (1,0)')
             bot.store.db.execute("INSERT INTO deletion_targets VALUES (1,'topic',99,NULL)")
         await bot.show_notes(1, None, work)
-        assert bot.telegram.sent[0][1]['text'] == 'Страница 1 из 1'
-        assert bot.telegram.sent[1][1]['text'] == 'Загружаю папку…'
+        assert bot.telegram.sent[0][1]['text'] == 'Загружаю папку…'
+        assert bot.telegram.sent[1][1]['text'] == '📁 Работа (страница 1 из 1)'
         assert bot.telegram.sent[1][0] == 'sendMessage'
         header = next(p for m, p in bot.telegram.sent if m == 'sendMessage' and p.get('keyboard'))
         assert '✅ Работа' in str(header)
@@ -231,14 +231,14 @@ def test_switch_has_latest_page_and_keeps_folder_keyboard(bot):
         bot.telegram.sent.clear()
         await receive(bot, '📌 Работа', 2000)
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage' and p['text'] != 'Загружаю папку…']
-        assert len(sent) == 22
-        assert sent[0]['text'] == 'Страница 1 из 2'
+        assert len(sent) == 3
+        assert sent[0]['text'] == '📁 Работа (страница 2 из 2)'
         assert 'Работа' in sent[1]['keyboard']['input_field_placeholder']
         assert bot.telegram.sent[next(i for i, (m, _) in enumerate(bot.telegram.sent)
                                       if m == 'sendMessage') + 1][0] == 'sendMessage'
         assert all('Входящие' not in p['text'] for p in sent)
-        assert [p['text'] for p in sent[2:]] == [f'Запись {i}' for i in range(1, 21)]
-        assert sent[0]['keyboard']['inline_keyboard'][0][0]['callback_data'] == f'folder:{work}:1'
+        assert [p['text'] for p in sent[2:]] == [f'Запись {i}' for i in range(20, 21)]
+        assert sent[0]['keyboard']['inline_keyboard'][0][0]['callback_data'] == f'folder:{work}:0'
         for p in sent[2:]:
             rows = p['keyboard']['inline_keyboard']
             assert [[b['text'] for b in row] for row in rows] == [['Переместить', 'Удалить', 'ИИ']]

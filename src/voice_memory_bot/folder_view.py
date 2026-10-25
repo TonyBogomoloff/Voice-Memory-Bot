@@ -41,7 +41,7 @@ class FolderViewMixin:
             self.store.one("SELECT 1 FROM ai_requests WHERE owner=? AND "
                            "(state IN ('queued','running') OR delivery='pending') LIMIT 1", (owner,)))
 
-    async def show_notes(self, owner, thread, identity, page=0, edit_id=None, notice=None, command_message_id=None,
+    async def show_notes(self, owner, thread, identity, page=None, edit_id=None, notice=None, command_message_id=None,
                          progress_text="Загружаю папку…"):
         self.store.folder(owner, identity)
         self.leave_folder_options(owner)
@@ -54,7 +54,7 @@ class FolderViewMixin:
         with self.store.transaction():
             self.store.db.execute("INSERT INTO folder_views(owner,folder_id,thread_id,page,dirty) VALUES (?,?,?,?,1) ON CONFLICT(owner) "
                                   "DO UPDATE SET folder_id=excluded.folder_id,thread_id=excluded.thread_id,"
-                                  "page=excluded.page,dirty=1,screen=NULL", (owner, identity, thread, max(0, page)))
+                                  "page=excluded.page,dirty=1,screen=NULL", (owner, identity, thread, -1 if page is None else max(-1, page)))
         with self.store.transaction():
             self.store.db.execute("UPDATE folder_views SET command_message_id=? WHERE owner=?",
                                   (command_message_id, owner))
@@ -143,13 +143,14 @@ class FolderViewMixin:
         identity = self.store.current_folder(owner)
         if identity is None:
             return await self.render_empty_view(owner, view)
-        page = view['page'] if identity == view['folder_id'] else 0
+        page = view['page'] if identity == view['folder_id'] else -1
         thread = view['thread_id']
         bottom = self.bottom_state(owner) if restore_screen else None
         count = self.store.one("SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0 AND entry_type='note'",
                                (owner, identity))['n']
         page_size = self.store.folder_page_size(owner)
-        page = min(page, max(0, (count - 1) // page_size))
+        pages = max(1, (count + page_size - 1) // page_size)
+        page = pages - 1 if page < 0 else min(page, pages - 1)
         with self.store.transaction():
             self.store.db.execute('UPDATE folder_views SET dirty=1,folder_id=?,page=? WHERE owner=?',
                                   (identity, page, owner))
@@ -161,21 +162,22 @@ class FolderViewMixin:
         rendered = 0
         complete = False
         try:
-            if count and not (restore_screen and view['screen']):
-                nav = []
-                if page:
-                    nav.append({'text': '⬅️', 'callback_data': f'folder:{identity}:{page - 1}'})
-                if (page + 1) * page_size < count:
-                    nav.append({'text': '➡️', 'callback_data': f'folder:{identity}:{page + 1}'})
-                pages = (count + page_size - 1) // page_size
-                navigation = await self.view_send(self.telegram.text, owner,
-                    f'Страница {page + 1} из {pages}', thread,
-                    {'inline_keyboard': [nav]} if nav else None)
+            folder = self.store.folder(owner, identity)
+            title = f"📁 {folder['name']} (страница {page + 1} из {pages})"
+            nav = []
+            if page:
+                nav.append({'text': '⬅️', 'callback_data': f'folder:{identity}:{page - 1}'})
+            if page + 1 < pages:
+                nav.append({'text': '➡️', 'callback_data': f'folder:{identity}:{page + 1}'})
+            if nav:
+                navigation = await self.view_send(self.telegram.text, owner, title, thread,
+                    {'inline_keyboard': [nav]})
                 navigation_id = navigation['message_id']
             loading = await self.view_send(self.telegram.text, owner, progress_text, thread)
             loading_id = loading["message_id"]
             self.folder_keyboards.pop(owner, None)
-            header = await self.refresh_folder_keyboard(owner, thread, notice=notice, transient=not notice)
+            header = await self.refresh_folder_keyboard(owner, thread, notice=notice,
+                transient=not notice, title="☰ Меню" if nav else title)
             cleanup_started = time.monotonic()
             leftovers = await self.clear_folder_view(owner, thread, all_threads=True,
                 keep_ids=(view['command_message_id'], navigation_id, loading_id, (header or {}).get('message_id')))
@@ -188,7 +190,8 @@ class FolderViewMixin:
                     self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
                 complete = True
                 return
-            notes = self.store.notes(owner, identity, limit=page_size, offset=page * page_size)
+            notes = self.store.notes(owner, identity, limit=min(page_size, max(0, count - page * page_size)),
+                                     offset=max(0, count - (page + 1) * page_size))
             for note in reversed(notes):
                 rendered += 1
                 content = note.get('content') if note.get('content') is not None else note['transcript']

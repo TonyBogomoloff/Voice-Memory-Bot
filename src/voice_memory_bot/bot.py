@@ -541,7 +541,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         rows = []
         page = max(0, min(page, (len(folders) - 1) // 4))
         for folder in folders[page * 4:(page + 1) * 4]:
-            action = f"folder:{folder['id']}:0"
+            action = f"folder:{folder['id']}:-1"
             marker = "✓" if folder["id"] == active else "📁"
             rows.append([button(f"{marker} {folder['name']} · {folder['count']}", action)])
         nav = []

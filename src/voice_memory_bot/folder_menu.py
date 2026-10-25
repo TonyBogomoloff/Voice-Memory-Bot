@@ -174,8 +174,11 @@ class FolderMenuMixin:
         for folder in self.store.folders(owner):
             if text in {prefix + folder["name"] for prefix in FOLDER_PREFIXES}:
                 if folder["id"] == self.store.current_folder(owner):
-                    await self.remove_menu_message(owner, message_id)
-                    return
+                    view = self.store.one('SELECT page,screen FROM folder_views WHERE owner=?', (owner,))
+                    last_page = max(0, (folder['count'] - 1) // self.store.folder_page_size(owner))
+                    if not view or (view['page'] == last_page and not view['screen']):
+                        await self.remove_menu_message(owner, message_id)
+                        return
                 self.folder_delete_confirmations.pop(owner, None)
                 return await self.show_notes(owner, thread, folder["id"], command_message_id=message_id)
         await self.remove_menu_message(owner, message_id)
@@ -183,7 +186,7 @@ class FolderMenuMixin:
         await self.refresh_folder_keyboard(owner, thread, force=True,
             notice="Эта кнопка устарела. Выбери папку внизу или открой меню.")
 
-    async def refresh_folder_keyboard(self, owner, thread=None, *, force=False, notice=None, transient=False):
+    async def refresh_folder_keyboard(self, owner, thread=None, *, force=False, notice=None, transient=False, title=None):
         if not self.store.folders(owner):
             return await self.ask_first_folder(owner, thread)
         folder = self.store.folder(owner, self.store.current_folder(owner))
@@ -193,7 +196,7 @@ class FolderMenuMixin:
                 and (self.bottom_state(owner) or {}).get("screen") == "root"):
             return
         mode = 'диалог с ИИ' if folder['mode'] == 'chat' else 'заметки'
-        text = f"📁 {folder['name']}\nРежим: {mode}\nСохраняю сообщения в эту папку."
+        text = (title or f"📁 {folder['name']}") + f"\nРежим: {mode}\nСохраняю сообщения в эту папку."
         if notice:
             text = notice + "\n\n" + text
         response = await self.send_bottom(owner, thread,
