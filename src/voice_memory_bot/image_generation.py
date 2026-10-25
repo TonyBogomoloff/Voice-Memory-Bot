@@ -13,7 +13,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from .providers import CodexRouter, ProviderError
+from .codex_runner import CodexRunner
+from .errors import ProviderError
 
 IMAGE_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -66,7 +67,7 @@ def durable_bytes(path, data):
         os.close(descriptor)
 
 
-class ImageRouter(CodexRouter):
+class ImageRouter(CodexRunner):
     def __init__(self, config, home):
         super().__init__(config)
         self.home = home
@@ -82,7 +83,7 @@ async def generate_image(config, prompt, model, job, maximum, source=None):
     if output.exists():
         await asyncio.to_thread(png_bytes, output, maximum)
         return output
-    base_home = Path(CodexRouter.environment().get("CODEX_HOME", str(Path.home() / ".codex")))
+    base_home = Path(CodexRunner.environment().get("CODEX_HOME", str(Path.home() / ".codex")))
     with tempfile.TemporaryDirectory(prefix="attempt-", dir=job) as directory:
         work = Path(directory).resolve()
         home = work / "codex"

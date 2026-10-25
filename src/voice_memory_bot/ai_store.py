@@ -261,6 +261,22 @@ class AIStore:
                  "result": json.loads(row["result"]) if row["result"] is not None else None}
                 for row in self.store.all("SELECT * FROM ai_steps WHERE note_id=? ORDER BY step", (note_id,))]
 
+    def receipts(self, owner, request_id):
+        return [item for step in self.steps(owner, request_id) if step['result'] and step['result'].get('ok')
+                for item in step['result'].get('items', [step['result']])]
+
+    def history_receipts(self, owner, conversation, before):
+        self.conversation(owner, conversation)
+        rows = self.store.all("SELECT s.note_id,s.result FROM ai_steps s JOIN ai_requests a ON a.note_id=s.note_id "
+                              "WHERE a.owner=? AND a.conversation_id=? AND a.created_at<? AND s.result IS NOT NULL "
+                              "ORDER BY a.created_at,s.step", (owner, conversation, before))
+        receipts = {}
+        for row in rows:
+            result = json.loads(row['result'])
+            if result.get('ok'):
+                receipts.setdefault(row['note_id'], []).extend(result.get('items', [result]))
+        return receipts
+
     def save_command(self, owner, note_id, step, command):
         if not self.request(owner, note_id):
             raise ValueError("Запрос не найден")
