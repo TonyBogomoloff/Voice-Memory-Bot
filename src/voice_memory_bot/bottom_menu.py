@@ -104,7 +104,9 @@ class BottomMenuMixin:
         if pages > 1:
             keyboard.append(([{"text": PREVIOUS}] if page else []) +
                             ([{"text": NEXT}] if page + 1 < pages else []))
-        if state.screen.wire == "settings:all":
+        if state.screen.kind == "home":
+            keyboard[-1].insert(0, {"text": BACK})
+        elif state.screen.wire == "settings:all":
             keyboard[1].append({"text": BACK})
             keyboard.append([{"text": ROOT}])
         elif state.screen.kind in {"create", "recordoptions"}:

@@ -38,7 +38,8 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
         await receive(bot, "☰ Меню", 1001)
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
-        assert {"Включить кнопки под сообщениями", "ℹ️ Help", "🤖 Поговорить с ИИ", BACK, ROOT} == set(labels(bot))
+        assert [[b["text"] for b in row] for row in reply_keyboard(bot)["keyboard"]] == [
+            ["Включить кнопки под сообщениями"], [BACK, "ℹ️ Помощь"]]
         await receive(bot, "/settings", 1002)
         export = next(label for label in labels(bot) if label.startswith("📦 Экспорт"))
         await receive(bot, export, 1003)
@@ -191,7 +192,7 @@ def test_initial_folder_prompt_uses_bottom_controls(bot):
         await receive(bot, "/start", 1001)
         assert bot.store.action(1) == "create" and labels(bot) == ["Отмена"]
         await receive(bot, "Отмена", 1002)
-        assert bot.store.action(1) is None and "🤖 Поговорить с ИИ" in labels(bot)
+        assert bot.store.action(1) is None and "ℹ️ Помощь" in labels(bot)
         await receive(bot, ROOT, 1003)
         assert bot.store.action(1) == "create"
     asyncio.run(run())
@@ -256,7 +257,7 @@ def test_home_add_folder_and_options_back(bot):
     asyncio.run(run())
 
 
-def test_minimal_menu_toggle_help_and_ai(bot):
+def test_minimal_menu_toggle_help_and_back(bot):
     async def run():
         await receive(bot, "☰ Меню", 3000)
         assert not bot.store.message_buttons_enabled(1)
@@ -265,11 +266,11 @@ def test_minimal_menu_toggle_help_and_ai(bot):
         assert bot.bottom_state(1)["screen"] == "home"
         await receive(bot, "Выключить кнопки под сообщениями", 3002)
         assert not bot.store.message_buttons_enabled(1)
-        await receive(bot, "ℹ️ Help", 3003)
+        await receive(bot, "ℹ️ Помощь", 3003)
         assert bot.bottom_state(1)["screen"] == "help"
         await receive(bot, BACK, 3004)
-        await receive(bot, "🤖 Поговорить с ИИ", 3005)
-        folder = bot.store.folder(1, bot.store.current_folder(1))
-        assert folder["mode"] == "chat"
+        assert bot.bottom_state(1)["screen"] == "home"
+        await receive(bot, BACK, 3005)
+        assert bot.bottom_state(1)["screen"] == "root"
         assert bot.store.notes(1) == []
     asyncio.run(run())
