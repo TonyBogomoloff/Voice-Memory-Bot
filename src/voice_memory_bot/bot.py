@@ -26,6 +26,7 @@ from .note_service import NoteService
 from .providers import CodexRouter, Groq, ProviderError, Telegram
 from .reply_move import ReplyMoveMixin
 from .routing import fallback_title
+from .states import InputKind
 from .store import Store, clean_name
 
 log = logging.getLogger(__name__)
@@ -485,19 +486,21 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         return await self.show(owner, "Команда не найдена. Открой меню папок или отправь заметку.", thread, HOME)
 
     async def input_action(self, owner, thread, text):
-        action = self.store.action(owner)
-        if action and action.startswith("replymove:"):
-            return await self.reply_move_new_folder(owner, thread, action.split(":", 1)[1], text)
-        if action == "ai_names":
+        action = self.store.pending_action(owner)
+        if action is None:
+            return
+        if action.kind == InputKind.REPLY_MOVE:
+            return await self.reply_move_new_folder(owner, thread, action.argument, text)
+        if action.kind == InputKind.AI_NAMES:
             self.ai_state.set_settings(owner, names=[n.strip() for n in text.split(",") if n.strip()])
             self.store.set_action(owner, None)
             await self.ai_settings(owner, thread)
-        elif action == "create":
+        elif action.kind == InputKind.CREATE:
             await self.create_folder(owner, thread, text)
-        elif action == "search":
+        elif action.kind == InputKind.SEARCH:
             await self.search(owner, thread, text)
-        elif action.startswith("rename:"):
-            identity = action.split(":")[1]
+        elif action.kind == InputKind.RENAME:
+            identity = action.argument
             folder = self.store.folder(owner, identity)
             name = clean_name(text)
             self.store.check_names(owner, [name, *json.loads(folder["aliases"])], identity)
@@ -506,8 +509,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 await self.show_folder_options(owner, thread, identity)
             else:
                 await self.show_notes(owner, thread, identity)
-        elif action.startswith("aliases:"):
-            identity = action.split(":")[1]
+        elif action.kind == InputKind.ALIASES:
+            identity = action.argument
             aliases = [] if text == "-" else [s.strip() for s in text.split(",") if s.strip()]
             self.store.aliases(owner, identity, aliases)
             await self.show_notes(owner, thread, identity)

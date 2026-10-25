@@ -3,6 +3,7 @@ from enum import StrEnum
 from functools import partial
 
 from .providers import ProviderError
+from .states import DeliveryState
 
 
 class DeletionOutcome(StrEnum):
@@ -36,17 +37,17 @@ class DeliveryAttempt:
         self.finished = False
 
     def __enter__(self):
-        self.update(**dict.fromkeys(self.fields, 'sending'), **self.intent)
+        self.update(**dict.fromkeys(self.fields, DeliveryState.SENDING), **self.intent)
         return self
 
-    def finish(self, *, state='sent', **receipt):
-        self.update(**dict.fromkeys(self.fields, state), **receipt)
+    def finish(self, *, state=DeliveryState.SENT, **receipt):
+        self.update(**dict.fromkeys(self.fields, DeliveryState(state)), **receipt)
         self.finished = True
 
     def __exit__(self, kind, error, traceback):
         if not self.finished:
             # Includes cancellation. Confirmed chunk IDs remain in MessageStore.
-            self.update(**dict.fromkeys(self.fields, 'unknown'))
+            self.update(**dict.fromkeys(self.fields, DeliveryState.UNKNOWN))
             if kind is None:
                 raise RuntimeError('delivery_result_not_recorded')
         return False

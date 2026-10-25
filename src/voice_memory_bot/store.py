@@ -11,6 +11,7 @@ from pathlib import Path
 from .config import Limits
 from .database import transaction
 from .migrations import migrate, recover_runtime
+from .states import DeliveryState, InputAction, NoteState
 from .update_queue import UpdateQueue
 
 MAX_PINNED_FOLDERS = 4
@@ -244,11 +245,16 @@ class Store:
             self.db.execute("UPDATE users SET active_folder=? WHERE id=?", (identity, owner))
 
     def set_action(self, owner, action):
+        if action is not None:
+            action = (action if isinstance(action, InputAction) else InputAction.parse(action)).wire
         with self.transaction():
             self.db.execute("UPDATE users SET action=? WHERE id=?", (action, owner))
 
     def action(self, owner):
         return self.one("SELECT action FROM users WHERE id=?", (owner,))["action"]
+
+    def pending_action(self, owner):
+        return InputAction.parse(self.action(owner))
 
     def add_note(self, owner, folder, message, kind, file_id=None, extension="txt", size=0,
                  duration=0, transcript=None):
@@ -362,6 +368,9 @@ class Store:
                    "origin", "original_name", "mime_type", "duration"}
         if not fields or not fields.keys() <= allowed:
             raise ValueError("Invalid note fields")
+        for name, enum in {'state': NoteState, 'delivery': DeliveryState, 'transcript_delivery': DeliveryState}.items():
+            if name in fields:
+                fields[name] = enum(fields[name]).value
         before = self.note(owner, identity)
         if "folder_id" in fields:
             if self.folder(owner, fields["folder_id"])["removed"]:

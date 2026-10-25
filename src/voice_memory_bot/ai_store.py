@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import time
 
+from .states import AIState, DeliveryState
+
 
 class AIStore:
     def __init__(self, store, is_busy=None):
@@ -236,6 +238,9 @@ class AIStore:
             raise ValueError("Запрос не найден")
         if not fields or not fields.keys() <= {"state", "model", "response", "error", "delivery"}:
             raise ValueError("Некорректное поле запроса")
+        for name, enum in {'state': AIState, 'delivery': DeliveryState}.items():
+            if name in fields:
+                fields[name] = enum(fields[name]).value
         assignments = ",".join(f"{k}=?" for k in fields)
         with self.store.transaction():
             self.db.execute(f"UPDATE ai_requests SET {assignments} WHERE note_id=? AND owner=?",
