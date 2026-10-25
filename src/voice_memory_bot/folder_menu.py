@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 from .store import new_id
@@ -127,6 +128,49 @@ class FolderMenuMixin:
     @staticmethod
     def is_folder_button(text):
         return text.startswith(FOLDER_PREFIXES) and "\n" not in text
+
+    def folder_update_owner(self, update):
+        message = update.get('message') or {}
+        owner = message.get('from', {}).get('id')
+        if (owner not in self.config.allowed_user_ids or message.get('chat', {}).get('id') != owner
+                or message.get('chat', {}).get('type') != 'private' or not isinstance(message.get('text'), str)):
+            return None
+        text, active = self.emoji_keyboards.resolve(owner, message['text'].strip())
+        if active is False or not self.is_folder_button(text):
+            return None
+        if any(text == prefix + folder['name'] for folder in self.store.folders(owner) for prefix in FOLDER_PREFIXES):
+            return owner
+        return None
+
+    def coalesce_folder_updates(self, update):
+        selected = [update]
+        owner = self.folder_update_owner(update)
+        if owner is None:
+            return selected
+        # A note, command, callback, failed event or another owner is an ordering barrier.
+        for row in self.store.all('SELECT id,payload,state FROM updates WHERE id>? ORDER BY id LIMIT 99',
+                                  (update['update_id'],)):
+            candidate = json.loads(row['payload'])
+            if row['state'] != 'pending' or self.folder_update_owner(candidate) != owner:
+                break
+            selected.append(candidate)
+        with self.store.db:
+            self.store.db.executemany("UPDATE updates SET state='processing' WHERE id=?",
+                                      [(item['update_id'],) for item in selected[1:]])
+        return selected
+
+    async def remove_coalesced_taps(self, selected):
+        if len(selected) < 2:
+            return
+        owner = selected[-1]['message']['from']['id']
+        keep = selected[-1]['message']['message_id']
+        # A normal render already removes these; a no-op or deferred render may leave them.
+        async with self.view_locks[owner]:
+            mids = {item['message']['message_id'] for item in selected[:-1]} - {keep}
+            remaining = [mid for mid in mids if self.store.one(
+                'SELECT 1 FROM telegram_messages WHERE owner=? AND message_id=? AND view_blocked=0', (owner, mid))]
+            if remaining:
+                await self.delete_view_batch(owner, remaining)
 
     async def select_folder_button(self, owner, thread, text, message_id=None):
         # Reply keyboards send text. Use full names, never truncated labels or a reused slot number.
