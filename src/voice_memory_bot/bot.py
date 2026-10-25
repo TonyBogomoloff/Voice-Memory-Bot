@@ -110,11 +110,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         if webhook.get("url"):
             raise ProviderError("webhook_present_stop_before_polling")
         await self.telegram.call("setMyCommands", commands=[
-            {"command": "start", "description": "Start"},
-            {"command": "help", "description": "Help"},
-            {"command": "ai", "description": "Поговорить с ИИ"},
+            {"command": "ai", "description": "Изменить с ИИ"},
+            {"command": "move", "description": "Перенести запись"},
             {"command": "delete", "description": "Удалить запись"},
-            {"command": "move", "description": "Перенести"},
         ])
         # Finish physical deletion interrupted by a previous shutdown.
         for note in self.store.all("SELECT * FROM notes WHERE deleted=1"):

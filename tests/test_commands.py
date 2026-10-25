@@ -71,10 +71,8 @@ def test_start_registers_menu_commands(bot):
         commands = next(c.kwargs["commands"] for c in bot.telegram.call.call_args_list
                         if c.args == ("setMyCommands",))
         assert commands == [
-            {"command": "start", "description": "Start"},
-            {"command": "help", "description": "Help"},
-            {"command": "ai", "description": "Поговорить с ИИ"},
+            {"command": "ai", "description": "Изменить с ИИ"},
+            {"command": "move", "description": "Перенести запись"},
             {"command": "delete", "description": "Удалить запись"},
-            {"command": "move", "description": "Перенести"},
         ]
     asyncio.run(run())

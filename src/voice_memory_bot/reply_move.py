@@ -1,6 +1,27 @@
 from __future__ import annotations
 
+import unicodedata
+
 from .store import new_id
+
+
+def folder_button_rows(buttons):
+    """Estimate label width; Telegram chooses the final pixel widths."""
+    rows, row = [], []
+    widest = 0
+    for item in buttons:
+        width = sum(0 if unicodedata.combining(char) else
+                    2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+                    for char in item["text"])
+        candidate_width = max(widest, width)
+        if row and (len(row) == 3 or (candidate_width + 4) * (len(row) + 1) > 36):
+            rows.append(row)
+            row, widest = [], 0
+        row.append(item)
+        widest = max(widest, width)
+    if row:
+        rows.append(row)
+    return rows
 
 
 class ReplyMoveMixin:
@@ -24,7 +45,7 @@ class ReplyMoveMixin:
     async def move_reply(self, owner, thread, message):
         note = self.reply_note(owner, message)
         if not note:
-            return await self._show(owner, "Выбери «Ответить» на запись и команду /move — «Перенести» в меню.", thread)
+            return await self._show(owner, "Выбери «Ответить» на запись и команду /move — «Перенести запись» в меню.", thread)
         token = new_id()
         with self.store.db:
             self.store.db.execute("INSERT INTO reply_moves(token,owner,note_id,command_id) VALUES (?,?,?,?)",
@@ -37,8 +58,8 @@ class ReplyMoveMixin:
         session = self.store.one("SELECT * FROM reply_moves WHERE owner=? AND token=?", (owner, token))
         folders = self.store.folders(owner)
         page = max(0, min(page, (len(folders) - 1) // 8))
-        rows = [[button(folder["name"], f"rmove:{token}:{folder['id']}")]
-                for folder in folders[page * 8:(page + 1) * 8]]
+        rows = folder_button_rows([button(folder["name"], f"rmove:{token}:{folder['id']}")
+                                   for folder in folders[page * 8:(page + 1) * 8]])
         nav = []
         if page:
             nav.append(button("←", f"rpage:{token}:{page - 1}"))
@@ -46,19 +67,20 @@ class ReplyMoveMixin:
             nav.append(button("→", f"rpage:{token}:{page + 1}"))
         if nav:
             rows.append(nav)
-        rows.extend([[button("Новая папка", f"rnew:{token}")], [button("Отмена", f"rcancel:{token}")]])
+        rows.extend([[{**button("＋ Новая папка", f"rnew:{token}"), "style": "primary"}], [button("Отмена", f"rcancel:{token}")]])
         result = await self._show(owner, "В какую папку ты хочешь перенести сообщение?", thread,
                                   keyboard(*rows), session["prompt_id"])
         with self.store.db:
             self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                   (result["message_id"], owner, token))
 
-    async def finish_reply_move(self, owner, token):
+    async def finish_reply_move(self, owner, token, *, cancelled=False):
         session = self.store.one("SELECT * FROM reply_moves WHERE owner=? AND token=?", (owner, token))
         if not session:
             return
         await self.remove_menu_message(owner, session["prompt_id"])
-        await self.remove_menu_message(owner, session["command_id"])
+        if cancelled:
+            await self.remove_menu_message(owner, session["command_id"])
         if self.store.action(owner) == f"replymove:{token}":
             self.store.set_action(owner, None)
         with self.store.db:
@@ -76,7 +98,7 @@ class ReplyMoveMixin:
         if not session or session["prompt_id"] != message_id:
             return True
         if action == "rcancel":
-            await self.finish_reply_move(owner, token)
+            await self.finish_reply_move(owner, token, cancelled=True)
         elif action == "rpage":
             await self.reply_move_menu(owner, thread, token, int(parts[2]))
         elif action == "rnew":

@@ -30,7 +30,7 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         session = await open_move(bot, target=200, command='/move@your_audio_notes_bot')
         menu = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]
         labels = [b['text'] for row in menu['keyboard']['inline_keyboard'] for b in row]
-        assert {'Входящие', 'Другая', 'Новая папка', 'Отмена'} <= set(labels)
+        assert {'Входящие', 'Другая', '＋ Новая папка', 'Отмена'} <= set(labels)
         token, prompt = session['token'], session['prompt_id']
         if new_folder:
             await bot.callback(1, None, prompt, f'rnew:{token}')
@@ -41,7 +41,8 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         assert bot.store.note(1, note['id'])['folder_id'] == other['id']
         assert bot.store.note(1, note['id'])['transcript'] == 'Запись для переноса'
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
-        assert {100, 200, 400, prompt} <= deleted
+        assert {100, 200, prompt} <= deleted
+        assert 400 not in deleted
         assert bot.store.one('SELECT * FROM reply_moves') is None
         assert bot.store.action(1) is None
     asyncio.run(run())
@@ -81,3 +82,13 @@ def test_move_target_owner_isolation_and_pagination(bot):
         markup = [p for m, p in bot.telegram.sent if m == 'editMessageText'][-1]['reply_markup']
         assert any(b['text'] == 'Отмена' for row in markup['inline_keyboard'] for b in row)
     asyncio.run(run())
+
+
+def test_folder_buttons_fit_short_medium_and_long_labels():
+    from voice_memory_bot.reply_move import folder_button_rows
+    buttons = [{"text": name, "callback_data": str(i)} for i, name in enumerate([
+        "Дом", "Работа", "Идеи", "Планы на год", "Мои проекты", "Очень длинное название папки",
+    ])]
+    rows = folder_button_rows(buttons)
+    assert [len(row) for row in rows] == [3, 2, 1]
+    assert [item for row in rows for item in row] == buttons
