@@ -382,8 +382,9 @@ class Store:
             self.db.execute(f"UPDATE notes SET {assignments} WHERE id=? AND owner=? AND deleted=0",
                             [*fields.values(), identity, owner])
 
-    def claim_note(self):
-        row = self.one("SELECT * FROM notes WHERE state='queued' AND deleted=0 ORDER BY created_at LIMIT 1")
+    def claim_note(self, owner=None):
+        row = self.one("SELECT * FROM notes WHERE state='queued' AND deleted=0 AND (? IS NULL OR owner=?) "
+                       "ORDER BY created_at LIMIT 1", (owner, owner))
         if row:
             with self.transaction():
                 self.db.execute("UPDATE notes SET state='processing',attempts=attempts+1 WHERE id=?", (row["id"],))

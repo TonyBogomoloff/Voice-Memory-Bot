@@ -102,6 +102,7 @@ class MessageStore:
         return self.store.all("SELECT message_id,deleted FROM note_messages WHERE owner=? AND note_id=?",
                               (owner, identity))
 
-    def pending(self):
+    def pending(self, owner=None):
         return self.store.one("SELECT m.* FROM note_moves m JOIN notes n ON n.id=m.note_id "
-                              "WHERE m.state='cleanup' AND n.deleted=0 ORDER BY m.updated_at LIMIT 1")
+                              "WHERE m.state='cleanup' AND n.deleted=0 AND (? IS NULL OR m.owner=?) "
+                              "ORDER BY m.updated_at LIMIT 1", (owner, owner))

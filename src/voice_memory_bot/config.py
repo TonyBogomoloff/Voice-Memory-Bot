@@ -26,6 +26,7 @@ class Limits:
     max_folders_per_user: int = 100
     daily_asr_seconds: int = 7200
     export_part_bytes: int = 45_000_000
+    max_concurrent_owners: int = 4
 
 
 @dataclass(frozen=True)

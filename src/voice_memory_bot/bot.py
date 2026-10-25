@@ -26,8 +26,10 @@ from .note_service import NoteService
 from .providers import CodexRouter, Groq, ProviderError, Telegram
 from .reply_move import ReplyMoveMixin
 from .routing import fallback_title
+from .scheduling import dispatch_by_owner, run_for_owners
 from .states import InputKind
 from .store import Store, clean_name
+from .update_queue import update_owner
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +98,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         self.recent = defaultdict(deque)
         self.export_locks = defaultdict(asyncio.Lock)
         self.note_locks = defaultdict(asyncio.Lock)
+        self.work_slots = asyncio.Semaphore(config.limits.max_concurrent_owners)
         self.notes = NoteService(store, self.messages, self.archive, telegram, self.note_locks)
         self.export_tasks = set()
         self.init_ai(assistant)
@@ -167,12 +170,12 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         return True
 
     async def dispatch(self):
-        while True:
-            if not await self.dispatch_next():
-                await asyncio.sleep(.2)
+        await dispatch_by_owner(self.store.updates.claim, self.dispatch_next, update_owner,
+                                self.config.limits.max_concurrent_owners)
 
-    async def dispatch_next(self):
-        update = self.store.pending_update()
+    async def dispatch_next(self, update=None):
+        if update is None:
+            update = self.store.pending_update()
         if update is None:
             return False
         selected = [update]
@@ -1211,39 +1214,44 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                         getattr(exc, "method", "unknown"), getattr(exc, "reason", "unknown"))
 
     async def worker(self):
+        await run_for_owners(self.config.allowed_user_ids, self.worker_for_owner)
+
+    async def worker_for_owner(self, owner):
         while True:
-            if self.view_rendering:
+            if owner in self.view_rendering or owner in self.deleting_owners:
                 await asyncio.sleep(.2)
                 continue
-            note = self.store.claim_note()
+            note = self.store.claim_note(owner)
             if note is None:
                 # Processing may have finished just before a crash and before delivery began.
                 note = self.store.one("SELECT * FROM notes WHERE state IN ('ready','asr_failed') "
-                                      "AND delivery='pending' AND deleted=0 ORDER BY created_at LIMIT 1")
+                                      "AND delivery='pending' AND deleted=0 AND owner=? ORDER BY created_at LIMIT 1", (owner,))
                 if note:
-                    await self.deliver(note)
+                    async with self.work_slots:
+                        await self.deliver(note)
                     self.view_refresh_event.set()
                 else:
                     photo = self.store.one("SELECT n.* FROM notes n JOIN note_messages m ON m.note_id=n.id "
-                        "WHERE n.kind='photo' AND n.deleted=0 AND n.transcript_delivery='sent' "
+                        "WHERE n.kind='photo' AND n.deleted=0 AND n.transcript_delivery='sent' AND n.owner=? "
                         "AND m.kind='source' AND m.deleted=0 "
                         "AND EXISTS (SELECT 1 FROM user_message_settings s WHERE s.owner=n.owner AND s.buttons_enabled=1) "
                         "AND EXISTS (SELECT 1 FROM note_messages r "
-                        "WHERE r.note_id=n.id AND r.kind='photo_repost' AND r.deleted=0) LIMIT 1")
+                        "WHERE r.note_id=n.id AND r.kind='photo_repost' AND r.deleted=0) LIMIT 1", (owner,))
                     if photo:
                         await self.cleanup_photo_source(photo)
-                    move = self.messages.pending()
+                    move = self.messages.pending(owner)
                     if move and not self.note_locks[move["note_id"]].locked():
                         async with self.note_locks[move["note_id"]]:
                             await self.cleanup_move(move)
                     stale = self.store.one("SELECT * FROM notes WHERE status_message_id IS NOT NULL "
-                                           "AND state IN ('ready','asr_failed') AND deleted=0 "
-                                           "ORDER BY created_at LIMIT 1")
+                                           "AND state IN ('ready','asr_failed') AND deleted=0 AND owner=? "
+                                           "ORDER BY created_at LIMIT 1", (owner,))
                     if stale:
                         await self.clear_status(stale)
                     if stale or move or photo:
                         self.view_refresh_event.set()
                     await asyncio.sleep(3 if stale or move or photo else .5)
                 continue
-            await self.process(note)
+            async with self.work_slots:
+                await self.process(note)
             self.view_refresh_event.set()

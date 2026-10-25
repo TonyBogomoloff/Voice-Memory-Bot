@@ -218,16 +218,17 @@ class AIStore:
                 self.db.execute("UPDATE ai_requests SET result_note_id=? WHERE owner=? AND note_id=?",
                                 (result["id"], request["owner"], request["note_id"]))
 
-    def claim(self):
+    def claim(self, owner=None):
         row = self.store.one("""SELECT a.* FROM ai_requests a JOIN notes n ON n.id=a.note_id
             WHERE a.state='queued' AND n.state='ready' AND n.deleted=0 AND n.transcript IS NOT NULL
+            AND (? IS NULL OR a.owner=?)
             AND NOT EXISTS (SELECT 1 FROM ai_note_context c JOIN notes source ON source.id=c.note_id
                 AND source.owner=c.owner WHERE c.conversation_id=a.conversation_id AND c.owner=a.owner
                 AND source.kind='photo' AND source.deleted=0 AND source.state IN ('queued','processing'))
             AND NOT EXISTS (SELECT 1 FROM ai_requests b JOIN notes bn ON bn.id=b.note_id
                 WHERE b.conversation_id=a.conversation_id AND b.created_at<a.created_at
                 AND b.state IN ('queued','running') AND bn.deleted=0 AND bn.state!='asr_failed')
-            ORDER BY a.created_at LIMIT 1""")
+            ORDER BY a.created_at LIMIT 1""", (owner, owner))
         if row:
             with self.store.transaction():
                 self.db.execute("UPDATE ai_requests SET state='running' WHERE note_id=?", (row["note_id"],))

@@ -259,9 +259,9 @@ class NoteActions:
                     result.update(message=message, cleanup_state=state)
                     self.save_result(request, index, result, identity)
 
-    async def resume(self):
+    async def resume(self, owner=None):
         job = self.store.one("SELECT * FROM ai_message_jobs WHERE state='pending' AND updated_at<? "
-                              "ORDER BY updated_at LIMIT 1", (time.time() - 3,))
+                              "AND (? IS NULL OR owner=?) ORDER BY updated_at LIMIT 1", (time.time() - 3, owner, owner))
         if job and not self.locks[job["owner"]].locked():
             async with self.locks[job["owner"]]:
                 await self.cleanup(job["request_id"], job["step"], job["note_id"])

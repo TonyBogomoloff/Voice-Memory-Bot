@@ -285,8 +285,9 @@ class AIBotMixin:
             return False
         return True
 
-    def flush_ai_archive(self):
-        for note in self.store.all("SELECT * FROM notes WHERE archive_dirty=1 AND deleted=0 LIMIT 20"):
+    def flush_ai_archive(self, owner=None):
+        for note in self.store.all("SELECT * FROM notes WHERE archive_dirty=1 AND deleted=0 "
+                                   "AND (? IS NULL OR owner=?) LIMIT 20", (owner, owner)):
             self.archive.persist_text(note, self.store.folder(note["owner"], note["folder_id"]))
             self.store.update_note(note["owner"], note["id"], archive_dirty=0)
 
@@ -470,23 +471,29 @@ class AIBotMixin:
         await self.deliver_ai(self.ai_state.request(owner, identity))
 
     async def ai_worker(self):
+        from .scheduling import run_for_owners
+        await run_for_owners(self.config.allowed_user_ids, self.ai_worker_for_owner)
+
+    async def ai_worker_for_owner(self, owner):
         while True:
-            if self.view_rendering:
+            if owner in self.view_rendering or owner in self.deleting_owners:
                 await asyncio.sleep(.2)
                 continue
             request = ready = None
             try:
-                await self.ai_note_actions.resume()
-                self.flush_ai_archive()
-                request = self.ai_state.claim()
+                await self.ai_note_actions.resume(owner)
+                self.flush_ai_archive(owner)
+                request = self.ai_state.claim(owner)
                 if request:
-                    await self.process_ai(request)
+                    async with self.work_slots:
+                        await self.process_ai(request)
                     continue
                 ready = self.store.one("SELECT a.* FROM ai_requests a JOIN notes n ON n.id=a.note_id "
                                        "WHERE a.state IN ('ready','failed') AND a.delivery='pending' AND n.deleted=0 "
-                                       "ORDER BY a.created_at LIMIT 1")
+                                       "AND a.owner=? ORDER BY a.created_at LIMIT 1", (owner,))
                 if ready:
-                    await self.deliver_ai(ready)
+                    async with self.work_slots:
+                        await self.deliver_ai(ready)
             except (OSError, ProviderError) as exc:
                 log.warning("AI worker unavailable type=%s", type(exc).__name__)
                 await asyncio.sleep(3)

@@ -4,6 +4,11 @@ from __future__ import annotations
 import json
 
 
+def update_owner(update):
+    message = update.get('callback_query') or update.get('message') or update.get('edited_message') or {}
+    return message.get('from', {}).get('id')
+
+
 class UpdateQueue:
     CAPACITY = 1000
 
@@ -38,12 +43,14 @@ class UpdateQueue:
         row = self.store.one("SELECT value FROM meta WHERE key='offset'")
         return int(row['value']) if row else 0
 
-    def claim(self):
+    def claim(self, excluded_owners=()):
         with self.store.transaction():
-            row = self.store.one("SELECT * FROM updates WHERE state='pending' ORDER BY id LIMIT 1")
-            if row:
+            for row in self.db.execute("SELECT * FROM updates WHERE state='pending' ORDER BY id"):
+                update = json.loads(row['payload'])
+                if update_owner(update) in excluded_owners:
+                    continue
                 self.db.execute("UPDATE updates SET state='processing' WHERE id=?", (row['id'],))
-                return json.loads(row['payload'])
+                return update
 
     def finish(self, identity):
         # Successful payloads should not become a second archive of private messages.
