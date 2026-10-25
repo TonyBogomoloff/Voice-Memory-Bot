@@ -30,6 +30,11 @@ def test_reply_delete_only_owned_record_without_confirmation(bot, target, comman
         assert not sent[-1].get('keyboard')
         if target in {100, 200, None}:
             assert sent[-1]['text'] == 'Сообщение удалено.'
+            assert sent[-1]['reply_to'] == (target or 200)
+            notice_index = next(i for i, (m, p) in enumerate(bot.telegram.sent)
+                                if m == 'sendMessage' and p.get('text') == 'Сообщение удалено.')
+            assert all(i > notice_index for i, (m, p) in enumerate(bot.telegram.sent)
+                       if m == 'deleteMessage' and p['message_id'] in {100, 200})
             assert bot.store.one('SELECT transcript FROM notes WHERE id=?', (note['id'],))['transcript'] is None
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert 300 not in deleted

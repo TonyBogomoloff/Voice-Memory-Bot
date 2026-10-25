@@ -376,18 +376,15 @@ def test_voice_options_move_changes_archive_and_removes_source(tmp_path, store):
             {"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]
         await bot.callback(1, 100, message_id, next(b["callback_data"] for row in keys for b in row
                                                      if b["callback_data"].startswith("pick:")))
-        keys = bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
-        target = next(row[0]["callback_data"] for row in keys if row[0]["text"] == "📁 Работа")
-        assert all(method == "editMessageReplyMarkup" for method, _ in bot.telegram.sent)
-        await bot.handle({"callback_query": {"id": "move-click", "from": {"id": 1}, "data": target,
-            "message": {"message_id": message_id, "message_thread_id": 100,
-                        "chat": {"id": 1, "type": "private"}}}})
+        state = bot.bottom_state(1)
+        assert state["screen"].startswith("replymove:")
+        assert "Работа" in state["actions"]
+        await bot.bottom_input(1, 100, "Работа", 9000)
         assert store.note(1, note["id"])["folder_id"] == work["id"]
-        assert not any(method.startswith("send") for method, _ in bot.telegram.sent)
         assert any(method == "deleteMessage" and payload["message_id"] == message_id
                    for method, payload in bot.telegram.sent)
-        assert bot.telegram.sent[-1] == ("answerCallbackQuery", {
-            "callback_query_id": "move-click", "text": "Перенесено в «Работа»."})
+        assert any(method == "sendMessage" and payload["text"] == "Перенесено в «Работа»."
+                   for method, payload in bot.telegram.sent)
     asyncio.run(run())
 
 

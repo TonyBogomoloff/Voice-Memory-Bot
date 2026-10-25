@@ -64,7 +64,10 @@ class ReplyMoveMixin:
     async def reply_move_menu(self, owner, thread, token, page=0):
         from .bot import button, keyboard
         session = self.store.one("SELECT * FROM reply_moves WHERE owner=? AND token=?", (owner, token))
-        folders = self.store.folders(owner)
+        if not session:
+            return
+        source = self.store.note(owner, session["note_id"])["folder_id"]
+        folders = [f for f in self.store.folders(owner) if f["id"] != source]
         page = max(0, min(page, (len(folders) - 1) // 8))
         rows = folder_button_rows([button(folder["name"], f"rmove:{token}:{folder['id']}")
                                    for folder in folders[page * 8:(page + 1) * 8]])
@@ -75,9 +78,9 @@ class ReplyMoveMixin:
             nav.append(button("→", f"rpage:{token}:{page + 1}"))
         if nav:
             rows.append(nav)
-        rows.extend([[{**button("＋ Новая папка", f"rnew:{token}"), "style": "primary"}], [button("Отмена", f"rcancel:{token}")]])
-        result = await self._show(owner, "В какую папку ты хочешь перенести сообщение?", thread,
-                                  keyboard(*rows), session["prompt_id"])
+        rows.extend([[button("＋ Новая папка", f"rnew:{token}")], [button("Отмена", f"rcancel:{token}")]])
+        result = await self.show_bottom(owner, "В какую папку ты хочешь перенести сообщение?", thread,
+                                  keyboard(*rows), screen=f"replymove:{token}", keep=True)
         with self.store.db:
             self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                   (result["message_id"], owner, token))
@@ -103,23 +106,27 @@ class ReplyMoveMixin:
             return True
         action, token = parts[:2]
         session = self.store.one("SELECT * FROM reply_moves WHERE owner=? AND token=?", (owner, token))
-        if not session or session["prompt_id"] != message_id:
+        state = self.bottom_state(owner) or {}
+        if not session or (session["prompt_id"] != message_id and not (
+                message_id is None and state.get("screen") == f"replymove:{token}")):
             return True
         if action == "rcancel":
             await self.finish_reply_move(owner, token, cancelled=True)
+            await self.show_home(owner, thread)
         elif action == "rpage":
             await self.reply_move_menu(owner, thread, token, int(parts[2]))
         elif action == "rnew":
             self.store.note(owner, session["note_id"])
             self.store.set_action(owner, f"replymove:{token}")
-            result = await self._show(owner, "Как назвать новую папку?", thread,
-                keyboard([button("Отмена", f"rcancel:{token}")]), message_id)
+            result = await self.show_bottom(owner, "Как назвать новую папку?", thread,
+                keyboard([button("Отмена", f"rcancel:{token}")]), screen=f"replymove:{token}", keep=True)
             with self.store.db:
                 self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                       (result["message_id"], owner, token))
         elif action == "rmove":
             result = await self.move(owner, session["note_id"], parts[2], thread)
             await self.finish_reply_move(owner, token)
+            await self.show_home(owner, thread)
             await self._show(owner, result, thread)
         return True
 
@@ -139,4 +146,5 @@ class ReplyMoveMixin:
             session["target_folder"] = folder["id"]
         result = await self.move(owner, session["note_id"], session["target_folder"], thread)
         await self.finish_reply_move(owner, token)
+        await self.show_home(owner, thread)
         await self._show(owner, result, thread)

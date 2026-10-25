@@ -46,6 +46,6 @@ def test_delete_removes_voice_and_all_transcript_parts(tmp_path, store, blocked)
         assert store.note(2, other["id"])["transcript"] == "Чужая запись"
         assert store.one("SELECT deleted FROM note_messages WHERE owner=1 AND message_id=2000")["deleted"] == 1
         texts = [p["text"] for m, p in bot.telegram.sent if m == "sendMessage"]
-        assert any(("не удалось" if blocked else "из архива и чата") in text for text in texts)
+        assert any(("не удалось" if blocked else "Сообщение удалено.") in text for text in texts)
 
     asyncio.run(run())

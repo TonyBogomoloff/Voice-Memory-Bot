@@ -31,6 +31,7 @@ class TelegramError(ProviderError):
             "topic_closed": "topic_closed",
             "topic_deleted": "topic_deleted",
             "message to edit not found": "edit_target_missing",
+            "message to be replied not found": "reply_target_missing",
             "message to delete not found": "delete_target_missing",
             "message can't be deleted": "delete_forbidden",
             "message is not modified": "not_modified",

@@ -497,38 +497,34 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                               progress_text="Создаю папку…")
 
     async def show_folders(self, owner, thread=None, edit_id=None, page=0, note_id=None):
-        if not note_id:
-            self.leave_folder_options(owner)
+        if note_id:
+            note = self.store.note(owner, note_id)
+            return await self.move_reply(owner, thread, {
+                "message_id": 0, "reply_to_message": {"message_id": note["message_id"]}})
+        self.leave_folder_options(owner)
         if not self.store.folders(owner):
             return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
         folders = self.store.folders(owner)
-        if note_id:
-            source = self.store.note(owner, note_id)["folder_id"]
-            folders = [folder for folder in folders if folder["id"] != source]
         active = self.store.current_folder(owner)
         rows = []
         page = max(0, min(page, (len(folders) - 1) // 4))
         for folder in folders[page * 4:(page + 1) * 4]:
-            action = f"move:{note_id}:{folder['id']}" if note_id else f"folder:{folder['id']}:0"
+            action = f"folder:{folder['id']}:0"
             marker = "✓" if folder["id"] == active else "📁"
             rows.append([button(f"{marker} {folder['name']} · {folder['count']}", action)])
         nav = []
-        mode = f"choose:{note_id}" if note_id else "folders"
+        mode = "folders"
         if page:
             nav.append(button("⬅️ Папки", f"{mode}:{page - 1}"))
         if len(folders) > (page + 1) * 4:
             nav.append(button("Папки ➡️", f"{mode}:{page + 1}"))
         if nav:
             rows.append(nav)
-        if note_id:
-            rows.append([button("Отмена", f"options:{note_id}")])
-            return await self._show(owner, "Куда переместить запись?", thread,
-                                    keyboard(*rows), edit_id)
         rows.append([button("＋ Новая папка", "create"), button("🔎 Поиск", "search")])
         rows.append([button("⌂ Меню", "home")])
         name = self.store.folder(owner, active)["name"]
-        text = "Куда переместить запись?" if note_id else (
+        text = (
             f"📁 Все папки · {page + 1}/{(len(folders) - 1) // 4 + 1}\nСейчас сохраняю в «{name}».\n"
             "Открой папку, чтобы выбрать её для новых записей.")
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"folders:{page}",
@@ -620,20 +616,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             self.remember_screen(owner, receipt['thread_id'], text, keys)
 
     async def choose_note_folder(self, owner, identity, message_id, page):
-        source = self.store.note(owner, identity)["folder_id"]
-        folders = [folder for folder in self.store.folders(owner) if folder["id"] != source]
-        page = max(0, min(page, (len(folders) - 1) // 8))
-        rows = [[button(f"📁 {folder['name']}", f"place:{identity}:{folder['id']}")]
-                for folder in folders[page * 8:(page + 1) * 8]]
-        nav = []
-        if page:
-            nav.append(button("←", f"pick:{identity}:{page - 1}"))
-        if len(folders) > (page + 1) * 8:
-            nav.append(button("→", f"pick:{identity}:{page + 1}"))
-        if nav:
-            rows.append(nav)
-        rows.append([button("← Назад", f"options:{identity}")])
-        await self.edit_note_buttons(owner, message_id, keyboard(*rows))
+        note = self.store.note(owner, identity)
+        return await self.move_reply(owner, None, {
+            "message_id": 0, "reply_to_message": {"message_id": note["message_id"]}})
 
     async def callback(self, owner, thread, message_id, data):
         if await self.reply_move_callback(owner, thread, message_id, data):
@@ -767,11 +752,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 raise ValueError("Дождись завершения обработки, затем удали запись")
             self.store.delete(owner, identity)
             self.archive.delete(note)
-            remaining = await self.delete_note_messages(note)
-            text = ("Запись удалена из архива и чата." if not remaining else
-                    "Запись удалена из архива, но часть сообщений не удалось удалить из Telegram.")
+            result = await self.announce_note_deletion(note, thread)
             await self.remove_menu_message(owner, message_id)
-            return await self._show(owner, text, thread)
+            return result
 
     async def record_options(self, owner, thread, message):
         note = self.reply_note(owner, message)
@@ -795,10 +778,26 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             raise ValueError("Дождись завершения обработки, затем удали запись")
         self.store.delete(owner, identity)
         self.archive.delete(note)
+        target = (message.get("reply_to_message") or {}).get("message_id")
+        return await self.announce_note_deletion(note, thread, target)
+
+    async def announce_note_deletion(self, note, thread, target=None):
+        if not target:
+            receipt = self.store.one(
+                "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0 "
+                "ORDER BY message_id DESC LIMIT 1", (note["owner"], note["id"]))
+            target = receipt["message_id"] if receipt else note["message_id"]
+        try:
+            result = await self.telegram.text(note["owner"], "Сообщение удалено.", thread, reply_to=target)
+        except ProviderError as exc:
+            if getattr(exc, "reason", None) != "reply_target_missing":
+                raise
+            result = await self._show(note["owner"], "Сообщение удалено.", thread)
         remaining = await self.delete_note_messages(note)
-        text = ("Сообщение удалено." if not remaining else
-                "Сообщение удалено из базы, но часть сообщений не удалось удалить из Telegram.")
-        return await self._show(owner, text, thread)
+        if remaining:
+            await self._show(note["owner"],
+                "Сообщение удалено из базы, но часть сообщений не удалось удалить из Telegram.", thread)
+        return result
 
     async def delete_note_messages(self, note, *, details=False):
         owner, identity = note["owner"], note["id"]

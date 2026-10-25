@@ -33,10 +33,12 @@ def test_note_actions_preserve_bottom_menu(tmp_path, store, screen, action):
         else:
             picker = "pick" if action == "move" else "choose"
             await bot.callback(1, 200, note["transcript_message_id"], f"{picker}:{note['id']}:0")
-            assert bot.bottom_state(1) == before
-            await bot.callback(1, 200, note["transcript_message_id"],
-                               f"{'place' if action == 'move' else 'move'}:{note['id']}:{target['id']}")
+            assert bot.bottom_state(1)["screen"].startswith("replymove:")
+            await bot.bottom_input(1, 200, "Другая папка", 9000)
             assert store.note(1, note["id"])["folder_id"] == target["id"]
+            assert store.current_folder(1) == active
+            assert bot.bottom_state(1)["screen"] == "root"
+            return
         assert bot.bottom_state(1) == before
         assert store.current_folder(1) == active
         assert store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"] == carrier

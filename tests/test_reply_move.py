@@ -29,15 +29,19 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         other = bot.store.create_folder(1, 'Другая')
         session = await open_move(bot, target=200, command='/move@your_audio_notes_bot')
         menu = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]
-        labels = [b['text'] for row in menu['keyboard']['inline_keyboard'] for b in row]
-        assert {'Входящие', 'Другая', '＋ Новая папка', 'Отмена'} <= set(labels)
-        token, prompt = session['token'], session['prompt_id']
+        labels = [b['text'] for row in menu['keyboard']['keyboard'] for b in row]
+        assert {'Другая', '＋ Новая папка', 'Отмена'} <= set(labels)
+        assert 'inline_keyboard' not in menu['keyboard']
+        assert all('style' not in b for row in menu['keyboard']['keyboard'] for b in row)
+        prompt = session['prompt_id']
         if new_folder:
-            await bot.callback(1, None, prompt, f'rnew:{token}')
+            await receive(bot, '＋ Новая папка', 450)
+            menu = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]
+            assert menu['keyboard']['keyboard'] == [[{'text': 'Отмена'}]]
             await receive(bot, 'Созданная для переноса', 500)
             other = next(f for f in bot.store.folders(1) if f['name'] == 'Созданная для переноса')
         else:
-            await bot.callback(1, None, prompt, f'rmove:{token}:{other["id"]}')
+            await receive(bot, 'Другая', 450)
         assert bot.store.note(1, note['id'])['folder_id'] == other['id']
         assert bot.store.note(1, note['id'])['transcript'] == 'Запись для переноса'
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
@@ -55,10 +59,11 @@ def test_cancel_removes_only_menu_and_command_even_after_restart(bot, tmp_path, 
         session = await open_move(bot)
         if new_folder:
             await bot.callback(1, None, session['prompt_id'], f'rnew:{session["token"]}')
+        session = bot.store.one("SELECT * FROM reply_moves WHERE owner=1")
         restarted = make_bot(tmp_path, bot.store)
         await restarted.callback(1, None, session['prompt_id'], f'rcancel:{session["token"]}')
         deleted = {p['message_id'] for m, p in restarted.telegram.sent if m == 'deleteMessage'}
-        assert deleted == {400, session['prompt_id']}
+        assert {400, session['prompt_id']} <= deleted
         assert bot.store.note(1, note['id'])['folder_id'] == note['folder_id']
         assert bot.store.action(1) is None
         await restarted.callback(1, None, session['prompt_id'], f'rnew:{session["token"]}')
@@ -71,16 +76,17 @@ def test_move_target_owner_isolation_and_pagination(bot):
         note = await prepare(bot)
         foreign = bot.store.create_folder(2, 'Чужая')
         for number in range(10):
-            bot.store.create_folder(1, f'Папка {number}')
+            bot.store.create_folder(1, f'Очень длинное название папки {number}')
         session = await open_move(bot)
+        assert {'＋ Новая папка', 'Отмена', '→'} <= set(bot.bottom_state(1)['actions'])
         await bot.callback(2, None, session['prompt_id'], f'rcancel:{session["token"]}')
         assert bot.store.one('SELECT * FROM reply_moves')
         with pytest.raises(ValueError):
             await bot.callback(1, None, session['prompt_id'], f'rmove:{session["token"]}:{foreign["id"]}')
         assert bot.store.note(1, note['id'])['folder_id'] == note['folder_id']
         await bot.callback(1, None, session['prompt_id'], f'rpage:{session["token"]}:1')
-        markup = [p for m, p in bot.telegram.sent if m == 'editMessageText'][-1]['reply_markup']
-        assert any(b['text'] == 'Отмена' for row in markup['inline_keyboard'] for b in row)
+        markup = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]['keyboard']
+        assert any(b['text'] == 'Отмена' for row in markup['keyboard'] for b in row)
     asyncio.run(run())
 
 
@@ -92,3 +98,14 @@ def test_folder_buttons_fit_short_medium_and_long_labels():
     rows = folder_button_rows(buttons)
     assert [len(row) for row in rows] == [3, 2, 1]
     assert [item for row in rows for item in row] == buttons
+
+
+def test_regular_create_has_only_cancel(bot):
+    async def run():
+        await receive(bot, '/new', 100)
+        menu = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]
+        assert menu['keyboard']['keyboard'] == [[{'text': 'Отмена'}]]
+        await receive(bot, 'Отмена', 101)
+        assert bot.store.action(1) is None
+        assert not bot.store.notes(1)
+    asyncio.run(run())

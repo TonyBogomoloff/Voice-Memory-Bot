@@ -191,8 +191,8 @@ def test_minimal_menu_hides_miniapp_and_initial_folder_prompt_uses_bottom_contro
         assert not any("web_app" in b for row in reply_keyboard(bot)["keyboard"] for b in row)
         bot.store.delete_folder(1, bot.store.current_folder(1))
         await receive(bot, "/start", 1001)
-        assert bot.store.action(1) == "create" and BACK in labels(bot)
-        await receive(bot, BACK, 1002)
+        assert bot.store.action(1) == "create" and labels(bot) == ["Отмена"]
+        await receive(bot, "Отмена", 1002)
         assert bot.store.action(1) is None and "🤖 Поговорить с ИИ" in labels(bot)
         await receive(bot, ROOT, 1003)
         assert bot.store.action(1) == "create"

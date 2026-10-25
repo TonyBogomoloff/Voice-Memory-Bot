@@ -81,32 +81,18 @@ def test_move_picker_filters_source_before_pagination(tmp_path, store):
         source = store.current_folder(1)
         note, _ = store.add_note(1, source, {"message_id": 50}, "text", transcript="Текст")
         targets = [store.create_folder(1, f"Папка {i}")["id"] for i in range(8)]
-        captured = []
-
-        async def edit(owner, mid, keys):
-            captured.append(keys)
-
-        bot.edit_note_buttons = edit
         await bot.choose_note_folder(1, note["id"], 50, 0)
-        actions = [b["callback_data"] for row in captured[-1]["inline_keyboard"] for b in row]
-        assert {a.split(":")[-1] for a in actions if a.startswith("place:")} == set(targets)
-        assert not any(a.startswith("pick:") for a in actions)
-
-        async def show(*args, **kwargs):
-            captured.append(args[3])
-
-        bot._show = show
-        seen = set()
-        for page in (0, 1):
-            await bot.show_folders(1, note_id=note["id"], page=page)
-            actions = [b["callback_data"] for row in captured[-1]["inline_keyboard"] for b in row]
-            seen.update(a.split(":")[-1] for a in actions if a.startswith("move:"))
-        assert seen == set(targets)
+        actions = bot.bottom_state(1)["actions"].values()
+        assert {a.split(":")[-1] for a in actions if a.startswith("rmove:")} == set(targets)
+        assert not any(a.startswith("rpage:") for a in actions)
+        await bot.show_folders(1, note_id=note["id"])
+        actions = bot.bottom_state(1)["actions"].values()
+        assert {a.split(":")[-1] for a in actions if a.startswith("rmove:")} == set(targets)
         for target in targets:
             store.db.execute("UPDATE folders SET removed=1 WHERE id=?", (target,))
         store.db.commit()
         await bot.choose_note_folder(1, note["id"], 50, 0)
-        assert captured[-1]["inline_keyboard"] == [[{"text": "← Назад", "callback_data": f"options:{note['id']}"}]]
+        assert set(bot.bottom_state(1)["actions"]) == {"＋ Новая папка", "Отмена"}
     asyncio.run(run())
 
 

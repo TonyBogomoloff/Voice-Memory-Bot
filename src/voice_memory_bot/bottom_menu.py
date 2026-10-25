@@ -58,7 +58,8 @@ class BottomMenuMixin:
         rows = (keys or {}).get("inline_keyboard", [])
         # Navigation is always in the same last row, independent of the screen.
         rows = [[b for b in row if b.get("callback_data") != "home"
-                 and not b["text"].startswith("← ") and b["text"] not in {"Отмена", "✖️ Отмена"}]
+                 and not b["text"].startswith("← ") and (screen.startswith("replymove:")
+                 or b["text"] not in {"Отмена", "✖️ Отмена"})]
                 for row in rows]
         rows = [row for row in rows if row]
         state = {"screen": screen, "back": back, "text": text, "rows": rows, "page": page, "keep": keep}
@@ -69,7 +70,8 @@ class BottomMenuMixin:
 
     async def send_bottom(self, owner, thread, state, *, edit_id=None, raw_keys=None):
         rows = state["rows"]
-        pages = max(1, (len(rows) + PAGE_SIZE - 1) // PAGE_SIZE)
+        page_size = max(1, len(rows)) if state["screen"].startswith("replymove:") else PAGE_SIZE
+        pages = max(1, (len(rows) + page_size - 1) // page_size)
         page = state["page"] = min(max(0, state["page"]), pages - 1)
         actions, keyboard, used = {}, [], set()
         reserved = {BACK, ROOT, PREVIOUS, NEXT}
@@ -83,7 +85,7 @@ class BottomMenuMixin:
                         number += 1
                     label = f"{label} · {number}"
                 used.add(label)
-                if not page * PAGE_SIZE <= row_index < (page + 1) * PAGE_SIZE:
+                if not page * page_size <= row_index < (page + 1) * page_size:
                     continue
                 if "web_app" in item:
                     rendered.append({"text": label, "web_app": item["web_app"]})
@@ -97,14 +99,14 @@ class BottomMenuMixin:
         if pages > 1:
             keyboard.append(([{"text": PREVIOUS}] if page else []) +
                             ([{"text": NEXT}] if page + 1 < pages else []))
-        if state["screen"].startswith("recordoptions:"):
+        if state["screen"] == "create" or state["screen"].startswith("recordoptions:"):
             cancel = {"text": "Отмена"}
             if keyboard and len(keyboard[-1]) < 2:
                 keyboard[-1].append(cancel)
             else:
                 keyboard.append([cancel])
             actions["Отмена"] = "cancel_record_options"
-        elif state["screen"] != "root":
+        elif state["screen"] != "root" and not state["screen"].startswith("replymove:"):
             keyboard.append([{"text": BACK}] if state["screen"].startswith("foldermenu:")
                             else [{"text": BACK}, {"text": ROOT}])
         keys = raw_keys or {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True,
@@ -166,7 +168,10 @@ class BottomMenuMixin:
             return True
         if action == "cancel_record_options":
             self.store.set_action(owner, None)
-            await self.show_home(owner, thread)
+            if state["screen"] == "create" and not self.store.folders(owner):
+                await self.show_main_menu(owner, thread)
+            else:
+                await self.show_home(owner, thread)
             return True
         if state["screen"] == "root":
             self.store.set_action(owner, None)
