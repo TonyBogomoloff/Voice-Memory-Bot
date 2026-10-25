@@ -82,6 +82,21 @@ def test_user_isolation_alias_collision_and_cyrillic_search(store):
         store.create_folder(1, "бизнес")
 
 
+def test_search_and_listing_share_pagination_and_unlimited_contract(store):
+    first = add(store, message=1, kind="text", transcript="Ёжик один")
+    assert [n["id"] for n in store.notes(1, query="ежик", limit=None)] == [first["id"]]
+    for message in (2, 3):
+        add(store, message=message, kind="text", transcript="Ёжик ещё")
+    for offset, limit, count in [(0, None, 3), (0, -1, 3), (1, None, 2), (1, 1, 1), (0, 0, 0)]:
+        listed = store.notes(1, offset=offset, limit=limit)
+        searched = store.notes(1, query="ЕЖИК", offset=offset, limit=limit)
+        assert len(searched) == count
+        assert [n["id"] for n in searched] == [n["id"] for n in listed]
+    for kwargs in ({"offset": -1}, {"limit": -2}, {"limit": True}, {"offset": 1.5}):
+        with pytest.raises(ValueError):
+            store.notes(1, **kwargs)
+
+
 def test_restart_recovers_queue_but_does_not_repeat_unknown_delivery(tmp_path):
     path = tmp_path / "db"
     db = Store(path, Limits())

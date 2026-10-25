@@ -406,7 +406,7 @@ class AIStore:
                                "content": n["content"] if n["content"] is not None else n["transcript"] or ""}
                               for n in notes], "count": len(notes), "complete": True}
         if action == "search_notes":
-            matches = self.store.notes(owner, folder_id, query=command["query"] or None, limit=-1)
+            matches = self.store.notes(owner, folder_id, query=command["query"] or None, limit=None)
             return {"notes": [{"id": n["id"], "title": n["title"], "folder_id": n["folder_id"], "kind": n["kind"],
                                "created_at": n["created_at"], "revision": n['revision'],
                                "excerpt": (n["content"] if n["content"] is not None else n["transcript"] or "")[:250]}

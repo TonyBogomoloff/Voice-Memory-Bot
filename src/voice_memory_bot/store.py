@@ -375,6 +375,13 @@ class Store:
         return row
 
     def notes(self, owner, folder=None, query=None, offset=0, limit=8):
+        if type(offset) is not int or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        if limit is not None and (type(limit) is not int or limit < -1):
+            raise ValueError("limit must be None or a non-negative integer")
+        # Keep the old SQL LIMIT -1 contract for callers saved before this change.
+        if limit == -1:
+            limit = None
         sql, args = "SELECT * FROM notes WHERE owner=? AND deleted=0 AND entry_type='note'", [owner]
         if folder:
             self.folder(owner, folder)
@@ -387,8 +394,9 @@ class Store:
             matches = [r for r in rows if all(w in normalize(r["title"] + " " + (r["transcript"] or "")
                                                             + " " + (r["content"] or ""))
                                             for w in words)]
-            return matches[offset:offset + limit]
-        return self.all(sql + " ORDER BY created_at DESC LIMIT ? OFFSET ?", [*args, limit, offset])
+            return matches[offset:] if limit is None else matches[offset:offset + limit]
+        return self.all(sql + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                        [*args, -1 if limit is None else limit, offset])
 
     def export_notes(self, owner: int, folder=None):
         # Export all saved data even if a storage quota was lowered after the notes were created.

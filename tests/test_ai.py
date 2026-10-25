@@ -85,6 +85,18 @@ def tool(bot, request_id, command):
     return bot.ai_state.execute(1, request_id, index)
 
 
+def test_ai_search_returns_every_match_including_a_single_match(bot):
+    first = ready_note(bot, "Ёжик один")
+    request = ready_note(bot, "Ищи", message_id=100)
+    bot.ai_state.enqueue(1, request["id"], "button")
+    result = tool(bot, request["id"], step("search_notes", query="ежик"))
+    assert [n["id"] for n in result["notes"]] == [first["id"]]
+    second = ready_note(bot, "Ёжик два", message_id=2)
+    result = tool(bot, request["id"], step("search_notes", query="ЕЖИК"))
+    assert {n["id"] for n in result["notes"]} == {first["id"], second["id"]}
+    assert result["has_more"] is False
+
+
 def test_chat_voice_history_reply_new_conversation_and_model_change(bot):
     async def run():
         folder = bot.store.create_folder(1, "Разговор", 100)
