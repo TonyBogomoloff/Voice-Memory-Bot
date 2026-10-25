@@ -331,7 +331,7 @@ class AIBotMixin:
     async def show_ai_progress(self, request):
         owner, identity = request["owner"], request["note_id"]
         note = self.store.note(owner, identity)
-        if (request["trigger"] == "miniapp" or note["kind"] != "voice"
+        if (request["trigger"] == "miniapp"
                 or request["state"] not in {"queued", "running"}):
             return
         # Checkpoint before sending: an ambiguous network failure must not create duplicates.
@@ -340,7 +340,7 @@ class AIBotMixin:
         if not inserted:
             return
         try:
-            sent = await self.telegram.text(owner, "🤖 Обрабатываю команду…", request["thread_id"],
+            sent = await self.telegram.text(owner, "Думаю…", request["thread_id"],
                                             reply_to=note["transcript_message_id"])
             with self.store.db:
                 self.store.db.execute("UPDATE ai_progress SET message_id=? WHERE note_id=?",
@@ -348,6 +348,44 @@ class AIBotMixin:
             self.ai_state.link(owner, sent["message_id"], request["conversation_id"])
         except ProviderError:
             log.warning("AI progress delivery unavailable request=%s", identity)
+
+    async def deliver_ai_images(self, request, text, controls, progress, *, force=False, thread=None):
+        owner, identity = request["owner"], request["note_id"]
+        images = [note for receipt in self.ai_engine.receipts(owner, identity)
+                  if receipt["action"] in {"create_image", "edit_image"}
+                  and (note := self.store.one("SELECT * FROM notes WHERE owner=? AND id=? AND deleted=0",
+                                               (owner, receipt["id"])))]
+        if not images:
+            return False, False
+        # A short answer fits the photo caption. Long answers remain complete text messages.
+        caption_answer = len(text.encode("utf-16-le")) // 2 <= 1024
+        instruction = self.store.note(owner, identity)
+        target_thread = thread if force else request["thread_id"]
+        for index, note in enumerate(images):
+            caption = text if index == 0 and caption_answer else note["title"]
+            keyboard = keys(*controls) if caption_answer and index == len(images) - 1 else keys()
+            edit_id = progress["message_id"] if index == 0 and progress else None
+            kwargs = dict(thread=target_thread, caption=caption, keyboard=keyboard,
+                          reply_to=None if force else instruction["transcript_message_id"])
+            try:
+                sent = await self.telegram.photo(owner, self.archive.audio(note), edit_id=edit_id, **kwargs)
+            except ProviderError as exc:
+                if edit_id and getattr(exc, "reason", None) == "not_modified":
+                    sent = {"message_id": edit_id}
+                elif edit_id and getattr(exc, "reason", None) == "edit_target_missing":
+                    sent = await self.telegram.photo(owner, self.archive.audio(note), **kwargs)
+                else:
+                    raise
+            self.messages.record(note, sent["message_id"], target_thread, "ai_image")
+            self.ai_state.link(owner, sent["message_id"], request["conversation_id"])
+            # Cache Telegram's copy for reopening the photo and folder navigation.
+            photos = sent.get("photo") or []
+            with self.store.db:
+                self.store.db.execute("UPDATE notes SET file_id=coalesce(?,file_id),result_message_id=?,"
+                    "result_thread=?,transcript_message_id=?,transcript_delivery='sent' WHERE owner=? AND id=?",
+                    (photos[-1]["file_id"] if photos else None, sent["message_id"], target_thread,
+                     sent["message_id"], owner, note["id"]))
+        return True, caption_answer
 
     async def _deliver_ai(self, request, force=False, thread=None):
         from .bot import transcript_chunks
@@ -380,6 +418,12 @@ class AIBotMixin:
         progress = None if force else self.store.one("SELECT message_id FROM ai_progress WHERE note_id=?", (identity,))
         self.ai_state.update_request(owner, identity, delivery="sending")
         try:
+            has_images, caption_answer = await self.deliver_ai_images(
+                current, text, controls, progress, force=force, thread=thread)
+            if has_images:
+                progress = None
+                if caption_answer:
+                    chunks = []
             for index, chunk in enumerate(chunks):
                 keyboard = keys(*controls) if index == len(chunks) - 1 else None
                 sent = None
@@ -405,7 +449,7 @@ class AIBotMixin:
                 else:
                     self.messages.record(note, sent['message_id'], thread if force else current['thread_id'], 'ai_notice')
             self.ai_state.update_request(owner, identity, delivery="sent")
-        except ProviderError:
+        except (ProviderError, OSError):
             self.ai_state.update_request(owner, identity, delivery="unknown")
             log.warning("AI delivery outcome unknown request=%s", identity)
 
@@ -416,6 +460,7 @@ class AIBotMixin:
     async def _process_ai(self, request):
         owner, identity = request["owner"], request["note_id"]
         try:
+            await self.show_ai_progress(request)
             await self.ai_engine.run(request)
         except (ProviderError, ValueError, OSError) as exc:
             note = self.store.one("SELECT deleted FROM notes WHERE id=? AND owner=?", (identity, owner))

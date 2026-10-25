@@ -10,13 +10,14 @@ from voice_memory_bot.providers import ProviderError, TelegramError
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_voice_reply_shows_progress_before_model_and_edits_it(bot, failure):
+@pytest.mark.parametrize("voice", [False, True])
+def test_reply_shows_progress_before_model_and_edits_it(bot, failure, voice):
     async def run():
-        note = await receive(bot, voice=True, reply=777)
+        note = await receive(bot, voice=voice, reply=777)
         request = bot.ai_state.request(1, note["id"])
         progress = bot.store.one("SELECT message_id FROM ai_progress")["message_id"]
         assert not bot.assistant.calls
-        assert bot.telegram.sent[-1][1]["text"] == "🤖 Обрабатываю команду…"
+        assert bot.telegram.sent[-1][1]["text"] == "Думаю…"
         assert bot.telegram.sent[-1][1]["reply_to"] == note["transcript_message_id"]
         # Durable ID survives recovery and never causes a second status send.
         AIStore(bot.store)
@@ -27,11 +28,22 @@ def test_voice_reply_shows_progress_before_model_and_edits_it(bot, failure):
         await bot.process_ai(bot.ai_state.claim())
         method, payload = bot.telegram.sent[-1]
         assert method == "editMessageText" and payload["message_id"] == progress
-        assert "Обрабатываю" not in payload["text"]
+        assert "Думаю" not in payload["text"]
         assert bool(payload["reply_markup"]["inline_keyboard"]) is failure
         result = bot.ai_state.request(1, note["id"])
         assert result["delivery"] == "sent"
         assert bool(result["result_note_id"]) is not failure
+    asyncio.run(run())
+
+
+def test_text_progress_is_immediate_even_before_note_worker(bot):
+    async def run():
+        await bot.handle({"message": {"message_id": 101, "from": {"id": 1},
+            "chat": {"id": 1, "type": "private"}, "text": "Нарисуй кота",
+            "reply_to_message": {"message_id": 777}}})
+        assert bot.telegram.sent[-1][1]["text"] == "Думаю…"
+        assert bot.store.one("SELECT state FROM notes WHERE message_id=101")["state"] == "queued"
+        assert not bot.assistant.calls
     asyncio.run(run())
 
 

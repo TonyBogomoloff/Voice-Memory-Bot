@@ -148,8 +148,7 @@ class AIStore:
         note = self.store.note(owner, note_id)
         content = note["content"] if note["content"] is not None else note["transcript"]
         if note["kind"] == "photo":
-            if note["state"] != "ready" or not note["audio_bytes"]:
-                raise ValueError("Дождись сохранения фото, затем обратись к ИИ")
+            # Collect the instruction immediately; claim() waits for the download.
             content = content or ""
         elif not content:
             raise ValueError("Дождись текста записи, затем обратись к ИИ")
@@ -303,6 +302,9 @@ class AIStore:
     def claim(self):
         row = self.store.one("""SELECT a.* FROM ai_requests a JOIN notes n ON n.id=a.note_id
             WHERE a.state='queued' AND n.state='ready' AND n.deleted=0 AND n.transcript IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM ai_note_context c JOIN notes source ON source.id=c.note_id
+                AND source.owner=c.owner WHERE c.conversation_id=a.conversation_id AND c.owner=a.owner
+                AND source.kind='photo' AND source.deleted=0 AND source.state IN ('queued','processing'))
             AND NOT EXISTS (SELECT 1 FROM ai_requests b JOIN notes bn ON bn.id=b.note_id
                 WHERE b.conversation_id=a.conversation_id AND b.created_at<a.created_at
                 AND b.state IN ('queued','running') AND bn.deleted=0 AND bn.state!='asr_failed')

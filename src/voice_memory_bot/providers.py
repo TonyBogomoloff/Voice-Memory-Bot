@@ -130,6 +130,51 @@ class Telegram:
         self.remember_result(body["result"], owner, thread)
         return body["result"]
 
+    async def photo(self, owner, path: Path, thread=None, caption=None, keyboard=None,
+                    reply_to=None, edit_id=None):
+        """Upload archive media, optionally replacing the exact thinking message."""
+        original = {"chat_id": owner, "photo": "attach://photo"}
+        if caption:
+            original["caption"] = caption[:1024]
+        if keyboard is not None:
+            original["reply_markup"] = keyboard
+        themed, _ = themed_payload("sendPhoto", original)
+        method = "editMessageMedia" if edit_id else "sendPhoto"
+        for attempt in range(2):
+            payload = dict(themed)
+            if edit_id:
+                payload.pop("photo")
+                payload["message_id"] = edit_id
+                payload["media"] = {"type": "photo", "media": "attach://photo"}
+                for field in ("caption", "caption_entities"):
+                    if field in payload:
+                        payload["media"][field] = payload.pop(field)
+            else:
+                if thread:
+                    payload["message_thread_id"] = thread
+                if reply_to:
+                    payload["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
+                if silent_delivery.get():
+                    payload["disable_notification"] = True
+            data = {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool)) else str(v)
+                    for k, v in payload.items()}
+            try:
+                with path.open("rb") as handle:
+                    response = await self.client.post(self._base + method, data=data,
+                        files={"photo": (path.name, handle)}, timeout=httpx.Timeout(120, connect=10))
+                body = response.json()
+            except (httpx.HTTPError, ValueError):
+                raise ProviderError("telegram_transport_unknown") from None
+            if isinstance(body, dict) and body.get("ok"):
+                self.remember_result(body["result"], owner, thread)
+                return body["result"]
+            code = body.get("error_code", response.status_code) if isinstance(body, dict) else response.status_code
+            error = TelegramError(code, method, body.get("description", "") if isinstance(body, dict) else "")
+            if attempt == 0 and error.reason == "custom_emoji_unavailable" and themed != original:
+                themed = original
+                continue
+            raise error
+
     async def download(self, file_id, destination: Path, max_bytes):
         info = await self.call("getFile", file_id=file_id)
         path = info.get("file_path", "")

@@ -13,9 +13,8 @@ from .store import clean_name
 def authorize_image(engine, request, command):
     state, owner = engine.state, request["owner"]
     store = state.store
-    if (request["trigger"] != "miniapp" or not engine.archive
-            or not callable(getattr(engine.provider, "generate_image", None))):
-        raise ValueError("Генерация картинок доступна через «Выполнить» в мини-эпе")
+    if not engine.archive or not callable(getattr(engine.provider, "generate_image", None)):
+        raise ValueError("Генерация картинок сейчас недоступна")
     if state.settings(owner)["notes_access"] != "write":
         raise ValueError("Для сохранения картинки включи запись в настройках доступа ИИ к заметкам")
     current = store.note(owner, request["note_id"])

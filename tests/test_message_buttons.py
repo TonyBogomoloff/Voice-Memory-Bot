@@ -108,8 +108,12 @@ def test_name_trigger_does_not_edit_the_preserved_user_message(bot):
         await bot.process(bot.store.claim_note())
         request = bot.ai_state.claim()
         assert request["trigger"] == "name"
-        assert bot.telegram.sent == []
+        assert len(bot.telegram.sent) == 1
+        assert bot.telegram.sent[0][1]["text"] == "Думаю…"
+        assert bot.telegram.sent[0][1]["reply_to"] == 5001
+        progress = bot.store.one("SELECT message_id FROM ai_progress")["message_id"]
         bot.ai_state.update_request(1, request["note_id"], state="ready", response="Ответ ИИ")
         await bot._deliver_ai(request)
-        assert bot.telegram.sent[-1][1]["reply_to"] == 5001
+        assert bot.telegram.sent[-1][0] == "editMessageText"
+        assert bot.telegram.sent[-1][1]["message_id"] == progress != 5001
     asyncio.run(run())

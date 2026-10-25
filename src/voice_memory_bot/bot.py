@@ -405,6 +405,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                         self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
                         self.capture_ai_input(note, message, scoped=True)
                         await self.deliver_transcript(note)
+                        request = self.ai_state.request(owner, note["id"])
+                        if request:
+                            await self.show_ai_progress(request)
                         return
                     status = "Конвертирую в текст…" if note["file_id"] and note['kind'] not in {"file", "video"} else "Сохраняю…"
                     # Editing this status preserves its reply linkage in Telegram.

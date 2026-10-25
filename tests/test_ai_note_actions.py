@@ -69,7 +69,8 @@ def test_missing_folder_renders_buttons_and_choice_is_single_use(bot, target):
             step("move_note", note_id=note["id"], revision=0, title="Путешествие")]
         await bot.process_ai(bot.ai_state.claim())
         assert bot.store.note(1, note["id"])["folder_id"] == note["folder_id"]
-        buttons = bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"]
+        assert bot.telegram.sent[-1][0] == "editMessageText"
+        buttons = bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
         labels = [b["text"] for row in buttons for b in row]
         assert labels[:2] == ["➕ Новая папка", "📁 Путешествия"]
         callback = next(b["callback_data"] for row in buttons for b in row

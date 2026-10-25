@@ -427,8 +427,8 @@ def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
         bot.telegram.download = download
         await receive_photo(bot)
         note = bot.store.notes(1)[0]
-        with pytest.raises(ValueError, match="сохранения фото"):
-            bot.ai_state.start_note_conversation(1, note['id'])
+        conversation = bot.ai_state.start_note_conversation(1, note['id'])
+        assert bot.ai_state.note_context(1, conversation)['note_id'] == note['id']
         await bot.process(bot.store.claim_note())
         note = bot.store.note(1, note['id'])
         original = dict(note)
@@ -453,12 +453,8 @@ def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
                     transcript_sends[-1].get('reply_markup') or {}).get('inline_keyboard')
         request = bot.ai_state.claim()
         await bot.process_ai(request)
-        if voice:
-            assert bot.telegram.sent[-1][0] == 'editMessageText'
-            assert bot.telegram.sent[-1][1]['reply_markup']['inline_keyboard'] == []
-        else:
-            assert bot.telegram.sent[-1][1]['reply_to'] == instruction['transcript_message_id']
-            assert bot.telegram.sent[-1][1]['keyboard']['inline_keyboard'] == []
+        assert bot.telegram.sent[-1][0] == 'editMessageText'
+        assert bot.telegram.sent[-1][1]['reply_markup']['inline_keyboard'] == []
         before_refresh = len(bot.telegram.sent)
         with bot.store.db:
             bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')

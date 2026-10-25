@@ -259,6 +259,12 @@ class FakeTelegram:
         return await self.call("sendMessage", chat_id=owner, text=text, thread=thread, keyboard=keyboard,
                                reply_to=reply_to)
 
+    async def photo(self, owner, path, thread=None, caption=None, keyboard=None, reply_to=None, edit_id=None):
+        result = await self.call("editMessageMedia" if edit_id else "sendPhoto", chat_id=owner,
+            path=str(path), image=path.read_bytes(), message_id=edit_id, message_thread_id=thread,
+            caption=caption, reply_markup=keyboard, reply_to=reply_to)
+        return {**result, "photo": [{"file_id": "generated-photo", "width": 1024, "height": 1024}]}
+
     async def download(self, file_id, destination, max_bytes):
         destination.parent.mkdir(parents=True, exist_ok=True)
         with wave.open(str(destination), "wb") as audio:
