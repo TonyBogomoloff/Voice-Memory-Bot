@@ -20,19 +20,7 @@ class FolderViewMixin:
         self.view_locks = defaultdict(asyncio.Lock)
         self.view_rendering = set()
         self.view_refresh_event = asyncio.Event()
-        if "view_blocked" not in {r[1] for r in self.store.db.execute("PRAGMA table_info(telegram_messages)")}:
-            self.store.db.execute("ALTER TABLE telegram_messages ADD COLUMN view_blocked INTEGER NOT NULL DEFAULT 0")
-        self.store.db.executescript("""
-            CREATE TABLE IF NOT EXISTS folder_views (
-                owner INTEGER PRIMARY KEY, folder_id TEXT NOT NULL, thread_id INTEGER,
-                page INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 1
-            );
-        """)
-        if "screen" not in {r[1] for r in self.store.db.execute("PRAGMA table_info(folder_views)")}:
-            self.store.db.execute("ALTER TABLE folder_views ADD COLUMN screen TEXT")
 
-        if "command_message_id" not in {r[1] for r in self.store.db.execute("PRAGMA table_info(folder_views)")}:
-            self.store.db.execute("ALTER TABLE folder_views ADD COLUMN command_message_id INTEGER")
 
     def remember_screen(self, owner, thread, text, keys):
         if (owner in self.view_rendering or owner in self.deleting_owners or (self.cleanup.job(owner) or {}).get("files_pending")):

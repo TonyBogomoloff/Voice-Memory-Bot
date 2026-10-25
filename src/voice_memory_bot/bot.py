@@ -101,16 +101,14 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         self.folder_delete_confirmations = {}
         self.folder_keyboards = {}
         self.folder_pages = {}
-        self.init_folder_options()
         self.init_folder_view()
         self.init_bottom_menu()
         self.emoji_keyboards = KeyboardAliases(store)
         self.telegram.on_keyboard = self.emoji_keyboards.remember
-        self.init_reply_moves()
         self.folder_namer = CodexRouter(replace(config.llm, model=config.folder_name_model or config.llm.model, effort="low"))
-        self.init_folder_naming()
 
     async def start(self):
+        self.store.recover_runtime()
         me = await self.telegram.call("getMe")
         webhook = await self.telegram.call("getWebhookInfo")
         if webhook.get("url"):

@@ -310,6 +310,7 @@ def test_old_telegram_jobs_retire_silently_without_touching_new_archive(bot):
             bot.store.db.execute("INSERT INTO deletion_jobs VALUES (1,0)")
             bot.store.db.execute("INSERT INTO deletion_targets VALUES (1,'topic',110,NULL)")
         resumed = Bot(bot.config, bot.store, FakeTelegram(), FakeGroq(), FakeRouter())
+        resumed.store.recover_runtime()
         await resumed.resume_deletions()
         assert resumed.cleanup.job(1) is None
         assert resumed.cleanup.targets(1, "topic") == []

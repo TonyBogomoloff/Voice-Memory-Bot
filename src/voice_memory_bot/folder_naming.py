@@ -9,15 +9,6 @@ log = logging.getLogger(__name__)
 
 
 class FolderNamingMixin:
-    def init_folder_naming(self):
-        self.store.db.execute("""CREATE TABLE IF NOT EXISTS folder_name_inputs (
-            owner INTEGER NOT NULL, message_id INTEGER NOT NULL, transcript TEXT,
-            name TEXT, folder_id TEXT, PRIMARY KEY(owner,message_id)
-        )""")
-        columns = {r[1] for r in self.store.db.execute("PRAGMA table_info(folder_name_inputs)")}
-        if "rename_id" not in columns:
-            self.store.db.execute("ALTER TABLE folder_name_inputs ADD COLUMN rename_id TEXT")
-        self.store.db.commit()
 
     async def ask_first_folder(self, owner, thread=None):
         self.store.register_user(owner)

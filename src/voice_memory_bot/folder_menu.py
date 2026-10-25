@@ -19,10 +19,6 @@ OPTION_ACTIONS = {"✏️ Переименовать": "rename", "🗑 Удал�
 
 
 class FolderMenuMixin:
-    def init_folder_options(self):
-        self.store.db.execute("CREATE TABLE IF NOT EXISTS folder_options ("
-                              "owner INTEGER PRIMARY KEY, folder_id TEXT NOT NULL)")
-        self.store.db.commit()
 
     def options_folder(self, owner):
         row = self.store.one("SELECT folder_id FROM folder_options WHERE owner=?", (owner,))

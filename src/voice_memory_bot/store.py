@@ -8,10 +8,9 @@ import unicodedata
 import uuid
 from pathlib import Path
 
-from .ai_store import migrate_ai
-from .cleanup import migrate_cleanup
 from .config import Limits
 from .database import transaction
+from .migrations import migrate, recover_runtime
 from .update_queue import UpdateQueue
 
 MAX_PINNED_FOLDERS = 4
@@ -38,97 +37,17 @@ class Store:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.updates = UpdateQueue(self)
-        self.db.executescript("""
-            PRAGMA journal_mode=WAL;
-            PRAGMA foreign_keys=ON;
-            PRAGMA secure_delete=ON;
-            PRAGMA busy_timeout=5000;
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY, active_folder TEXT, action TEXT
-            );
-            CREATE TABLE IF NOT EXISTS folders (
-                id TEXT PRIMARY KEY, owner INTEGER NOT NULL REFERENCES users(id),
-                name TEXT NOT NULL, normalized TEXT NOT NULL, aliases TEXT NOT NULL DEFAULT '[]',
-                thread_id INTEGER, is_inbox INTEGER NOT NULL DEFAULT 0,
-                UNIQUE(owner, normalized), UNIQUE(owner, thread_id)
-            );
-            CREATE TABLE IF NOT EXISTS user_export_settings (
-                owner INTEGER PRIMARY KEY REFERENCES users(id),
-                text_format TEXT NOT NULL DEFAULT 'pdf' CHECK(text_format IN ('pdf', 'markdown'))
-            );
-            CREATE TABLE IF NOT EXISTS user_message_settings (
-                owner INTEGER PRIMARY KEY REFERENCES users(id),
-                buttons_enabled INTEGER NOT NULL DEFAULT 0 CHECK(buttons_enabled IN (0, 1))
-            );
-            CREATE TABLE IF NOT EXISTS notes (
-                id TEXT PRIMARY KEY, owner INTEGER NOT NULL REFERENCES users(id),
-                folder_id TEXT NOT NULL REFERENCES folders(id), source_folder TEXT NOT NULL,
-                message_id INTEGER NOT NULL, source_thread INTEGER,
-                kind TEXT NOT NULL, file_id TEXT, extension TEXT NOT NULL,
-                declared_bytes INTEGER NOT NULL DEFAULT 0, duration INTEGER NOT NULL DEFAULT 0,
-                audio_bytes INTEGER NOT NULL DEFAULT 0, sha256 TEXT,
-                created_at REAL NOT NULL, state TEXT NOT NULL DEFAULT 'queued',
-                transcript TEXT, title TEXT NOT NULL DEFAULT 'Голосовая заметка',
-                routing TEXT NOT NULL DEFAULT 'pending', requested_folder TEXT,
-                attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
-                delivery TEXT NOT NULL DEFAULT 'pending', result_message_id INTEGER,
-                result_thread INTEGER, deleted INTEGER NOT NULL DEFAULT 0,
-                UNIQUE(owner, message_id)
-            );
-            CREATE INDEX IF NOT EXISTS note_folder ON notes(owner, folder_id, created_at);
-            CREATE TABLE IF NOT EXISTS updates (
-                id INTEGER PRIMARY KEY, payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending'
-            );
-            CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS implicit_topics (
-                owner INTEGER NOT NULL, thread_id INTEGER NOT NULL, PRIMARY KEY(owner, thread_id)
-            );
-            CREATE TABLE IF NOT EXISTS asr_usage (
-                owner INTEGER NOT NULL, at REAL NOT NULL, seconds INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS usage_time ON asr_usage(owner, at);
-        """)
-        # Add checkpoints without replaying results already delivered by older versions.
-        with self.transaction():
-            columns = {row["name"] for row in self.all("PRAGMA table_info(notes)")}
-            if "status_message_id" not in columns:
-                self.db.execute("ALTER TABLE notes ADD COLUMN status_message_id INTEGER")
-            if "transcript_delivery" not in columns:
-                self.db.execute("ALTER TABLE notes ADD COLUMN transcript_delivery TEXT NOT NULL DEFAULT 'pending'")
-                self.db.execute("UPDATE notes SET transcript_delivery=delivery "
-                                "WHERE delivery!='pending' AND transcript IS NOT NULL")
-            if "transcript_message_id" not in columns:
-                self.db.execute("ALTER TABLE notes ADD COLUMN transcript_message_id INTEGER")
-            self.db.execute("UPDATE notes SET state='queued' WHERE state='processing' AND deleted=0")
-            self.db.execute("UPDATE notes SET delivery='unknown' WHERE delivery='sending'")
-            self.db.execute("UPDATE notes SET transcript_delivery='unknown' WHERE transcript_delivery='sending'")
-            self.db.execute("UPDATE updates SET state='pending' WHERE state='processing'")
-        migrate_ai(self.db)
-        migrate_cleanup(self.db)
-        with self.transaction():
-            for name, declaration in {
-                "origin": "TEXT NOT NULL DEFAULT 'telegram'",
-                "original_name": "TEXT",
-                "mime_type": "TEXT",
-                "ai_generated_from": "TEXT",
-                "source_json": "TEXT",
-            }.items():
-                if name not in columns:
-                    self.db.execute(f"ALTER TABLE notes ADD COLUMN {name} {declaration}")
-        with self.transaction():
-            if "pin_slot" not in {row["name"] for row in self.all("PRAGMA table_info(folders)")}:
-                self.db.execute("ALTER TABLE folders ADD COLUMN pin_slot INTEGER "
-                                "CHECK(pin_slot BETWEEN 1 AND 4)")
-                for user in self.all("SELECT id FROM users"):
-                    folders = self.all("SELECT id FROM folders WHERE owner=? "
-                                       "ORDER BY is_inbox DESC, normalized LIMIT ?",
-                                       (user["id"], MAX_PINNED_FOLDERS))
-                    for slot, folder in enumerate(folders, 1):
-                        self.db.execute("UPDATE folders SET pin_slot=? WHERE id=?", (slot, folder["id"]))
-            if "removed" not in {row["name"] for row in self.all("PRAGMA table_info(folders)")}:
-                self.db.execute("ALTER TABLE folders ADD COLUMN removed INTEGER NOT NULL DEFAULT 0")
-            self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS folder_pin_slot "
-                            "ON folders(owner,pin_slot) WHERE pin_slot IS NOT NULL")
+        try:
+            for pragma in ("journal_mode=WAL", "foreign_keys=ON", "secure_delete=ON", "busy_timeout=5000"):
+                self.db.execute("PRAGMA " + pragma)
+            migrate(self)
+        except BaseException:
+            self.db.close()
+            raise
+
+    def recover_runtime(self):
+        """Call only at runtime startup, after acquiring the process lock."""
+        recover_runtime(self)
 
     def transaction(self):
         return transaction(self.db)

@@ -179,7 +179,12 @@ def test_voice_rename_preserves_folder_notes_and_receipt_across_restart(tmp_path
             assert len(store.folders(1)) == 1 and store.action(1) is None
             assert store.note(1, note['id']) == before
             assert calls == ['asr', 'name']
-            bot.init_folder_naming()
+            store.close()
+            store = Store(tmp_path / 'db', Limits())
+            store.recover_runtime()
+            bot = make_bot(tmp_path, store)
+            bot.groq.transcribe = transcribe
+            bot.folder_namer = SimpleNamespace(folder_name=extract)
             await bot.create_folder_from_voice(1, None, {'message_id': 1001}, rename_id=identity)
             assert calls == ['asr', 'name']
             assert store.one('SELECT rename_id,folder_id FROM folder_name_inputs') == {

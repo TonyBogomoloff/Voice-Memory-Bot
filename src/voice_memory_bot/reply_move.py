@@ -25,11 +25,6 @@ def folder_button_rows(buttons):
 
 
 class ReplyMoveMixin:
-    def init_reply_moves(self):
-        self.store.db.execute("""CREATE TABLE IF NOT EXISTS reply_moves (
-            token TEXT PRIMARY KEY, owner INTEGER NOT NULL, note_id TEXT NOT NULL,
-            command_id INTEGER NOT NULL, prompt_id INTEGER, target_folder TEXT)""")
-        self.store.db.commit()
 
     def reply_note(self, owner, message):
         target = (message.get("reply_to_message") or {}).get("message_id")

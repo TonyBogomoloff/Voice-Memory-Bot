@@ -272,6 +272,7 @@ def test_restart_replays_receipts_without_duplicate_mutation_or_unknown_send(bot
         bot.ai_state.update_request(1, request["id"], state="running")
         reopened = Store(tmp_path / "db", Limits())
         try:
+            reopened.recover_runtime()
             state = AIStore(reopened)
             provider = Assistant()
             engine = AssistantEngine(state, provider, bot.config.llm.model, bot.ai_models)

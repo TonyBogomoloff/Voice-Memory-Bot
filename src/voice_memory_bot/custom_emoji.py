@@ -183,10 +183,6 @@ class KeyboardAliases:
 
     def __init__(self, store):
         self.store = store
-        with store.transaction():
-            store.db.execute('CREATE TABLE IF NOT EXISTS emoji_keyboard_labels ('
-                             'owner INTEGER NOT NULL, label TEXT NOT NULL, original TEXT NOT NULL, '
-                             'active INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(owner,label))')
 
     def remember(self, owner, aliases):
         with self.store.transaction():

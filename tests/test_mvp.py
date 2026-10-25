@@ -113,6 +113,7 @@ def test_restart_recovers_queue_but_does_not_repeat_unknown_delivery(tmp_path):
     db.update_note(1, first["id"], delivery="sending")
     db.close()
     db = Store(path, Limits())
+    db.recover_runtime()
     assert db.pending_update() == event
     assert db.note(1, first["id"])["state"] == "queued"
     assert db.note(1, first["id"])["delivery"] == "unknown"
@@ -467,6 +468,7 @@ def test_transcript_restart_cleans_status_without_resending(tmp_path, delivery):
         store.close()
         store = Store(path, Limits())
         try:
+            store.recover_runtime()
             bot = make_bot(tmp_path, store)
             await bot.process(store.claim_note())
             assert bot.telegram.sent == [("deleteMessage", {"chat_id": 1, "message_id": 20})]
@@ -488,6 +490,7 @@ def test_transcript_migration_keeps_delivery_history_and_failed_asr_retryable(tm
     store.update_note(1, failed["id"], state="asr_failed", delivery="sent")
     for name in ("status_message_id", "transcript_delivery", "transcript_message_id"):
         store.db.execute(f"ALTER TABLE notes DROP COLUMN {name}")
+    store.db.execute("PRAGMA user_version=0")
     store.close()
     store = Store(path, Limits())
     try:

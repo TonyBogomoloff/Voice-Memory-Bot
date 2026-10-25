@@ -9,34 +9,12 @@ from .providers import ProviderError
 log = logging.getLogger(__name__)
 
 
-def migrate_cleanup(db):
-    db.executescript("""
-        CREATE TABLE IF NOT EXISTS telegram_messages (
-            owner INTEGER NOT NULL, message_id INTEGER NOT NULL, thread_id INTEGER,
-            PRIMARY KEY(owner, message_id)
-        );
-        CREATE TABLE IF NOT EXISTS deletion_jobs (
-            owner INTEGER PRIMARY KEY, files_pending INTEGER NOT NULL DEFAULT 1
-        );
-        CREATE TABLE IF NOT EXISTS deletion_targets (
-            owner INTEGER NOT NULL, kind TEXT NOT NULL, identity INTEGER NOT NULL, thread_id INTEGER,
-            PRIMARY KEY(owner, kind, identity)
-        );
-    """)
 
 
 class CleanupStore:
     def __init__(self, store):
         self.store, self.db = store, store.db
-        if "sent_at" not in {r[1] for r in self.db.execute("PRAGMA table_info(telegram_messages)")}:
-            self.db.execute("ALTER TABLE telegram_messages ADD COLUMN sent_at REAL")
 
-    def retire_telegram_cleanup(self):
-        # Old Telegram-only retries must never touch new archive entries or notify users.
-        with self.store.transaction():
-            self.db.execute("DELETE FROM deletion_targets WHERE owner IN "
-                            "(SELECT owner FROM deletion_jobs WHERE files_pending=0)")
-            self.db.execute("DELETE FROM deletion_jobs WHERE files_pending=0")
 
     def remember(self, owner, message_id, thread=None, sent_at=None):
         # Only identifiers are needed; do not retain another copy of message contents.
@@ -140,7 +118,6 @@ class CleanupStore:
 class CleanupMixin:
     def init_cleanup(self):
         self.cleanup = CleanupStore(self.store)
-        self.cleanup.retire_telegram_cleanup()
         self.telegram.on_message = self.cleanup.remember
         self.delete_confirmations = {}
         self.deleting_owners = set()

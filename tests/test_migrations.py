@@ -1,0 +1,63 @@
+import sqlite3
+
+import pytest
+from test_mvp import add, make_bot
+
+from voice_memory_bot import migrations
+from voice_memory_bot.ai_store import AIStore
+from voice_memory_bot.config import Limits
+from voice_memory_bot.message_store import MessageStore
+from voice_memory_bot.store import Store
+
+
+def test_open_and_component_construction_preserve_inflight_until_runtime_recovery(tmp_path):
+    path = tmp_path / 'db'
+    store = Store(path, Limits())
+    note = add(store, kind='text', transcript='Полный исходный текст')
+    ai = AIStore(store)
+    ai.enqueue(1, note['id'], 'button')
+    ai.update_request(1, note['id'], state='running', delivery='sending')
+    store.update_note(1, note['id'], state='processing', delivery='sending', transcript_delivery='sending')
+    MessageStore(store).begin(note, note['folder_id'], None)
+    with store.transaction():
+        store.db.execute("INSERT INTO updates VALUES (1,'{}','processing')")
+        store.db.execute("INSERT INTO updates VALUES (2,'{}','failed')")
+    before = store.note(1, note['id'])
+    store.close()
+    store = Store(path, Limits())
+    try:
+        store.db.set_authorizer(lambda action, *args: sqlite3.SQLITE_DENY if action in {
+            sqlite3.SQLITE_CREATE_TABLE, sqlite3.SQLITE_ALTER_TABLE, sqlite3.SQLITE_DROP_TABLE
+        } else sqlite3.SQLITE_OK)
+        make_bot(tmp_path, store)
+        assert store.note(1, note['id']) == before
+        assert AIStore(store).request(1, note['id'])['state'] == 'running'
+        store.recover_runtime()
+        saved = store.note(1, note['id'])
+        assert saved['state'] == 'queued' and saved['delivery'] == saved['transcript_delivery'] == 'unknown'
+        assert saved['transcript'] == before['transcript']
+        assert AIStore(store).request(1, note['id'])['delivery'] == 'unknown'
+        assert MessageStore(store).get(1, note['id'])['state'] == 'unknown'
+        assert store.updates.counts() == {'pending': 1, 'processing': 0, 'failed': 1}
+    finally:
+        store.close()
+
+
+def test_failed_legacy_migration_rolls_back_schema_and_version(tmp_path, monkeypatch):
+    path = tmp_path / 'db'
+    store = Store(path, Limits())
+    note = add(store, kind='text', transcript='Не потерять')
+    store.db.execute('ALTER TABLE notes DROP COLUMN transcript_message_id')
+    store.db.execute('PRAGMA user_version=0')
+    store.close()
+
+    def fail(db):
+        raise RuntimeError('migration interrupted')
+
+    monkeypatch.setattr(migrations, '_migrate_cleanup', fail)
+    with pytest.raises(RuntimeError, match='migration interrupted'):
+        Store(path, Limits())
+    with sqlite3.connect(path) as db:
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 0
+        assert 'transcript_message_id' not in {r[1] for r in db.execute('PRAGMA table_info(notes)')}
+        assert db.execute('SELECT transcript FROM notes WHERE id=?', (note['id'],)).fetchone()[0] == 'Не потерять'

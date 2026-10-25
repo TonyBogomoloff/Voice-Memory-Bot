@@ -10,28 +10,6 @@ class MessageStore:
     def __init__(self, store):
         self.store = store
         self.db = store.db
-        self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS note_messages (
-                owner INTEGER NOT NULL, message_id INTEGER NOT NULL,
-                note_id TEXT NOT NULL REFERENCES notes(id), thread_id INTEGER,
-                kind TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY(owner, message_id)
-            );
-            CREATE INDEX IF NOT EXISTS note_message_lookup ON note_messages(note_id, thread_id);
-            CREATE TABLE IF NOT EXISTS note_moves (
-                note_id TEXT PRIMARY KEY REFERENCES notes(id), owner INTEGER NOT NULL,
-                target_folder TEXT NOT NULL, source_thread INTEGER,
-                source_ids TEXT NOT NULL, state TEXT NOT NULL, error TEXT, updated_at REAL NOT NULL
-            );
-        """)
-        with self.store.transaction():
-            # Old versions kept only these exact IDs. Never infer adjacent message IDs.
-            for field, thread, kind in (("message_id", "source_thread", "source"),
-                                        ("transcript_message_id", "source_thread", "transcript"),
-                                        ("result_message_id", "result_thread", "result")):
-                self.db.execute(f"""INSERT OR IGNORE INTO note_messages(owner,message_id,note_id,thread_id,kind)
-                    SELECT owner,{field},id,{thread},? FROM notes WHERE {field}>0 AND deleted=0""", (kind,))
-            self.db.execute("UPDATE note_moves SET state='unknown' WHERE state='publishing'")
 
     def record(self, note, message_id, thread, kind):
         if message_id <= 0:

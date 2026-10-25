@@ -22,14 +22,6 @@ class BottomMenuMixin:
     def init_bottom_menu(self):
         self.bottom_epoch = new_id()
         self.command_cleanups = {}
-        self.store.db.executescript("""
-            CREATE TABLE IF NOT EXISTS bottom_menus (
-                owner INTEGER PRIMARY KEY, state TEXT NOT NULL, message_id INTEGER
-            );
-            CREATE TABLE IF NOT EXISTS bottom_menu_labels (
-                owner INTEGER NOT NULL, label TEXT NOT NULL, PRIMARY KEY(owner,label)
-            );
-        """)
 
     def bottom_state(self, owner):
         row = self.store.one("SELECT state FROM bottom_menus WHERE owner=?", (owner,))
