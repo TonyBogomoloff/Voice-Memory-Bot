@@ -115,6 +115,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             {"command": "ai", "description": "Изменить с ИИ"},
             {"command": "move", "description": "Перенести запись"},
             {"command": "delete", "description": "Удалить запись"},
+            {"command": "options", "description": "Options"},
         ])
         # Finish physical deletion interrupted by a previous shutdown.
         for note in self.store.all("SELECT * FROM notes WHERE deleted=1"):
@@ -266,6 +267,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             if "forum_topic_created" in message or "forum_topic_edited" in message:
                 return
             text = message.get("text", "").strip()
+            if text and text.split()[0].split("@", 1)[0].lower() == "/options":
+                return await self.record_options(owner, thread, message)
             if text and text.split()[0].split("@", 1)[0].lower() == "/delete":
                 return await self.delete_reply(owner, thread, message)
             if text and text.split()[0].split("@", 1)[0].lower() == "/move":
@@ -674,6 +677,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             task.add_done_callback(self.export_tasks.discard)
             return
         note = self.store.note(owner, identity)
+        if action == "recordmove":
+            return await self.move_reply(owner, thread, {
+                "message_id": 0, "reply_to_message": {"message_id": note["message_id"]}})
         if action == "options":
             return await self.edit_note_buttons(owner, message_id, self.note_controls(note, thread))
         if action == "collapse":
@@ -740,6 +746,19 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                     "Запись удалена из архива, но часть сообщений не удалось удалить из Telegram.")
             await self.remove_menu_message(owner, message_id)
             return await self._show(owner, text, thread)
+
+    async def record_options(self, owner, thread, message):
+        note = self.reply_note(owner, message)
+        if not note:
+            return await self._show(owner,
+                "Не нашёл запись. Пришли сообщение в эту папку или ответь на сохранённую запись.", thread)
+        self.store.set_action(owner, None)
+        identity = note["id"]
+        return await self.show_bottom(owner, "Что сделать с этой записью?", thread, keyboard(
+            [button("Изменить с ИИ", f"aiask:{identity}")],
+            [button("Перенести запись", f"recordmove:{identity}")],
+            [button("Удалить запись", f"delete:{identity}")]),
+            screen=f"recordoptions:{identity}", back="root", keep=True)
 
     async def delete_reply(self, owner, thread, message):
         note = self.reply_note(owner, message)

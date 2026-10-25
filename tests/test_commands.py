@@ -74,5 +74,6 @@ def test_start_registers_menu_commands(bot):
             {"command": "ai", "description": "Изменить с ИИ"},
             {"command": "move", "description": "Перенести запись"},
             {"command": "delete", "description": "Удалить запись"},
+            {"command": "options", "description": "Options"},
         ]
     asyncio.run(run())
