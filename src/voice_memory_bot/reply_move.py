@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+from .store import new_id
+
+
+class ReplyMoveMixin:
+    def init_reply_moves(self):
+        self.store.db.execute("""CREATE TABLE IF NOT EXISTS reply_moves (
+            token TEXT PRIMARY KEY, owner INTEGER NOT NULL, note_id TEXT NOT NULL,
+            command_id INTEGER NOT NULL, prompt_id INTEGER, target_folder TEXT)""")
+        self.store.db.commit()
+
+    def reply_note(self, owner, message):
+        target = (message.get("reply_to_message") or {}).get("message_id")
+        if not target:
+            return None
+        return self.store.one(
+            "SELECT n.* FROM notes n WHERE n.owner=? AND n.deleted=0 AND "
+            "(n.message_id=? OR n.transcript_message_id=? OR n.result_message_id=? OR EXISTS "
+            "(SELECT 1 FROM note_messages m WHERE m.owner=n.owner AND m.note_id=n.id "
+            "AND m.message_id=? AND m.deleted=0))",
+            (owner, target, target, target, target))
+
+    async def move_reply(self, owner, thread, message):
+        note = self.reply_note(owner, message)
+        if not note:
+            return await self._show(owner, "Выбери «Ответить» на запись и команду /move — «Перенести» в меню.", thread)
+        token = new_id()
+        with self.store.db:
+            self.store.db.execute("INSERT INTO reply_moves(token,owner,note_id,command_id) VALUES (?,?,?,?)",
+                                  (token, owner, note["id"], message["message_id"]))
+        self.store.set_action(owner, None)
+        await self.reply_move_menu(owner, thread, token)
+
+    async def reply_move_menu(self, owner, thread, token, page=0):
+        from .bot import button, keyboard
+        session = self.store.one("SELECT * FROM reply_moves WHERE owner=? AND token=?", (owner, token))
+        folders = self.store.folders(owner)
+        page = max(0, min(page, (len(folders) - 1) // 8))
+        rows = [[button(folder["name"], f"rmove:{token}:{folder['id']}")]
+                for folder in folders[page * 8:(page + 1) * 8]]
+        nav = []
+        if page:
+            nav.append(button("←", f"rpage:{token}:{page - 1}"))
+        if len(folders) > (page + 1) * 8:
+            nav.append(button("→", f"rpage:{token}:{page + 1}"))
+        if nav:
+            rows.append(nav)
+        rows.extend([[button("Новая папка", f"rnew:{token}")], [button("Отмена", f"rcancel:{token}")]])
+        result = await self._show(owner, "В какую папку ты хочешь перенести сообщение?", thread,
+                                  keyboard(*rows), session["prompt_id"])
+        with self.store.db:
+            self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
+                                  (result["message_id"], owner, token))
+
+    async def finish_reply_move(self, owner, token):
+        session = self.store.one("SELECT * FROM reply_moves WHERE owner=? AND token=?", (owner, token))
+        if not session:
+            return
+        await self.remove_menu_message(owner, session["prompt_id"])
+        await self.remove_menu_message(owner, session["command_id"])
+        if self.store.action(owner) == f"replymove:{token}":
+            self.store.set_action(owner, None)
+        with self.store.db:
+            self.store.db.execute("DELETE FROM reply_moves WHERE owner=? AND token=?", (owner, token))
+
+    async def reply_move_callback(self, owner, thread, message_id, data):
+        from .bot import button, keyboard
+        parts = data.split(":")
+        if parts[0] not in {"rmove", "rpage", "rnew", "rcancel"}:
+            return False
+        if len(parts) < 2:
+            return True
+        action, token = parts[:2]
+        session = self.store.one("SELECT * FROM reply_moves WHERE owner=? AND token=?", (owner, token))
+        if not session or session["prompt_id"] != message_id:
+            return True
+        if action == "rcancel":
+            await self.finish_reply_move(owner, token)
+        elif action == "rpage":
+            await self.reply_move_menu(owner, thread, token, int(parts[2]))
+        elif action == "rnew":
+            self.store.note(owner, session["note_id"])
+            self.store.set_action(owner, f"replymove:{token}")
+            result = await self._show(owner, "Как назвать новую папку?", thread,
+                keyboard([button("Отмена", f"rcancel:{token}")]), message_id)
+            with self.store.db:
+                self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
+                                      (result["message_id"], owner, token))
+        elif action == "rmove":
+            result = await self.move(owner, session["note_id"], parts[2], thread)
+            await self.finish_reply_move(owner, token)
+            await self._show(owner, result, thread)
+        return True
+
+    async def reply_move_new_folder(self, owner, thread, token, name):
+        session = self.store.one("SELECT * FROM reply_moves WHERE owner=? AND token=?", (owner, token))
+        if not session:
+            self.store.set_action(owner, None)
+            raise ValueError("Перенос уже отменён. Ответь на запись командой /move ещё раз.")
+        note = self.store.note(owner, session["note_id"])
+        if note["state"] in {"queued", "processing"} or self.note_locks[note["id"]].locked():
+            raise ValueError("Дождись завершения обработки, затем перенеси запись")
+        if not session["target_folder"]:
+            folder = self.store.create_folder(owner, name)
+            with self.store.db:
+                self.store.db.execute("UPDATE reply_moves SET target_folder=? WHERE owner=? AND token=?",
+                                      (folder["id"], owner, token))
+            session["target_folder"] = folder["id"]
+        result = await self.move(owner, session["note_id"], session["target_folder"], thread)
+        await self.finish_reply_move(owner, token)
+        await self._show(owner, result, thread)

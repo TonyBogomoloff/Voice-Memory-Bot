@@ -29,10 +29,14 @@ def test_reply_delete_only_owned_record_without_confirmation(bot, target, comman
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
         assert not sent[-1].get('keyboard')
         if target in {100, 200}:
-            assert 'удалено из базы' in sent[-1]['text']
+            assert sent[-1]['text'] == 'Сообщение удалено.'
             assert bot.store.one('SELECT transcript FROM notes WHERE id=?', (note['id'],))['transcript'] is None
-        assert not any(m == 'deleteMessage' and p['message_id'] in {100, 200, 300}
-                       for m, p in bot.telegram.sent)
+        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        assert 300 not in deleted
+        if target in {100, 200}:
+            assert {100, 200, 400} <= deleted
+        else:
+            assert not ({100, 200} & deleted)
     asyncio.run(run())
 
 

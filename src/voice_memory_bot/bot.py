@@ -21,6 +21,7 @@ from .folder_naming import FolderNamingMixin
 from .folder_view import FolderViewMixin
 from .message_store import MessageStore
 from .providers import CodexRouter, Groq, ProviderError, Telegram
+from .reply_move import ReplyMoveMixin
 from .routing import fallback_title
 from .store import Store, clean_name
 
@@ -57,7 +58,8 @@ HOME = keyboard([button("📂 Все папки", "folders"), button("＋ Нов
 
 HELP = """🎙 Voice Memory Bot
 
-/delete — удалить запись из базы без подтверждения: ответь этой командой на запись.
+/delete — удалить запись из базы и чата без подтверждения: ответь этой командой на запись.
+/move — перенести запись: ответь командой, затем выбери папку.
 
 Выбери папку внизу — новые голосовые, тексты и фото сохраняются туда.
 Активная папка отмечена ✓. Стрелки листают страницы папок.
@@ -78,7 +80,7 @@ HELP = """🎙 Voice Memory Bot
 /ai — поговорить с ИИ"""
 
 
-class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
+class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
     def __init__(self, config: Config, store: Store, telegram: Telegram, groq: Groq, router: CodexRouter,
                  assistant=None):
         self.config, self.store = config, store
@@ -98,6 +100,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         self.web = None
         self.init_folder_view()
         self.init_bottom_menu()
+        self.init_reply_moves()
         self.folder_namer = CodexRouter(replace(config.llm, model=config.folder_name_model or config.llm.model, effort="low"))
         self.init_folder_naming()
 
@@ -111,6 +114,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             {"command": "help", "description": "Help"},
             {"command": "ai", "description": "Поговорить с ИИ"},
             {"command": "delete", "description": "Удалить запись"},
+            {"command": "move", "description": "Перенести"},
         ])
         # Finish physical deletion interrupted by a previous shutdown.
         for note in self.store.all("SELECT * FROM notes WHERE deleted=1"):
@@ -264,6 +268,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             text = message.get("text", "").strip()
             if text and text.split()[0].split("@", 1)[0].lower() == "/delete":
                 return await self.delete_reply(owner, thread, message)
+            if text and text.split()[0].split("@", 1)[0].lower() == "/move":
+                return await self.move_reply(owner, thread, message)
             if text == "➖":
                 return await self.refresh_folder_keyboard(owner, thread, force=True,
                     notice="Для удаления выбери «Ответить» на запись и команду /delete в меню.")
@@ -283,6 +289,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             if text.startswith("/"):
                 command, _, argument = text.partition(" ")
                 return await self.command(owner, thread, command.split("@")[0].lower(), argument.strip())
+            if text and (self.store.action(owner) or "").startswith("replymove:"):
+                return await self.input_action(owner, thread, text)
             if (not self.reply_input(owner, message) and self.store.action(owner)
                     and not self.store.action(owner).startswith("ai_note:")):
                 if text:
@@ -421,6 +429,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
 
     async def input_action(self, owner, thread, text):
         action = self.store.action(owner)
+        if action and action.startswith("replymove:"):
+            return await self.reply_move_new_folder(owner, thread, action.split(":", 1)[1], text)
         if action == "ai_names":
             self.ai_state.set_settings(owner, names=[n.strip() for n in text.split(",") if n.strip()])
             self.store.set_action(owner, None)
@@ -593,6 +603,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         await self.edit_note_buttons(owner, message_id, keyboard(*rows))
 
     async def callback(self, owner, thread, message_id, data):
+        if await self.reply_move_callback(owner, thread, message_id, data):
+            return
         if data.split(":", 1)[0] not in {"aioptions", "aicollapse", "aiend", "aicancel"}:
             self.store.set_action(owner, None)
         if await self.folder_menu_callback(owner, thread, message_id, data):
@@ -729,12 +741,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         target = reply.get("message_id")
         if not target:
             return await self._show(owner, "Выбери «Ответить» на запись и команду /delete — «Удалить запись» в меню.", thread)
-        note = self.store.one(
-            "SELECT n.* FROM notes n WHERE n.owner=? AND n.deleted=0 AND "
-            "(n.message_id=? OR n.transcript_message_id=? OR n.result_message_id=? OR EXISTS "
-            "(SELECT 1 FROM note_messages m WHERE m.owner=n.owner AND m.note_id=n.id "
-            "AND m.message_id=? AND m.deleted=0))",
-            (owner, target, target, target, target))
+        note = self.reply_note(owner, message)
         if not note:
             return await self._show(owner, "Не нашёл запись в базе. Ответь на исходное сообщение или расшифровку.", thread)
         identity = note["id"]
@@ -742,7 +749,11 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             raise ValueError("Дождись завершения обработки, затем удали запись")
         self.store.delete(owner, identity)
         self.archive.delete(note)
-        return await self._show(owner, "Сообщение удалено из базы. Сообщения в Telegram остались.", thread)
+        remaining = await self.delete_note_messages(note)
+        await self.remove_menu_message(owner, message["message_id"])
+        text = ("Сообщение удалено." if not remaining else
+                "Сообщение удалено из базы, но часть сообщений не удалось удалить из Telegram.")
+        return await self._show(owner, text, thread)
 
     async def delete_note_messages(self, note, *, details=False):
         owner, identity = note["owner"], note["id"]
