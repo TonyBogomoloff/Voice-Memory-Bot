@@ -6,6 +6,7 @@ import logging
 import time
 from collections import defaultdict
 
+from .delivery import DeletionOutcome, deletion_error
 from .providers import ProviderError, silent_delivery
 
 log = logging.getLogger(__name__)
@@ -111,19 +112,19 @@ class FolderViewMixin:
             else:
                 await self.view_send(self.telegram.call, 'deleteMessages', chat_id=owner, message_ids=message_ids)
         except ProviderError as exc:
-            reason = getattr(exc, 'reason', None)
-            if len(message_ids) > 1 and reason in {'delete_forbidden', 'delete_target_missing'}:
+            outcome = deletion_error(exc)
+            if len(message_ids) > 1 and outcome in {DeletionOutcome.FORBIDDEN, DeletionOutcome.MISSING}:
                 # A rejected batch can contain both deletable and expired messages.
                 leftovers = 0
                 for mid in message_ids:
                     leftovers += await self.delete_view_batch(owner, [mid])
                 return leftovers
-            if reason == 'delete_forbidden':
+            if outcome == DeletionOutcome.FORBIDDEN:
                 with self.store.transaction():
                     self.store.db.execute('UPDATE telegram_messages SET view_blocked=1 '
                                           'WHERE owner=? AND message_id=?', (owner, message_ids[0]))
                 return 1
-            if reason != 'delete_target_missing':
+            if outcome != DeletionOutcome.MISSING:
                 # Keep every receipt after an ambiguous network failure; deletion is idempotent.
                 raise
         targets = [(owner, mid) for mid in message_ids]

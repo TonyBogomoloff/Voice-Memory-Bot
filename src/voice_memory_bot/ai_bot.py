@@ -412,41 +412,40 @@ class AIBotMixin:
             controls.append([key("Повторить запрос", f"airetry:{identity}")])
         chunks = list(transcript_chunks(text))
         progress = None if force else self.store.one("SELECT message_id FROM ai_progress WHERE note_id=?", (identity,))
-        self.ai_state.update_request(owner, identity, delivery="sending")
         try:
-            has_images, caption_answer = await self.deliver_ai_images(
-                current, text, controls, progress, force=force, thread=thread)
-            if has_images:
-                progress = None
-                if caption_answer:
-                    chunks = []
-            for index, chunk in enumerate(chunks):
-                keyboard = keys(*controls) if index == len(chunks) - 1 else None
-                sent = None
-                if index == 0 and progress and progress["message_id"]:
-                    try:
-                        sent = await self.telegram.call("editMessageText", chat_id=owner,
-                            message_id=progress["message_id"], text=chunk, reply_markup=keyboard or keys(),
-                            link_preview_options={"is_disabled": True})
-                    except ProviderError as exc:
-                        if getattr(exc, "reason", None) == "not_modified":
-                            sent = {"message_id": progress["message_id"]}
-                        elif getattr(exc, "reason", None) != "edit_target_missing":
-                            raise
-                if sent is None:
-                    sent = await self.telegram.text(owner, chunk, thread if force else current["thread_id"],
-                        keyboard, reply_to=None if force else reply_to)
-                self.ai_state.link(owner, sent["message_id"], current["conversation_id"])
-                result = self.store.one("SELECT * FROM notes WHERE owner=? AND id=? AND deleted=0",
-                                        (owner, current["result_note_id"]))
-                if result:
-                    self.messages.record(result, sent["message_id"], thread if force else current["thread_id"],
-                                         "ai_response")
-                else:
-                    self.messages.record(note, sent['message_id'], thread if force else current['thread_id'], 'ai_notice')
-            self.ai_state.update_request(owner, identity, delivery="sent")
+            with self.deliveries.ai(owner, identity) as attempt:
+                has_images, caption_answer = await self.deliver_ai_images(
+                    current, text, controls, progress, force=force, thread=thread)
+                if has_images:
+                    progress = None
+                    if caption_answer:
+                        chunks = []
+                for index, chunk in enumerate(chunks):
+                    keyboard = keys(*controls) if index == len(chunks) - 1 else None
+                    sent = None
+                    if index == 0 and progress and progress["message_id"]:
+                        try:
+                            sent = await self.telegram.call("editMessageText", chat_id=owner,
+                                message_id=progress["message_id"], text=chunk, reply_markup=keyboard or keys(),
+                                link_preview_options={"is_disabled": True})
+                        except ProviderError as exc:
+                            if getattr(exc, "reason", None) == "not_modified":
+                                sent = {"message_id": progress["message_id"]}
+                            elif getattr(exc, "reason", None) != "edit_target_missing":
+                                raise
+                    if sent is None:
+                        sent = await self.telegram.text(owner, chunk, thread if force else current["thread_id"],
+                            keyboard, reply_to=None if force else reply_to)
+                    self.ai_state.link(owner, sent["message_id"], current["conversation_id"])
+                    result = self.store.one("SELECT * FROM notes WHERE owner=? AND id=? AND deleted=0",
+                                            (owner, current["result_note_id"]))
+                    if result:
+                        self.messages.record(result, sent["message_id"], thread if force else current["thread_id"],
+                                             "ai_response")
+                    else:
+                        self.messages.record(note, sent['message_id'], thread if force else current['thread_id'], 'ai_notice')
+                attempt.finish()
         except (ProviderError, OSError):
-            self.ai_state.update_request(owner, identity, delivery="unknown")
             log.warning("AI delivery outcome unknown request=%s", identity)
 
     async def process_ai(self, request):

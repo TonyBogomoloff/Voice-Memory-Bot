@@ -4,6 +4,7 @@ import json
 import logging
 import time
 
+from .delivery import deletion_error
 from .providers import ProviderError, silent_delivery
 from .store import new_id
 
@@ -41,7 +42,7 @@ class BottomMenuMixin:
         try:
             await self.view_send(self.telegram.call, "deleteMessage", chat_id=owner, message_id=message_id)
         except ProviderError as exc:
-            if getattr(exc, "reason", None) != "delete_target_missing":
+            if not deletion_error(exc).complete:
                 # Retain the receipt so the regular view cleanup can retry later.
                 log.info("menu cleanup deferred owner=%s message_id=%s", owner, message_id)
                 return

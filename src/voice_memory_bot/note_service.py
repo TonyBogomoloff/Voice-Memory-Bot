@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 
-from .providers import ProviderError
+from .delivery import DeletionOutcome, delete_message
 
 log = logging.getLogger(__name__)
 
@@ -54,23 +54,21 @@ class NoteService:
         for message_id in json.loads(move["source_ids"]):
             if message_id not in remaining:
                 continue
-            try:
-                await self.telegram.call("deleteMessage", chat_id=owner, message_id=message_id)
-            except ProviderError as exc:
-                reason = getattr(exc, "reason", None)
-                if reason == "delete_forbidden":
-                    forbidden = True
-                    continue
-                if reason != "delete_target_missing":
-                    transient = True
-                    continue
-            self.messages.removed(owner, identity, message_id)
+            result = await self.remove_message(owner, identity, message_id)
+            forbidden |= result == DeletionOutcome.FORBIDDEN
+            transient |= result == DeletionOutcome.RETRY
         if transient:
             self.messages.state(owner, identity, "cleanup")
             return "Запись перенесена. Удаляю исходные сообщения…"
         self.messages.state(owner, identity, "blocked" if forbidden else "done")
         return ("Запись перенесена, но Telegram не разрешил удалить часть исходных сообщений."
                 if forbidden else "Запись перенесена.")
+
+    async def remove_message(self, owner, identity, message_id):
+        result = await delete_message(self.telegram, owner, message_id)
+        if result.complete:
+            self.messages.removed(owner, identity, message_id)
+        return result
 
     async def delete_note_messages(self, note, *, details=False):
         owner, identity = note["owner"], note["id"]
@@ -83,13 +81,9 @@ class NoteService:
             if note.get(field) and note[field] > 0 and note[field] not in removed)
         remaining = retryable = 0
         for target in sorted(targets):
-            try:
-                await self.telegram.call("deleteMessage", chat_id=owner, message_id=target)
-            except ProviderError as exc:
-                if getattr(exc, "reason", None) != "delete_target_missing":
-                    remaining += 1
-                    retryable += getattr(exc, "reason", None) != "delete_forbidden"
-                    log.warning("note cleanup failed note_id=%s error=%s", identity, exc)
-                    continue
-            self.messages.removed(owner, identity, target)
+            result = await self.remove_message(owner, identity, target)
+            if not result.complete:
+                remaining += 1
+                retryable += result == DeletionOutcome.RETRY
+                log.warning("note cleanup deferred note_id=%s outcome=%s", identity, result)
         return {"remaining": remaining, "retryable": retryable} if details else remaining
