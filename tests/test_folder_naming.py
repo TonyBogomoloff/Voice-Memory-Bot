@@ -38,7 +38,7 @@ def test_first_folder_voice_name_statuses_keyboard_and_original_survive(tmp_path
             assert [f['name'] for f in store.folders(1)] == ['Test 2']
             assert store.action(1) is None and store.notes(1) == []
             assert any('Папка «Test 2» создана' in p.get('text', '') for _, p in bot.telegram.sent)
-            assert any('✓ 📌 Test 2' in str(p.get('keyboard')) for _, p in bot.telegram.sent)
+            assert any('✅ Test 2' in str(p.get('keyboard')) for _, p in bot.telegram.sent)
             changes = [p for m, p in bot.telegram.sent if m == 'sendMessage' and p['text'].startswith(('✨ ', '📁 Создаю'))]
             assert [p['text'] for p in changes] == ['✨ Выделяю название папки…', '📁 Создаю папку «Test 2»…']
             assert all('keyboard' in p['keyboard'] for p in changes)

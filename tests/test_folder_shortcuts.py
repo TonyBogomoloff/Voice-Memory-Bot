@@ -85,17 +85,17 @@ def test_folder_keys_select_before_input_or_ai_and_plain_names_are_notes(bot):
         chat = bot.store.create_folder(1, "Диалог")
         bot.ai_state.mode(1, chat["id"], "chat")
         await receive(bot, "/start")
-        assert labels(bot) == ["✓ 📌 Входящие", "📌 Работа", "📌 Диалог", "＋", "📁 Папка", "☰ Меню"]
+        assert labels(bot) == ["✅ Входящие", "📁 Работа", "📁 Диалог", "＋", "📁 Папка", "☰ Меню"]
         assert reply_keyboard(bot)["is_persistent"]
-        await receive(bot, "📌 Диалог", 2)
-        assert "✓ 📌 Диалог" in labels(bot)
+        await receive(bot, "📁 Диалог", 2)
+        assert "✅ Диалог" in labels(bot)
         assert bot.telegram.sent[-1][0] == "deleteMessage"
         await receive(bot, "/new", 3)
-        await receive(bot, "📌 Работа", 4)
+        await receive(bot, "📁 Работа", 4)
         assert bot.store.action(1) is None
         assert bot.store.current_folder(1) == work["id"]
         # A delayed button with the previous check mark is still a navigation action.
-        await receive(bot, "✓ 📌 Входящие", 5)
+        await receive(bot, "✅ Входящие", 5)
         assert bot.store.current_folder(1) == bot.store.ensure_user(1)
         assert bot.store.notes(1) == []
         assert bot.store.all("SELECT * FROM ai_requests") == []
@@ -119,14 +119,14 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         await receive(bot, "Проекты", 2)
         assert "Проекты" in reply_keyboard(bot)["input_field_placeholder"]
         assert "📦 Экспорт" in labels(bot)
-        await receive(bot, "📌 Работа", 3)
+        await receive(bot, "📁 Работа", 3)
         assert "устарела" in next(p["text"] for m, p in reversed(bot.telegram.sent) if m == "sendMessage")
         assert bot.store.current_folder(1) == work["id"]
         await bot.callback(1, None, 500, f"dropfolder:{work['id']}")
         token = bot.folder_delete_confirmations[1][0]
         await bot.callback(1, None, 500, f"confirmdrop:{token}")
-        await receive(bot, "✓ 📌 Проекты", 4)
-        assert labels(bot) == ["✓ 📌 Входящие", "＋", "📁 Папка", "☰ Меню"]
+        await receive(bot, "✅ Проекты", 4)
+        assert labels(bot) == ["✅ Входящие", "＋", "📁 Папка", "☰ Меню"]
         assert bot.store.notes(1) == []
     asyncio.run(run())
 
@@ -140,10 +140,10 @@ def test_menu_keeps_all_actions_and_long_folder_names_are_distinct(bot):
         hidden = bot.store.create_folder(1, "Пятая")
         await receive(bot, "/start")
         assert len(reply_keyboard(bot)["keyboard"]) == 3
-        assert "📌 " + first["name"] in labels(bot)
-        assert "📌 " + second["name"] in labels(bot)
-        assert "📌 " + hidden["name"] not in labels(bot)
-        await receive(bot, "📌 " + second["name"], 2)
+        assert "📁 " + first["name"] in labels(bot)
+        assert "📁 " + second["name"] in labels(bot)
+        assert "📁 " + hidden["name"] not in labels(bot)
+        await receive(bot, "📁 " + second["name"], 2)
         assert bot.store.current_folder(1) == second["id"]
         await receive(bot, "☰ Меню", 3)
         callbacks = set(bot.bottom_state(1)["actions"].values())
@@ -167,17 +167,17 @@ def test_pages_reach_every_folder_and_arrows_never_become_notes(bot):
         seen = set()
         for page in range(3):
             keys = reply_keyboard(bot)["keyboard"]
-            folder_labels = [b["text"] for row in keys for b in row if "📌 " in b["text"]]
+            folder_labels = [b["text"] for row in keys for b in row if b["text"] != "📁 Папка" and b["text"].startswith(("📁 ", "✅ "))]
             assert len(folder_labels) <= 4
-            seen.update(label.removeprefix("✓ ").removeprefix("📌 ") for label in folder_labels)
+            seen.update(label.removeprefix("✅ ").removeprefix("📁 ") for label in folder_labels)
             if page < 2:
                 assert keys[1][-1]["text"] == "➡️"
                 await receive(bot, "➡️", 10 + page)
         assert seen == {f["name"] for f in bot.store.folders(1)}
         assert "➡️" not in labels(bot)
         assert bot.store.current_folder(1) == initial
-        target = next(f for f in bot.store.folders(1) if "📌 " + f["name"] in labels(bot))
-        await receive(bot, "📌 " + target["name"], 20)
+        target = next(f for f in bot.store.folders(1) if "📁 " + f["name"] in labels(bot))
+        await receive(bot, "📁 " + target["name"], 20)
         assert bot.store.current_folder(1) == target["id"]
         await receive(bot, "⬅️", 21)
         assert bot.folder_pages[1] == 1

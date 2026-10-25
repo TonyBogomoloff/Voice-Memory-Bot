@@ -46,7 +46,7 @@ def test_only_selected_folder_has_primary_style(bot):
         bot.store.select(1, selected)
         buttons = [b for row in bot.folder_keyboard(1)['keyboard'] for b in row]
         styled = [b for b in buttons if b.get('style') == 'primary']
-        assert [b['text'] for b in styled] == ['✓ 📌 ' + bot.store.folder(1, selected)['name']]
+        assert [b['text'] for b in styled] == ['✅ ' + bot.store.folder(1, selected)['name']]
 
 
 @pytest.mark.parametrize("fail", [False, True])

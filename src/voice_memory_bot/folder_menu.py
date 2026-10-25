@@ -12,7 +12,7 @@ MENU_COMMANDS = {
     "⌂ Меню": "/menu", "✖️ Отмена": "/cancel",
     "⚙️ Options": "/options", "📁 Папка": "/options",
 }
-FOLDER_PREFIXES = ("📌 ", "✓ 📌 ")
+FOLDER_PREFIXES = ("📁 ", "✅ ", "📌 ", "✓ 📌 ")
 OPTION_ACTIONS = {"✏️ Переименовать": "rename", "🗑 Удалить папку": "dropfolder",
                   "📦 Скачать исходники": "raw", "← К папке": "back"}
 
@@ -94,7 +94,7 @@ class FolderMenuMixin:
         pages = self.folder_keyboard_pages(owner)
         page = min(max(self.folder_pages.get(owner, 0), 0), len(pages) - 1)
         self.folder_pages[owner] = page
-        buttons = [{"text": ("✓ " if folder["id"] == active else "") + f"📌 {folder['name']}",
+        buttons = [{"text": ("✅ " if folder["id"] == active else "📁 ") + folder["name"],
                     **({"style": "primary"} if folder["id"] == active else {})}
                    for folder in pages[page]]
         rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]

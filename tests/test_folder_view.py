@@ -214,7 +214,7 @@ def test_old_topic_cleanup_does_not_block_switch_and_clears_before_header(bot):
         assert bot.telegram.sent[0][1]['text'] == 'Загружаю папку…'
         assert bot.telegram.sent[1][0] == 'deleteMessage'
         header = next(p for m, p in bot.telegram.sent if m == 'sendMessage' and p.get('keyboard'))
-        assert '✓ 📌 Работа' in str(header)
+        assert '✅ Работа' in str(header)
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert {1001, 1002, 3001} <= deleted
         assert any(p.get('text') == 'Вторая' for _, p in bot.telegram.sent)
@@ -288,7 +288,7 @@ def test_folder_tap_keeps_latest_message_until_next_selection(bot, deferred):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("prefix", ["📌 ", "✓ 📌 "])
+@pytest.mark.parametrize("prefix", ["📁 ", "✅ ", "📌 ", "✓ 📌 "])
 def test_selected_folder_button_does_not_clear_or_replay_notes(bot, prefix):
     async def run():
         inbox = bot.store.ensure_user(1)

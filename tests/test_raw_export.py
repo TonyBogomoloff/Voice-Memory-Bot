@@ -35,7 +35,7 @@ def test_options_bind_actions_to_folder_and_survive_restart(bot, tmp_path):
         await bot.callback(1, None, 100, f'canceldrop:{token}')
         assert bot.options_folder(1) == folder
         await receive(bot, '← К папке', 5)
-        assert '✓ 📌 Мои записи' in labels(bot)
+        assert '✅ Мои записи' in labels(bot)
         await receive(bot, '🗑 Удалить папку', 6)  # Delayed settings button after exit.
         assert bot.folder_delete_confirmations == {}
         assert bot.store.notes(1) == []
