@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import tempfile
@@ -21,6 +20,7 @@ from .delivery import DeliveryService
 from .folder_menu import MENU_COMMANDS, OPTION_ACTIONS, FolderMenuMixin
 from .folder_naming import FolderNamingMixin
 from .folder_view import FolderViewMixin
+from .media import MediaProcessor
 from .message_store import MessageStore
 from .note_service import NoteService
 from .providers import CodexRouter, Groq, ProviderError, Telegram
@@ -94,6 +94,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         self.config, self.store = config, store
         self.telegram, self.groq, self.router = telegram, groq, router
         self.archive = Archive(config.data_dir / "notes")
+        self.media = MediaProcessor(store, self.archive, telegram, groq, config.limits)
         self.messages = MessageStore(store)
         self.recent = defaultdict(deque)
         self.export_locks = defaultdict(asyncio.Lock)
@@ -894,10 +895,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 if content not in {"all", "text", "voice", "raw"}:
                     raise ValueError("invalid_export_format")
                 # Snapshot all metadata and the preference before yielding to other handlers.
-                notes = self.store.export_notes(owner, identity)
-                folders = [self.store.folder(owner, identity)] if identity else self.store.folders(owner, include_removed=True)
-                text_format = self.store.export_format(owner)
-                preferences = self.store.export_preferences(owner)
+                snapshot = self.store.export_snapshot(owner, identity)
+                notes, folders, preferences = snapshot.notes, snapshot.folders, snapshot.settings
+                text_format = preferences["text_format"]
                 if content == "voice" and not any(
                         is_audio(n) and (n["file_id"] or n["audio_bytes"]) for n in notes):
                     return await self.show(owner, "В выбранном архиве пока нет аудиозаписей.", thread)
@@ -948,24 +948,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         return await self.notes.cleanup_move(move)
 
     async def probe_duration(self, path):
-        process = await asyncio.create_subprocess_exec("ffprobe", "-v", "error", "-show_entries",
-            "format=duration", "-of", "json", "-protocol_whitelist", "file,pipe",
-            "-format_whitelist", "ogg,mp3,wav,flac,mov,matroska,webm,mpeg,aac",
-            "-max_alloc", "67108864", "-probesize", "1048576", "-analyzeduration", "5000000", str(path),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        try:
-            stdout, _ = await asyncio.wait_for(process.communicate(), 15)
-        except (TimeoutError, asyncio.CancelledError):
-            process.kill()
-            await process.wait()
-            raise
-        try:
-            duration = float(json.loads(stdout)["format"]["duration"])
-            if process.returncode or not 0 < duration <= self.config.limits.max_audio_seconds:
-                raise ValueError
-            return max(1, int(duration + .999))
-        except (ValueError, TypeError, KeyError):
-            raise ProviderError("audio_duration_invalid") from None
+        return await self.media.probe_duration(path)
 
     async def process(self, note):
         owner, identity = note["owner"], note["id"]
@@ -976,26 +959,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             if note["kind"] in {"file", "video"}:
                 return await self.process_file(note)
             try:
-                if note["file_id"] and note["transcript"] is None:
-                    path = self.archive.audio(note)
-                    if not path.exists():
-                        size, checksum = await self.telegram.download(note["file_id"], path,
-                                                                     self.config.limits.max_file_bytes)
-                    else:
-                        size = path.stat().st_size
-                        with path.open("rb") as handle:
-                            checksum = hashlib.file_digest(handle, "sha256").hexdigest()
-                    self.store.update_note(owner, identity, audio_bytes=size, sha256=checksum)
-                    if size > 24_000_000:
-                        raise ProviderError("asr_file_too_large")
-                    duration = await self.probe_duration(path)
-                    self.store.reserve_asr(owner, duration)
-                    transcript = await self.groq.transcribe(path)
-                    if not transcript:
-                        raise ProviderError("no_speech")
-                    self.store.update_note(owner, identity, transcript=transcript)
-                    note = self.store.note(owner, identity)
-                    self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
+                note = await self.media.transcribe(note)
                 # Deliver the text before any optional AI address detection.
                 await self.deliver_transcript(note)
                 note = self.store.note(owner, identity)
@@ -1019,16 +983,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
     async def process_file(self, note):
         owner, identity = note['owner'], note['id']
         try:
-            path = self.archive.audio(note)
-            if path.is_file():
-                size = path.stat().st_size
-                with path.open('rb') as handle:
-                    checksum = hashlib.file_digest(handle, 'sha256').hexdigest()
-            else:
-                size, checksum = await self.telegram.download(note['file_id'], path, self.config.limits.max_file_bytes)
+            await self.media.capture(note)
             title = note.get('original_name') or ('Видео' if note['kind'] == 'video' else 'Файл')
-            self.store.update_note(owner, identity, audio_bytes=size, sha256=checksum,
-                                   state='ready', title=title[:80], routing='manual', error=None)
+            self.store.update_note(owner, identity, state='ready', title=title[:80], routing='manual', error=None)
             note = self.store.note(owner, identity)
             self.archive.persist_text(note, self.store.folder(owner, note['folder_id']))
             text = f"📎 {title}\nФайл сохранён." + (f"\n\n{note['transcript']}" if note['transcript'] else '')
@@ -1099,14 +1056,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             source = json.loads(note.get("source_json") or "{}")
             if self.reply_input(owner, source):
                 self.capture_ai_input(note, {**source, "message_thread_id": note["source_thread"]})
-            path = self.archive.audio(note)
-            if path.exists():
-                size = path.stat().st_size
-                with path.open("rb") as handle:
-                    checksum = hashlib.file_digest(handle, "sha256").hexdigest()
-            else:
-                size, checksum = await self.telegram.download(note["file_id"], path, self.config.limits.max_file_bytes)
-            self.store.update_note(owner, identity, audio_bytes=size, sha256=checksum, state="ready",
+            await self.media.capture(note)
+            self.store.update_note(owner, identity, state="ready",
                                    title=(note["transcript"] or "Фото")[:80], routing="manual", error=None)
             await self.route_ai(self.store.note(owner, identity), detect=False)
             note = self.store.note(owner, identity)

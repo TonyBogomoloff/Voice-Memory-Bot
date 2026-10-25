@@ -321,6 +321,13 @@ class Store:
         return self.all(sql + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
                         [*args, -1 if limit is None else limit, offset])
 
+    def export_snapshot(self, owner: int, folder=None):
+        from .exports import ExportSnapshot
+
+        with self.transaction():
+            folders = [self.folder(owner, folder)] if folder else self.folders(owner, include_removed=True)
+            return ExportSnapshot.capture(self.export_notes(owner, folder), folders, self.export_preferences(owner))
+
     def export_notes(self, owner: int, folder=None):
         # Export all saved data even if a storage quota was lowered after the notes were created.
         sql, args = "SELECT * FROM notes WHERE owner=? AND deleted=0 AND entry_type!='ai_history'", [owner]

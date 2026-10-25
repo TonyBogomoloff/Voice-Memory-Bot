@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import sqlite3
+import threading
 import zipfile
 from io import BytesIO
 from urllib.parse import unquote
@@ -40,6 +41,54 @@ def saved_audio(store, archive, message=1, transcript="Моя голосовая
 
 def manifest(zipped):
     return json.loads(zipped.read(next(n for n in zipped.namelist() if n.startswith("manifest-"))))
+
+
+def test_export_snapshot_keeps_selected_records_and_settings_after_edits(tmp_path, store):
+    note = add(store, kind="text", transcript="Before")
+    snapshot = store.export_snapshot(1)
+    store.update_note(1, note["id"], transcript="After")
+    store.set_export_format(1, "markdown")
+    add(store, message=2, kind="text", transcript="Later")
+    archive = Archive(tmp_path / "notes")
+    paths = archive.export(snapshot.notes, snapshot.folders, tmp_path / "snapshot", False,
+                           45_000_000, text_format="markdown", settings=snapshot.settings)
+    with zipfile.ZipFile(paths[0]) as zipped:
+        saved = manifest(zipped)
+        assert saved["settings"]["text_format"] == "pdf"
+        notes = saved["files"][0]["notes"]
+        assert len(notes) == 1 and notes[0]["transcript"] == "Before"
+
+
+def test_export_cancellation_waits_for_writer_before_removing_directory(tmp_path, store, monkeypatch):
+    started, release = threading.Event(), threading.Event()
+    working = []
+
+    def slow_export(notes, folders, output, *args, **kwargs):
+        path = output / "in-progress.zip"
+        path.write_bytes(b"partial")
+        working.append(path)
+        started.set()
+        assert release.wait(5)
+        assert path.read_bytes() == b"partial"
+        return []
+
+    async def run():
+        bot = Bot(Config("123:secret", frozenset({1}), "secret", tmp_path),
+                  store, ExportTelegram(), None, None)
+        monkeypatch.setattr(bot.archive, "export", slow_export)
+        task = asyncio.create_task(bot.send_export(1, None, None, "text"))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done() and working[0].exists()
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert not working[0].parent.exists()
+
+    asyncio.run(run())
 
 
 def test_pdf_export_keeps_full_cyrillic_text_and_empty_folders(tmp_path, store):
