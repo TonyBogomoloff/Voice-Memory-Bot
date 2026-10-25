@@ -334,7 +334,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 note = self.reply_note(owner, message)
                 if not note:
                     return await self._show(owner, "Не нашёл запись. Пришли сообщение или ответь на сохранённую запись.", thread)
-                return await self.ai_callback(owner, thread, None, f"aiask:{note['id']}")
+                return await self.ai_callback(owner, thread,
+                    (message.get("reply_to_message") or {}).get("message_id"), f"aiask:{note['id']}")
             if text == "➖":
                 return await self.refresh_folder_keyboard(owner, thread, force=True,
                     notice="Для удаления выбери «Ответить» на запись и команду /delete в меню.")
@@ -409,6 +410,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                     if note["kind"] == "text":
                         self.archive.persist_text(note, self.store.folder(owner, note["folder_id"]))
                         self.capture_ai_input(note, message, scoped=True)
+                        await self.retire_ai_prompt(note)
                         await self.deliver_transcript(note)
                         request = self.ai_state.request(owner, note["id"])
                         if request:
@@ -422,6 +424,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                     note = self.adopt_source_topic(note, response)
                     if note['kind'] not in {'file', 'video'}:
                         self.capture_ai_input(note, {**message, "message_thread_id": note["source_thread"]}, scoped=True)
+                        await self.retire_ai_prompt(note)
                     log.info("note accepted note_id=%s source_thread=%s", note["id"], note["source_thread"])
         except ValueError as exc:
             if move_callback:

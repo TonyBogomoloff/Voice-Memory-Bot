@@ -31,6 +31,7 @@ def test_ai_instruction_is_consumed_before_processing_and_saved_answer_can_be_re
             await bot.handle(message(1001, '/ai', reply=source['message_id'] if entry == 'reply_command' else None))
         prompt = next(p for m, p in reversed(bot.telegram.sent) if m == 'sendMessage')
         conversation = bot.store.action(1).split(':', 1)[1]
+        prompt_id = bot.store.one("SELECT message_id FROM ai_instruction_prompts WHERE conversation_id=?", (conversation,))["message_id"]
         assert prompt['text'] == 'Отправь инструкцию для ИИ текстом или голосовым.'
         assert prompt['keyboard'] == {'inline_keyboard': [[{
             'text': 'Отмена', 'callback_data': f'aicancel:{conversation}'}]]}
@@ -39,9 +40,14 @@ def test_ai_instruction_is_consumed_before_processing_and_saved_answer_can_be_re
 
         await bot.handle(message(1002, 'Сделай короче', voice=voice))
         assert bot.store.action(1) is None
+        assert any(method == 'editMessageReplyMarkup' and payload['message_id'] == prompt_id
+                   and payload['reply_markup'] == {'inline_keyboard': []}
+                   for method, payload in bot.telegram.sent)
         instruction = bot.store.one('SELECT * FROM notes WHERE owner=1 AND message_id=1002')
         request = bot.ai_state.request(1, instruction['id'])
         assert request['conversation_id'] == conversation
+        expected_reply = (source['transcript_message_id'] or source['message_id']) if entry == 'command' else source['message_id']
+        assert request['reply_to'] == expected_reply
         # A rapid next message is a note even before voice transcription or the AI response.
         bot.init_ai(bot.assistant)
         await bot.handle(message(1003, 'Отдельная заметка'))
@@ -51,6 +57,8 @@ def test_ai_instruction_is_consumed_before_processing_and_saved_answer_can_be_re
             await bot.process(queued)
         await bot.process_ai(bot.ai_state.claim())
         request = bot.ai_state.request(1, instruction['id'])
+        progress = next(p for m, p in bot.telegram.sent if m == 'sendMessage' and p['text'] == 'Думаю…')
+        assert progress['reply_to'] == expected_reply
         saved = bot.store.note(1, request['result_note_id'])
         assert saved['origin'] == 'ai' and saved['entry_type'] == 'note'
         assert bot.assistant.calls[-1][0]['selected_note']['id'] == source['id']

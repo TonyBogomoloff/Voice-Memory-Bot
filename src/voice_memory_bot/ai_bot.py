@@ -82,9 +82,11 @@ class AIBotMixin:
             trigger = "reply" if reply or conversation else "folder"
             if not reply and not conversation and not self.ai_state.request(owner, note["id"]):
                 conversation = self.ai_state.active(owner, note["source_folder"])
+            prompt = self.store.one("SELECT * FROM ai_instruction_prompts WHERE owner=? AND conversation_id=?",
+                                    (owner, conversation)) if scoped and action.startswith("ai_note:") else None
             with self.store.transaction():
                 request = self.ai_state.enqueue(owner, note["id"], trigger,
-                                      message.get("message_thread_id"), message["message_id"], conversation,
+                                      message.get("message_thread_id"), prompt["reply_to"] if prompt else message["message_id"], conversation,
                                       reply_context=self.reply_context(owner, reply) if reply else None)
                 self.ai_state.link(owner, message['message_id'], request['conversation_id'])
                 if reply:
@@ -257,6 +259,11 @@ class AIBotMixin:
             response = await self._show(owner, prompt, thread,
                 keys([key("Отмена", f"aicancel:{conversation}")]))
             self.ai_state.link(owner, response["message_id"], conversation)
+            source = self.store.note(owner, identity) if action == "aiask" else None
+            target = message_id or (source["transcript_message_id"] or source["message_id"] if source else None)
+            with self.store.transaction():
+                self.store.db.execute("INSERT OR REPLACE INTO ai_instruction_prompts VALUES (?,?,?,?)",
+                                      (conversation, owner, response["message_id"], target))
         elif action == "aicancel":
             if self.store.action(owner) == f"ai_note:{identity}":
                 self.store.set_action(owner, None)
@@ -337,9 +344,23 @@ class AIBotMixin:
         rows.append([key("← Назад", f"aicollapse:{identity}")])
         return rows, changes
 
+    async def retire_ai_prompt(self, note):
+        request = self.ai_state.request(note["owner"], note["id"])
+        if not request or self.store.action(note["owner"]):
+            return
+        prompt = self.store.one("SELECT * FROM ai_instruction_prompts WHERE owner=? AND conversation_id=?",
+                                (note["owner"], request["conversation_id"]))
+        if prompt:
+            await self.edit_note_buttons(note["owner"], prompt["message_id"], keys())
+
+    def ai_reply_target(self, request):
+        note = self.store.note(request["owner"], request["note_id"])
+        if request["reply_to"] and request["reply_to"] != note["message_id"]:
+            return request["reply_to"]
+        return note["transcript_message_id"]
+
     async def show_ai_progress(self, request):
         owner, identity = request["owner"], request["note_id"]
-        note = self.store.note(owner, identity)
         if request["state"] not in {"queued", "running"}:
             return
         # Checkpoint before sending: an ambiguous network failure must not create duplicates.
@@ -349,7 +370,7 @@ class AIBotMixin:
             return
         try:
             sent = await self.telegram.text(owner, "Думаю…", request["thread_id"],
-                                            reply_to=note["transcript_message_id"])
+                                            reply_to=self.ai_reply_target(request))
             with self.store.transaction():
                 self.store.db.execute("UPDATE ai_progress SET message_id=? WHERE note_id=?",
                                       (sent["message_id"], identity))
@@ -367,14 +388,13 @@ class AIBotMixin:
             return False, False
         # A short answer fits the photo caption. Long answers remain complete text messages.
         caption_answer = len(text.encode("utf-16-le")) // 2 <= 1024
-        instruction = self.store.note(owner, identity)
         target_thread = thread if force else request["thread_id"]
         for index, note in enumerate(images):
             caption = text if index == 0 and caption_answer else note["title"]
             keyboard = keys(*controls) if caption_answer and index == len(images) - 1 else keys()
             edit_id = progress["message_id"] if index == 0 and progress else None
             kwargs = dict(thread=target_thread, caption=caption, keyboard=keyboard,
-                          reply_to=None if force else instruction["transcript_message_id"])
+                          reply_to=None if force else self.ai_reply_target(request))
             try:
                 sent = await self.telegram.photo(owner, self.archive.audio(note), edit_id=edit_id, **kwargs)
             except ProviderError as exc:
@@ -410,7 +430,7 @@ class AIBotMixin:
             note = self.store.note(owner, identity)
             text = "Ты: " + (note["transcript"] or "") + "\n\n" + text
         note = self.store.note(owner, identity)
-        reply_to = note["transcript_message_id"]
+        reply_to = self.ai_reply_target(current)
         controls = self.ai_note_actions.buttons(owner, identity)
         context = self.ai_state.note_context(owner, current["conversation_id"])
         context_deleted = context and not self.store.one(
