@@ -230,7 +230,8 @@ def test_switch_has_latest_page_and_keeps_folder_keyboard(bot):
             saved(bot, work, f'Запись {i}', 1000 + i)
         bot.telegram.sent.clear()
         await receive(bot, '📌 Работа', 2000)
-        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage' and p['text'] != 'Загружаю папку…']
+        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage'
+                and p['text'] != 'Загружаю папку…' and not (p.get('keyboard') or {}).get('remove_keyboard')]
         assert len(sent) == 3
         assert sent[0]['text'] == '📁 Работа (страница 2 из 2)'
         assert 'Работа' in sent[1]['keyboard']['input_field_placeholder']

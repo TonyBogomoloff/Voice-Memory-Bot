@@ -23,6 +23,7 @@ class BottomMenuMixin:
     def init_bottom_menu(self):
         self.bottom_epoch = new_id()
         self.command_cleanups = {}
+        self.bottom_placeholders = {}
 
     def menu_state(self, owner):
         row = self.store.one("SELECT state FROM bottom_menus WHERE owner=?", (owner,))
@@ -139,13 +140,25 @@ class BottomMenuMixin:
                 if str(exc) != "telegram_400":
                     raise
         token = silent_delivery.set(True)
+        reset_id = None
+        placeholder = keys["input_field_placeholder"]
         try:
+            if previous and self.bottom_placeholders.get(owner) != placeholder:
+                # Android setButtons() leaves the old hint while its bot keyboard is open.
+                # Close it first so the following keyboard also refreshes the input hint.
+                reset = await self.view_send(self.telegram.text, owner, "Обновляю папку…", thread,
+                                             {"remove_keyboard": True})
+                reset_id = reset["message_id"]
             text = state.text if state.keep else state.text.split("\n", 1)[0]
             response = await self.view_send(self.telegram.text, owner,
                 ("Удаление записи" if state.screen.kind == "notedelete" else "Перенос записи")
                 if state.extra.get("mirror") else text, thread, keys)
+            self.bottom_placeholders[owner] = placeholder
         finally:
-            silent_delivery.reset(token)
+            try:
+                await self.remove_menu_message(owner, reset_id)
+            finally:
+                silent_delivery.reset(token)
         with self.store.transaction():
             self.store.db.execute("UPDATE bottom_menus SET message_id=? WHERE owner=?",
                                   (response["message_id"], owner))
