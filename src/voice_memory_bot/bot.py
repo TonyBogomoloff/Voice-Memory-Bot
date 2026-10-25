@@ -755,8 +755,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         self.store.set_action(owner, None)
         identity = note["id"]
         return await self.show_bottom(owner, "Что сделать с этой записью?", thread, keyboard(
-            [button("Изменить с ИИ", f"aiask:{identity}")],
-            [button("Перенести запись", f"recordmove:{identity}")],
+            [button("Изменить с ИИ", f"aiask:{identity}"),
+             button("Перенести запись", f"recordmove:{identity}")],
             [button("Удалить запись", f"delete:{identity}")]),
             screen=f"recordoptions:{identity}", back="root", keep=True)
 

@@ -52,10 +52,13 @@ def test_options_do_not_fall_back_outside_selection(bot, reply):
     asyncio.run(run())
 
 
-def test_options_back_restores_folder_keyboard(bot):
+def test_compact_options_cancel_restores_folder_keyboard(bot):
     async def run():
         await receive(bot, 'Запись', 100)
         await receive(bot, '/options', 200)
-        await receive(bot, '⬅️ Назад', 300)
+        keys = bot.telegram.sent[-1][1]['keyboard']['keyboard']
+        assert [[b['text'] for b in row] for row in keys] == [
+            ['Изменить с ИИ', 'Перенести запись'], ['Удалить запись', 'Отмена']]
+        await receive(bot, 'Отмена', 300)
         assert bot.bottom_state(1)['screen'] == 'root'
     asyncio.run(run())

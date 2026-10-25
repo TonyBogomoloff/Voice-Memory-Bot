@@ -97,7 +97,14 @@ class BottomMenuMixin:
         if pages > 1:
             keyboard.append(([{"text": PREVIOUS}] if page else []) +
                             ([{"text": NEXT}] if page + 1 < pages else []))
-        if state["screen"] != "root":
+        if state["screen"].startswith("recordoptions:"):
+            cancel = {"text": "Отмена"}
+            if keyboard and len(keyboard[-1]) < 2:
+                keyboard[-1].append(cancel)
+            else:
+                keyboard.append([cancel])
+            actions["Отмена"] = "cancel_record_options"
+        elif state["screen"] != "root":
             keyboard.append([{"text": BACK}] if state["screen"].startswith("foldermenu:")
                             else [{"text": BACK}, {"text": ROOT}])
         keys = raw_keys or {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True,
@@ -156,6 +163,10 @@ class BottomMenuMixin:
             await self.show_bottom(owner, "Эта кнопка устарела. Выбери действие внизу.", thread,
                                    screen="stale", back=(state or {}).get("screen", "root"), keep=True)
             self.store.set_action(owner, None)
+            return True
+        if action == "cancel_record_options":
+            self.store.set_action(owner, None)
+            await self.show_home(owner, thread)
             return True
         if state["screen"] == "root":
             self.store.set_action(owner, None)
