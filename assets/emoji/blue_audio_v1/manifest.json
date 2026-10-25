@@ -1,0 +1,214 @@
+{
+  "title": "Audio Notes · Blue Tape",
+  "palette": [
+    "#1688FF",
+    "#62B7FF",
+    "#0865DE"
+  ],
+  "size": [
+    100,
+    100
+  ],
+  "icons": [
+    {
+      "name": "microphone",
+      "emoji": "🎙️",
+      "label": "Микрофон"
+    },
+    {
+      "name": "recorder",
+      "emoji": "🎚️",
+      "label": "Диктофон"
+    },
+    {
+      "name": "cassette",
+      "emoji": "📼",
+      "label": "Кассета"
+    },
+    {
+      "name": "folder",
+      "emoji": "📁",
+      "label": "Папка"
+    },
+    {
+      "name": "folder_active",
+      "emoji": "✅",
+      "label": "Выбрана"
+    },
+    {
+      "name": "folders",
+      "emoji": "📂",
+      "label": "Все папки"
+    },
+    {
+      "name": "add",
+      "emoji": "➕",
+      "label": "Создать"
+    },
+    {
+      "name": "search",
+      "emoji": "🔎",
+      "label": "Поиск"
+    },
+    {
+      "name": "ai",
+      "emoji": "🤖",
+      "label": "ИИ"
+    },
+    {
+      "name": "export",
+      "emoji": "📦",
+      "label": "Экспорт"
+    },
+    {
+      "name": "settings",
+      "emoji": "⚙️",
+      "label": "Настройки"
+    },
+    {
+      "name": "help",
+      "emoji": "ℹ️",
+      "label": "Помощь"
+    },
+    {
+      "name": "delete",
+      "emoji": "🗑️",
+      "label": "Удалить"
+    },
+    {
+      "name": "edit",
+      "emoji": "✏️",
+      "label": "Правка"
+    },
+    {
+      "name": "text",
+      "emoji": "📄",
+      "label": "Текст"
+    },
+    {
+      "name": "notes",
+      "emoji": "📝",
+      "label": "Записи"
+    },
+    {
+      "name": "photo",
+      "emoji": "📷",
+      "label": "Фото"
+    },
+    {
+      "name": "video",
+      "emoji": "📹",
+      "label": "Кружок"
+    },
+    {
+      "name": "attach",
+      "emoji": "📎",
+      "label": "Файл"
+    },
+    {
+      "name": "back",
+      "emoji": "⬅️",
+      "label": "Назад"
+    },
+    {
+      "name": "next",
+      "emoji": "➡️",
+      "label": "Вперёд"
+    },
+    {
+      "name": "home",
+      "emoji": "🏠",
+      "label": "Главная"
+    },
+    {
+      "name": "menu",
+      "emoji": "🎛️",
+      "label": "Меню"
+    },
+    {
+      "name": "cancel",
+      "emoji": "❌",
+      "label": "Отмена"
+    },
+    {
+      "name": "check",
+      "emoji": "☑️",
+      "label": "Готово"
+    },
+    {
+      "name": "pin",
+      "emoji": "📌",
+      "label": "Закрепить"
+    },
+    {
+      "name": "history",
+      "emoji": "🕘",
+      "label": "История"
+    },
+    {
+      "name": "retry",
+      "emoji": "🔄",
+      "label": "Повторить"
+    },
+    {
+      "name": "chat",
+      "emoji": "💬",
+      "label": "Разговор"
+    },
+    {
+      "name": "access",
+      "emoji": "🔒",
+      "label": "Доступ"
+    },
+    {
+      "name": "model",
+      "emoji": "🧠",
+      "label": "Модель"
+    },
+    {
+      "name": "waveform",
+      "emoji": "🎵",
+      "label": "Аудио"
+    },
+    {
+      "name": "move",
+      "emoji": "↪️",
+      "label": "Перенос"
+    },
+    {
+      "name": "spark",
+      "emoji": "✨",
+      "label": "Обработка"
+    },
+    {
+      "name": "toggle",
+      "emoji": "🔘",
+      "label": "Кнопки"
+    },
+    {
+      "name": "undo",
+      "emoji": "↩️",
+      "label": "Отменить правку"
+    },
+    {
+      "name": "play",
+      "emoji": "▶️",
+      "label": "Слушать"
+    },
+    {
+      "name": "stop",
+      "emoji": "⏹️",
+      "label": "Остановить"
+    },
+    {
+      "name": "warning",
+      "emoji": "⚠️",
+      "label": "Внимание"
+    },
+    {
+      "name": "record",
+      "emoji": "🔴",
+      "label": "Запись"
+    }
+  ]
+}

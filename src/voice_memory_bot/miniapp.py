@@ -144,6 +144,7 @@ class MiniApp:
         app = web.Application(middlewares=[self.guard], client_max_size=512000)
         app.add_routes([
             web.get("/", self.index), web.get("/app.js", self.asset), web.get("/app.css", self.asset),
+            web.get("/emoji.svg", self.asset),
             web.get("/healthz", self.health), web.post("/api/session", self.session),
             web.get("/api/folders", self.folders), web.post("/api/folders", self.create_folder),
             web.get("/api/folders/{folder}/notes", self.notes),
@@ -177,7 +178,8 @@ class MiniApp:
     async def asset(self, request):
         name = request.path.lstrip("/")
         return web.Response(body=(ASSETS / name).read_bytes(),
-                            content_type="text/css" if name.endswith(".css") else "text/javascript")
+                            content_type={"app.css": "text/css", "app.js": "text/javascript",
+                                          "emoji.svg": "image/svg+xml"}[name])
 
     async def health(self, request):
         self.store.one("SELECT 1")

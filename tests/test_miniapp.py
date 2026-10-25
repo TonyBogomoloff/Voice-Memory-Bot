@@ -361,3 +361,19 @@ def test_image_is_attached_only_after_owner_scoped_read(tmp_path, store):
             bot.ai_state.set_settings(1, notes_access="none")
             assert bot.ai_engine.images(bot.ai_state.request(1, identity), bot.ai_state.steps(1, identity)) == []
     asyncio.run(run())
+
+
+def test_shared_blue_emoji_sprite_is_served_as_svg(tmp_path, store):
+    async def run():
+        from xml.etree import ElementTree
+
+        from voice_memory_bot.custom_emoji import IDS
+
+        async with client_for(tmp_path, store) as (_, _, client):
+            response = await client.get("/emoji.svg")
+            assert response.status == 200
+            assert response.content_type == "image/svg+xml"
+            svg = ElementTree.fromstring(await response.text())
+            assert {symbol.attrib["id"] for symbol in svg} == set(IDS)
+            assert response.headers["X-Content-Type-Options"] == "nosniff"
+    asyncio.run(run())

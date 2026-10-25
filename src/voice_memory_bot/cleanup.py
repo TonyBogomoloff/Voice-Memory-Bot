@@ -108,7 +108,7 @@ class CleanupStore:
             self.db.execute("DELETE FROM ai_steps WHERE note_id IN (SELECT note_id FROM ai_requests WHERE owner=?)", (owner,))
             self.db.execute("DELETE FROM ai_progress WHERE note_id IN (SELECT note_id FROM ai_requests WHERE owner=?)", (owner,))
             for table in ("ai_message_jobs", "ai_note_jobs", "record_prompts", "record_panels", "note_moves", "note_messages", "folder_name_inputs",
-                          "bottom_menus", "bottom_menu_labels", "folder_options"):
+                          "bottom_menus", "bottom_menu_labels", "folder_options", "emoji_keyboard_labels"):
                 if table in tables:
                     self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
             for table in ("ai_requests", "ai_links", "ai_note_context", "ai_active", "ai_conversations", "notes", "folders", "implicit_topics",

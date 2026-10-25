@@ -3,9 +3,33 @@ const $ = id => document.getElementById(id);
 const tg = window.Telegram?.WebApp;
 const state = {token: "", folders: [], folder: null, notes: [], more: false, loading: false,
   maxBytes: 20000000, maxSeconds: 1800, upload: false, failedUpload: null, recorder: null, starting: false, drafts: {}, saving: false};
-const types = {voice: ["≋", "Голосовая запись"], audio: ["♫", "Аудио"], photo: ["▧", "Фото"],
-  video_note: ["▷", "Видеокружок"], video: ["▷", "Видео"], document: ["▤", "Файл"], text: ["≡", "Заметка"]};
+const types = {voice: ["microphone", "Голосовая запись"], audio: ["waveform", "Аудио"], photo: ["photo", "Фото"],
+  video_note: ["video", "Видеокружок"], video: ["video", "Видео"], document: ["attach", "Файл"], text: ["notes", "Заметка"]};
 let toastTimer, pollTimer;
+
+function icon(name, className = "") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "blue-icon " + className);
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", "/emoji.svg#" + name);
+  svg.append(use);
+  return svg;
+}
+function iconLabel(target, name, text) {
+  target.replaceChildren(icon(name), document.createTextNode(text));
+}
+function actionIcon(text) {
+  if (/^[📁]/u.test(text)) return "folder";
+  if (/^[➕]/u.test(text)) return "add";
+  if (/Переместить/.test(text)) return "move";
+  if (/Отмен|Убрать/.test(text)) return "cancel";
+  if (/Повтор|Обнов/.test(text)) return "retry";
+  if (/Скачать|Загрузить/.test(text)) return "export";
+  if (/Выполнить|команде/.test(text)) return "ai";
+  return "menu";
+}
 
 function element(tag, className, text) {
   const el = document.createElement(tag);
@@ -14,7 +38,8 @@ function element(tag, className, text) {
   return el;
 }
 function action(text, className, handler) {
-  const el = element("button", className, text);
+  const el = element("button", className);
+  if (text) iconLabel(el, actionIcon(text), text.replace(/^(?:📁|➕|↓)\s*/u, "").replace("⋯", ""));
   el.type = "button";
   el.addEventListener("click", handler);
   return el;
@@ -56,7 +81,7 @@ function bytes(value) { return value < 1000000 ? `${Math.ceil(value / 1000)} К�
 function clock(value) { return `${Math.floor(value / 60).toString().padStart(2, "0")}:${(value % 60).toString().padStart(2, "0")}`; }
 function folderButton(folder, callback) {
   const button = action("", "folder", callback);
-  button.append(element("span", "folder-icon", folder.is_inbox ? "▱" : "▰"),
+  button.append(icon(folder.id === state.folder ? "folder_active" : "folder", "folder-icon"),
     element("span", "name", folder.name), element("span", "badge", folder.count ?? ""));
   return button;
 }
@@ -123,7 +148,7 @@ function renderNotes() {
   const parent = $("notes");
   if (!state.notes.length) {
     const empty = element("div", "empty");
-    empty.append(element("div", "empty-icon", "▱"), element("h2", "", "Здесь начнётся твоя история"),
+    empty.append(icon("cassette", "empty-icon"), element("h2", "", "Здесь начнётся твоя история"),
       element("p", "", "Запиши мысль голосом или прикрепи фото, видео, файл. Всё останется в этой папке."));
     parent.replaceChildren(empty);
   } else {
@@ -169,9 +194,9 @@ function noteCard(note) {
   more.setAttribute("aria-label", `Опции: ${heading}`); more.setAttribute("aria-expanded", "false");
   if (["voice", "video_note", "audio", "text"].includes(note.kind)) {
     const execute = action(note.ai?.state === "failed" ? "Повторить выполнение" : "Выполнить", "", async e => {
-      e.stopPropagation(); e.currentTarget.disabled = true;
+      e.stopPropagation(); const trigger = e.currentTarget; trigger.disabled = true;
       try { await post(`/api/notes/${note.id}/execute`); closeMenus(); toast("Выполняю. Ответ появится в этой папке."); await loadNotes(); }
-      catch (err) { fail(err); e.target.disabled = !note.can_execute; }
+      catch (err) { fail(err); trigger.disabled = !note.can_execute; }
     });
     execute.disabled = !note.can_execute; menu.append(execute);
   }
@@ -180,7 +205,7 @@ function noteCard(note) {
   }));
   const move = action("Переместить", "", () => showMove(note)); move.disabled = !note.can_move;
   menu.append(move); actions.append(more, menu);
-  head.append(element("div", "type-icon", note.ai_generated ? "✦" : type[0]), info, actions); card.append(head);
+  head.append(icon(note.ai_generated ? "ai" : type[0], "type-icon"), info, actions); card.append(head);
   if (note.has_file) {
     const media = element("div", "inline-media"); card.append(media);
     if (["voice", "video_note", "audio", "video", "photo"].includes(note.kind)) inlineMedia(note, media).catch(error => {
@@ -209,17 +234,19 @@ function noteCard(note) {
     const status = element("div", "note-status" + (error ? " error" : ""), error ? "Не удалось обработать. Оригинал сохранён." :
       ["voice", "video_note", "audio"].includes(note.kind) ? "Расшифровываем голосовое…" : "Сохраняем файл…");
     if (note.can_retry) status.append(action("Повторить", "text-button", async e => {
-      e.currentTarget.disabled = true;
-      try { await post(`/api/notes/${note.id}/retry`); await loadNotes(); } catch (err) { fail(err); e.target.disabled = false; }
+      const trigger = e.currentTarget; trigger.disabled = true;
+      try { await post(`/api/notes/${note.id}/retry`); await loadNotes(); } catch (err) { fail(err); trigger.disabled = false; }
     }));
     card.append(status);
   }
   if (note.ai) {
     const running = ["queued", "running"].includes(note.ai.state), failed = note.ai.state === "failed";
-    card.append(element("div", "ai-status" + (running ? " running" : failed ? " error" : ""),
-      running ? (note.ai.phase === "image" ? "✦ Готовлю изображение… Это может занять несколько минут." : "✦ ИИ выполняет команду…") :
+    const aiStatus = element("div", "ai-status" + (running ? " running" : failed ? " error" : ""),
+      running ? (note.ai.phase === "image" ? "Готовлю изображение… Это может занять несколько минут." : "ИИ выполняет команду…") :
       failed ? note.ai.error || "Не удалось выполнить. Можно повторить через ⋯." :
-      note.ai.folder_choices?.length ? "Выбери папку для переноса" : "✓ Выполнено · ответ добавлен"));
+      note.ai.folder_choices?.length ? "Выбери папку для переноса" : "Выполнено · ответ добавлен");
+    aiStatus.prepend(icon(running ? "spark" : failed ? "warning" : note.ai.folder_choices?.length ? "folder" : "check"));
+    card.append(aiStatus);
   }
   return card;
 }
@@ -364,7 +391,7 @@ async function record() {
     };
     recorder.onstop = () => {
       clearInterval(timer); stream.getTracks().forEach(track => track.stop()); state.recorder = null;
-      $("record-status").hidden = true; $("record").textContent = "● Записать голос"; busyButtons();
+      $("record-status").hidden = true; iconLabel($("record"), "microphone", "Записать голос"); busyButtons();
       if (cancelled) return;
       const type = recorder.mimeType || mime || "audio/webm";
       const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
@@ -374,7 +401,7 @@ async function record() {
     };
     recorder.onerror = () => { toast("Запись прервалась. Сохраняем доступную часть."); if (recorder.state !== "inactive") recorder.stop(); };
     recorder.start(1000); $("record-time").textContent = "00:00"; $("record-status").hidden = false;
-    $("record").textContent = "■ Завершить запись"; busyButtons();
+    iconLabel($("record"), "stop", "Завершить запись"); busyButtons();
   } catch {
     clearInterval(timer);
     stream?.getTracks().forEach(track => track.stop()); state.starting = false; state.recorder = null; busyButtons();

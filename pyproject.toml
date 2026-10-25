@@ -19,7 +19,7 @@ voice-memory-bot = "voice_memory_bot.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-voice_memory_bot = ["fonts/*.ttf", "fonts/LICENSE-DejaVu.txt", "web/*"]
+voice_memory_bot = ["fonts/*.ttf", "fonts/LICENSE-DejaVu.txt", "web/*", "emoji_pack.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

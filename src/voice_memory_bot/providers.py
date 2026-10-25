@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import httpx
 
 from .config import LLMConfig
+from .custom_emoji import themed_payload
 
 silent_delivery = ContextVar("silent_delivery", default=False)
 
@@ -36,6 +37,9 @@ class TelegramError(ProviderError):
             "chat not found": "chat_not_found",
             "button_data_invalid": "button_invalid",
             "query is too old": "callback_expired",
+            "custom emoji": "custom_emoji_unavailable",
+            "custom_emoji": "custom_emoji_unavailable",
+            "premium_account_required": "custom_emoji_unavailable",
         }
         # Never expose arbitrary provider descriptions, which may echo request data.
         self.reason = next((v for k, v in known.items() if k in str(description).lower()), "unspecified")
@@ -44,6 +48,7 @@ class TelegramError(ProviderError):
 class Telegram:
     def __init__(self, token: str, client=None, *, api_base="https://api.telegram.org", file_root=None):
         self.on_message = None
+        self.on_keyboard = None
         self._base = f"{api_base.rstrip('/')}/bot{token}/"
         self._files = f"{api_base.rstrip('/')}/file/bot{token}/"
         self.local = api_base.rstrip('/') != "https://api.telegram.org"
@@ -55,7 +60,21 @@ class Telegram:
         await self.client.aclose()
 
     async def call(self, method, **payload):
-        payload = {k: v for k, v in payload.items() if v is not None}
+        original = {k: v for k, v in payload.items() if v is not None}
+        payload, aliases = themed_payload(method, original)
+        if aliases and self.on_keyboard:
+            self.on_keyboard(payload.get("chat_id"), aliases)
+        try:
+            result = await self._request(method, payload)
+        except TelegramError as exc:
+            # A rejected request did not send a message. Never retry transport errors.
+            if exc.reason != "custom_emoji_unavailable" or payload == original:
+                raise
+            result = await self._request(method, original)
+        self.remember_result(result, payload.get("chat_id"), payload.get("message_thread_id"))
+        return result
+
+    async def _request(self, method, payload):
         try:
             response = await self.client.post(self._base + method, json=payload)
             body = response.json()
@@ -67,9 +86,7 @@ class Telegram:
             if isinstance(body, dict):
                 error.retry_after = body.get("parameters", {}).get("retry_after", 5)
             raise error
-        result = body["result"]
-        self.remember_result(result, payload.get("chat_id"), payload.get("message_thread_id"))
-        return result
+        return body["result"]
 
     def remember_result(self, result, owner, thread=None):
         if self.on_message and isinstance(result, dict) and result.get("message_id"):
@@ -89,15 +106,25 @@ class Telegram:
             data["message_thread_id"] = str(thread)
         if caption:
             data["caption"] = caption[:1000]
-        try:
-            with path.open("rb") as handle:
-                response = await self.client.post(self._base + "sendDocument", data=data,
-                                                 files={"document": (path.name, handle)},
-                                                 timeout=httpx.Timeout(1800 if self.local else 120, connect=10))
-            body = response.json()
-        except (httpx.HTTPError, ValueError):
-            raise ProviderError("telegram_transport_unknown") from None
-        if not isinstance(body, dict) or not body.get("ok"):
+        themed, _ = themed_payload("sendDocument", data)
+        if themed.get("caption_entities"):
+            themed["caption_entities"] = json.dumps(themed["caption_entities"])
+        for attempt in range(2):
+            try:
+                with path.open("rb") as handle:
+                    response = await self.client.post(self._base + "sendDocument", data=themed,
+                        files={"document": (path.name, handle)},
+                        timeout=httpx.Timeout(1800 if self.local else 120, connect=10))
+                body = response.json()
+            except (httpx.HTTPError, ValueError):
+                raise ProviderError("telegram_transport_unknown") from None
+            if isinstance(body, dict) and body.get("ok"):
+                break
+            error = TelegramError(response.status_code, "sendDocument",
+                                  body.get("description", "") if isinstance(body, dict) else "")
+            if attempt == 0 and error.reason == "custom_emoji_unavailable" and themed != data:
+                themed = data
+                continue
             raise ProviderError("telegram_upload_failed")
         self.remember_result(body["result"], owner, thread)
         return body["result"]

@@ -111,12 +111,16 @@ def test_full_cleanup_removes_only_owner_data_and_all_known_telegram_locations(b
         bot.ai_state.set_settings(1, model="saved-model")
         bot.store.reserve_asr(1, 20)
         bot.store.set_action(1, "create")
+        bot.emoji_keyboards.remember(1, {"Private title": "📁 Private title"})
+        bot.emoji_keyboards.remember(2, {"Other title": "📁 Other title"})
         bot.store.ingest([incoming(message_id=1003, thread=150, update_id=5),
                           incoming(owner=2, message_id=1003, update_id=6)], {1, 2})
         bot.store.fail_update(5)
         await confirm(bot, thread=110)
         assert bot.store.folders(1) == []
         assert bot.store.export_notes(1) == []
+        assert bot.store.all("SELECT * FROM emoji_keyboard_labels WHERE owner=1") == []
+        assert bot.emoji_keyboards.resolve(2, "Other title") == ("📁 Other title", True)
         for table in ("ai_requests", "ai_conversations", "ai_active", "ai_links", "implicit_topics", "note_moves", "note_messages"):
             assert bot.store.all(f"SELECT * FROM {table} WHERE owner=1") == []
         for table in ("note_revisions", "ai_steps"):

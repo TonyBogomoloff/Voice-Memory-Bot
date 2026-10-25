@@ -182,7 +182,7 @@ class FolderMenuMixin:
         rows = [[button(("Выключить" if enabled else "Включить") + " кнопки под сообщениями",
                         f"menumessagebuttons:{0 if enabled else 1}")],
                 [button("ℹ️ Help", "help"), button("🤖 Поговорить с ИИ", "aiopen")]]
-        await self.show_bottom(owner, "☰ Меню" + (f" · {folder['name']}" if folder else ""), thread, keyboard(*rows),
+        await self.show_bottom(owner, "🎛️ Меню" + (f" · {folder['name']}" if folder else ""), thread, keyboard(*rows),
                                screen="home", back="root", edit_id=edit_id)
 
     async def folder_menu_callback(self, owner, thread, message_id, data):

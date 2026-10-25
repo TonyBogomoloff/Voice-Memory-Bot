@@ -16,6 +16,7 @@ from .archive import Archive, is_audio
 from .bottom_menu import BottomMenuMixin
 from .cleanup import CleanupMixin
 from .config import Config
+from .custom_emoji import KeyboardAliases
 from .folder_menu import MENU_COMMANDS, OPTION_ACTIONS, FolderMenuMixin
 from .folder_naming import FolderNamingMixin
 from .folder_view import FolderViewMixin
@@ -64,13 +65,13 @@ HELP = """🎙 Voice Memory Bot
 Без ответа на сообщение команды выбирают последнюю твою запись в открытой папке.
 
 Выбери папку внизу — новые голосовые, тексты и фото сохраняются туда.
-Активная папка отмечена ✓. Стрелки листают страницы папок.
+Активная папка отмечена ✅. Стрелки листают страницы папок.
 «＋» создаёт папку: напиши название или пришли голосовое.
 «📁 Папка» — переименовать, удалить или экспортировать выбранную папку.
 «Назад» из меню папки возвращает на главную.
 При удалении папки записи остаются в архиве; бот сначала попросит подтверждение.
 
-В «☰ Меню» можно включить кнопки под сообщениями, открыть Help или поговорить с ИИ.
+В «🎛️ Меню» можно включить кнопки под сообщениями, открыть Help или поговорить с ИИ.
 Кнопки «Переместить», «Удалить», «ИИ» по умолчанию выключены.
 Архив и расшифровка работают и без кнопок. Голосовые и видеокружки расшифровываются в текст.
 
@@ -102,6 +103,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         self.web = None
         self.init_folder_view()
         self.init_bottom_menu()
+        self.emoji_keyboards = KeyboardAliases(store)
+        self.telegram.on_keyboard = self.emoji_keyboards.remember
         self.init_reply_moves()
         self.folder_namer = CodexRouter(replace(config.llm, model=config.folder_name_model or config.llm.model, effort="low"))
         self.init_folder_naming()
@@ -112,10 +115,10 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         if webhook.get("url"):
             raise ProviderError("webhook_present_stop_before_polling")
         await self.telegram.call("setMyCommands", commands=[
-            {"command": "ai", "description": "Изменить с ИИ"},
-            {"command": "move", "description": "Перенести запись"},
-            {"command": "delete", "description": "Удалить запись"},
-            {"command": "options", "description": "Options"},
+            {"command": "ai", "description": "🤖 Изменить с ИИ"},
+            {"command": "move", "description": "↪️ Перенести запись"},
+            {"command": "delete", "description": "🗑 Удалить запись"},
+            {"command": "options", "description": "🎛️ Опции"},
         ])
         # Finish physical deletion interrupted by a previous shutdown.
         for note in self.store.all("SELECT * FROM notes WHERE deleted=1"):
@@ -241,6 +244,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         if callback and not move_callback:
             await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
         navigation = message.get("text", "").strip()
+        alias_active = None
+        if not callback:
+            navigation, alias_active = self.emoji_keyboards.resolve(owner, navigation)
         if (callback or navigation.startswith("/") or navigation in MENU_COMMANDS
                 or navigation in OPTION_ACTIONS or navigation in {"⬅️", "➡️"} or self.is_bottom_control(owner, navigation)
                 or self.is_folder_button(navigation)) and not self.rate_allowed(owner):
@@ -266,7 +272,11 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 return result
             if "forum_topic_created" in message or "forum_topic_edited" in message:
                 return
-            text = message.get("text", "").strip()
+            if alias_active is False:
+                await self.remove_menu_message(owner, message["message_id"])
+                return await self.refresh_folder_keyboard(owner, thread, force=True,
+                    notice="Эта кнопка устарела. Выбери действие внизу.")
+            text = navigation
             if text and text.split()[0].split("@", 1)[0].lower() == "/options":
                 return await self.record_options(owner, thread, message)
             if text and text.split()[0].split("@", 1)[0].lower() == "/delete":
@@ -513,7 +523,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         folder = self.enter_folder_options(owner, identity)
         text = f"📁 {folder['name']}"
         text += "\nРежим: " + ("диалог с ИИ" if folder["mode"] == "chat" else "заметки")
-        text += "\n✓ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
+        text += "\n✅ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
         rows = [[button("✏️ Переименовать", f"rename:{identity}"),
                  button("🗑 Удалить папку", f"dropfolder:{identity}")],
                 [button("📦 Экспорт", f"zip:{identity}:all")]]
