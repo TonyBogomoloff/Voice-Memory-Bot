@@ -57,6 +57,8 @@ def test_coalescing_stops_at_non_equivalent_events(bot, barrier):
 def test_coalesced_noop_cleans_commands_and_recognizes_themed_labels(bot):
     async def run():
         bot.store.create_folder(1, 'Работа')
+        await bot.show_notes(1, None, bot.store.current_folder(1))
+        bot.telegram.sent.clear()
         bot.emoji_keyboards.remember(1, {'Работа': '📁 Работа', 'Входящие': '✅ Входящие'})
         bot.store.ingest([event(1, 'Работа'), event(2, 'Входящие')], {1})
         await bot.dispatch_next()

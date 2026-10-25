@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 from support.commands import bot as bot
+from support.commands import receive
 from support.folders import saved
 
 from voice_memory_bot.providers import ProviderError
@@ -141,4 +142,42 @@ def test_processing_completion_wakes_deferred_folder_without_five_second_wait(bo
             if processing_worker:
                 processing_worker.cancel()
             await asyncio.gather(view_worker, *([processing_worker] if processing_worker else []), return_exceptions=True)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failed_send", ["loading", "keyboard"])
+def test_reselect_recovers_placeholder_after_interrupted_folder_switch(bot, failed_send):
+    async def run():
+        first = bot.store.current_folder(1)
+        bot.store.rename_folder(1, first, "Test 1")
+        second = bot.store.create_folder(1, "Test 2")["id"]
+        saved(bot, first, "Сохранённая запись", 900)
+        await receive(bot, "📁 Test 1", 1001)
+        before = bot.store.all("SELECT * FROM notes")
+        original = bot.telegram.text
+
+        async def interrupted(owner, content, thread=None, keyboard=None, **kwargs):
+            if ((failed_send == "loading" and content == "Загружаю папку…")
+                    or (failed_send == "keyboard" and (keyboard or {}).get("keyboard"))):
+                raise ProviderError("telegram_transport_unknown")
+            return await original(owner, content, thread, keyboard, **kwargs)
+
+        bot.telegram.text = interrupted
+        with pytest.raises(ProviderError):
+            await receive(bot, "📁 Test 2", 1002)
+        assert bot.store.current_folder(1) == second
+        assert bot.store.one("SELECT dirty FROM folder_views WHERE owner=1")["dirty"] == 1
+        keyboards = [p["keyboard"] for m, p in bot.telegram.sent
+                     if m == "sendMessage" and (p.get("keyboard") or {}).get("keyboard")]
+        assert keyboards[-1]["input_field_placeholder"] == "📁 Test 1"
+
+        bot.telegram.text = original
+        bot.telegram.sent.clear()
+        await receive(bot, "📁 Test 2", 1003)
+        keyboards = [p["keyboard"] for m, p in bot.telegram.sent
+                     if m == "sendMessage" and (p.get("keyboard") or {}).get("keyboard")]
+        assert keyboards, "A retry tap must repair the stale input placeholder"
+        assert keyboards[-1]["input_field_placeholder"] == "📁 Test 2"
+        assert bot.store.one("SELECT dirty FROM folder_views WHERE owner=1")["dirty"] == 0
+        assert bot.store.all("SELECT * FROM notes") == before
     asyncio.run(run())
