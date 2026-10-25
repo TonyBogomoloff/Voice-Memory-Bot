@@ -1,0 +1,95 @@
+"""Prepare and deploy an immutable commit to this project's established server."""
+import argparse
+import hashlib
+import io
+import json
+import shlex
+import subprocess
+import tarfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+APP = '/home/tony/Desktop/_code/voice_memory_bot'
+SSH = ['ssh', '-F', str(Path.home() / '.ssh/config'), '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 'my-server']
+
+
+def remote(args, **kwargs):
+    return subprocess.run([*SSH, shlex.join(args)], check=True, **kwargs)
+
+
+def full_sha(value):
+    if len(value) != 40 or any(c not in '0123456789abcdef' for c in value):
+        raise argparse.ArgumentTypeError('Укажи полный SHA коммита')
+    return value
+
+
+def prepare(sha, base):
+    subprocess.run(['git', 'merge-base', '--is-ancestor', base, sha], cwd=REPO, check=True)
+    code = "import json,pathlib,sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text())['commit'])"
+    current = remote(['python3', '-c', code, APP + '/release.json'], capture_output=True).stdout.decode().strip()
+    if current != base:
+        raise RuntimeError('concurrent_source_change')
+    raw = subprocess.check_output(['git', 'archive', sha], cwd=REPO)
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+        for member in archive:
+            if member.isfile():
+                files[member.name] = hashlib.sha256(archive.extractfile(member).read()).hexdigest()
+            elif not member.isdir():
+                raise RuntimeError('unsupported_archive_member')
+    manifest = json.dumps({'commit': sha, 'base_commit': base, 'files': files}, indent=2).encode()
+    package = io.BytesIO()
+    with tarfile.open(fileobj=package, mode='w') as archive:
+        with tarfile.open(fileobj=io.BytesIO(raw)) as source:
+            for member in source:
+                archive.addfile(member, source.extractfile(member) if member.isfile() else None)
+        member = tarfile.TarInfo('release.json')
+        member.size, member.mode = len(manifest), 0o600
+        archive.addfile(member, io.BytesIO(manifest))
+    candidate = APP + '/.deploy-candidates/' + sha
+    # A SHA gets one candidate directory. Never overwrite a previously checked candidate.
+    code = ("import os,pathlib,sys,tarfile; os.umask(0o077); p=pathlib.Path(sys.argv[1]);"
+            "p.mkdir(parents=True,exist_ok=False);"
+            "tarfile.open(fileobj=sys.stdin.buffer,mode='r|').extractall(p,filter='data')")
+    remote(['python3', '-c', code, candidate], input=package.getvalue())
+    code = """
+import hashlib,json,os,pathlib,subprocess,sys
+candidate, app = map(pathlib.Path, sys.argv[1:3])
+os.umask(0o077)
+os.chdir(candidate)
+os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+os.environ['PYTHONPATH'] = str(candidate / 'src')
+python = str(app / '.venv/bin/python')
+subprocess.run([python,'-m','pytest','-q','-p','no:cacheprovider'],check=True)
+subprocess.run([python,'-m','ruff','check','--no-cache','src','tests','scripts'],check=True)
+subprocess.run([python,'scripts/check_migration.py','--database',str(app / 'data/archive.sqlite3')],check=True)
+manifest = (candidate / 'release.json').read_bytes()
+receipt = {'commit':json.loads(manifest)['commit'], 'manifest_sha256':hashlib.sha256(manifest).hexdigest(),
+           'full_suite':True, 'ruff':True, 'migration_rehearsal':True}
+(candidate / 'validation.json').write_text(json.dumps(receipt,indent=2))
+"""
+    remote([APP + '/.venv/bin/python', '-c', code, candidate, APP])
+
+
+def deploy(sha, base):
+    published = subprocess.check_output(['git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/main'], cwd=REPO)
+    if published.decode().split()[0] != sha:
+        raise RuntimeError('candidate_not_current_origin_main')
+    candidate = APP + '/.deploy-candidates/' + sha
+    code = ("import json,pathlib,sys; m=json.loads(pathlib.Path(sys.argv[1]).read_text());"
+            "assert m['base_commit']==sys.argv[2], 'candidate_base_mismatch'")
+    remote(['python3', '-c', code, candidate + '/release.json', base])
+    remote(['python3', candidate + '/scripts/deploy_guard.py', sha, '--app', APP])
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('mode', choices=('prepare', 'deploy'))
+    parser.add_argument('sha', type=full_sha)
+    parser.add_argument('base', type=full_sha, help='Production SHA из release.json')
+    args = parser.parse_args()
+    (prepare if args.mode == 'prepare' else deploy)(args.sha, args.base)
+
+
+if __name__ == '__main__':
+    main()

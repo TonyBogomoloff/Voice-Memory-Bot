@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .bot import Bot
 from .config import Config
+from .diagnostics import inspect_database
 from .providers import CodexRouter, Groq, ProviderError, Telegram
 from .store import Store
 
@@ -58,17 +59,24 @@ async def run(config):
 
 def main():
     parser = argparse.ArgumentParser(description="Voice Memory Bot")
-    parser.add_argument("command", choices=["run", "check"])
+    parser.add_argument("command", choices=["run", "check", "diagnose"])
+    parser.add_argument("--database", type=Path, help="diagnose: путь к SQLite, без загрузки конфига и секретов")
     parser.add_argument("--config", type=Path, default=Path("config.json"))
     parser.add_argument("--secrets", type=Path, help="Общий конфиг: bot_token_your_audio_notes и groq_voice")
     parser.add_argument("--live", action="store_true", help="check: проверить getMe и вход Codex без отправки сообщений")
     args = parser.parse_args()
+    if args.command == "diagnose" and args.database is None:
+        parser.error("diagnose требует --database")
     os.umask(0o077)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     # httpx INFO logs request URLs, including the Telegram bot token.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     try:
+        if args.command == "diagnose":
+            result = inspect_database(args.database)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            raise SystemExit(1 if result["needs_attention"] else 0)
         config = Config.load(args.config, args.secrets)
         if args.command == "check":
             raise SystemExit(asyncio.run(check(config, args.live)))
