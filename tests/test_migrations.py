@@ -84,3 +84,30 @@ def test_page_settings_upgrade_preserves_archive_and_resets_old_offsets(tmp_path
         assert store.folder_page_size(1) == 100
     finally:
         store.close()
+
+
+def test_ai_instruction_prompt_upgrade_from_installed_v2_preserves_archive(tmp_path):
+    path = tmp_path / 'db'
+    store = Store(path, Limits())
+    note = add(store, kind='text', transcript='Исходная запись')
+    before = store.note(1, note['id'])
+    with store.transaction():
+        store.db.execute('DROP TABLE ai_instruction_prompts')
+        store.db.execute('PRAGMA user_version=2')
+    store.close()
+    store = Store(path, Limits())
+    try:
+        assert store.note(1, note['id']) == before
+        conversation = AIStore(store).start_note_conversation(1, note['id'])
+        with store.transaction():
+            store.db.execute('INSERT INTO ai_instruction_prompts VALUES (?,?,?,?)',
+                             (conversation, 1, 20, note['message_id']))
+    finally:
+        store.close()
+    store = Store(path, Limits())
+    try:
+        assert store.one('SELECT message_id,reply_to FROM ai_instruction_prompts') == {
+            'message_id': 20, 'reply_to': note['message_id']}
+        assert store.note(1, note['id']) == before
+    finally:
+        store.close()

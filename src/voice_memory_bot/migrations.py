@@ -63,10 +63,6 @@ def _migrate_ai(db):
             owner INTEGER NOT NULL, message_id INTEGER NOT NULL, conversation_id TEXT NOT NULL,
             PRIMARY KEY(owner, message_id)
         );
-        CREATE TABLE IF NOT EXISTS ai_instruction_prompts (
-            conversation_id TEXT PRIMARY KEY, owner INTEGER NOT NULL,
-            message_id INTEGER NOT NULL, reply_to INTEGER
-        );
         CREATE TABLE IF NOT EXISTS ai_progress (
             note_id TEXT PRIMARY KEY REFERENCES ai_requests(note_id), message_id INTEGER NOT NULL
         );
@@ -276,7 +272,14 @@ def folder_page_settings(store):
     store.db.execute("UPDATE folder_views SET page=0")
 
 
-MIGRATIONS = (baseline, folder_page_settings)
+def ai_instruction_prompts(store):
+    store.db.execute("""CREATE TABLE IF NOT EXISTS ai_instruction_prompts (
+        conversation_id TEXT PRIMARY KEY, owner INTEGER NOT NULL,
+        message_id INTEGER NOT NULL, reply_to INTEGER
+    )""")
+
+
+MIGRATIONS = (baseline, folder_page_settings, ai_instruction_prompts)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
