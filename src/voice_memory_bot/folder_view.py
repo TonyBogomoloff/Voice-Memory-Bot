@@ -141,10 +141,13 @@ class FolderViewMixin:
                                   (identity, page, owner))
         self.view_rendering.add(owner)
         token = silent_delivery.set(True)
+        loading_id = None
         try:
+            loading = await self.view_send(self.telegram.text, owner, "Загружаю папку…", thread)
+            loading_id = loading["message_id"]
             self.folder_keyboards.pop(owner, None)
             leftovers = await self.clear_folder_view(owner, thread, all_threads=True,
-                                                      keep_ids=(view['command_message_id'],))
+                                                      keep_ids=(view['command_message_id'], loading_id))
             await self.refresh_folder_keyboard(owner, thread, notice=notice, transient=not notice)
             if restore_screen and view['screen'] and not bottom:
                 screen = json.loads(view['screen'])
@@ -189,8 +192,11 @@ class FolderViewMixin:
             with self.store.db:
                 self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
         finally:
-            silent_delivery.reset(token)
-            self.view_rendering.discard(owner)
+            try:
+                await self.remove_menu_message(owner, loading_id)
+            finally:
+                silent_delivery.reset(token)
+                self.view_rendering.discard(owner)
 
     async def render_empty_view(self, owner, view):
         self.view_rendering.add(owner)

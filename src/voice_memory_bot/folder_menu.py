@@ -94,7 +94,8 @@ class FolderMenuMixin:
         pages = self.folder_keyboard_pages(owner)
         page = min(max(self.folder_pages.get(owner, 0), 0), len(pages) - 1)
         self.folder_pages[owner] = page
-        buttons = [{"text": ("✓ " if folder["id"] == active else "") + f"📌 {folder['name']}"}
+        buttons = [{"text": ("✓ " if folder["id"] == active else "") + f"📌 {folder['name']}",
+                    **({"style": "primary"} if folder["id"] == active else {})}
                    for folder in pages[page]]
         rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
         if len(pages) > 1:

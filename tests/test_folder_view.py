@@ -166,7 +166,7 @@ def test_daily_cleanup_restores_settings_after_restart_and_cleans_all_known_thre
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert {3001, 3003} <= deleted and 3002 not in deleted
         assert bot.bottom_state(1)['screen'] == 'settings:all'
-        assert any(p.get('keyboard', {}).get('keyboard') for m, p in bot.telegram.sent if m == 'sendMessage')
+        assert any((p.get('keyboard') or {}).get('keyboard') for m, p in bot.telegram.sent if m == 'sendMessage')
         assert any(p.get('text') == 'Архивная запись' for _, p in bot.telegram.sent)
         assert bot.store.all('SELECT * FROM notes') == before
         assert bot.store.current_folder(1) == inbox
@@ -182,7 +182,7 @@ def test_settings_without_prior_folder_visit_and_return_to_folder(bot):
             bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')
         await bot.refresh_due_views()
         assert bot.bottom_state(1)['screen'] == 'settings:all'
-        assert any(p.get('keyboard', {}).get('keyboard') for m, p in bot.telegram.sent if m == 'sendMessage')
+        assert any((p.get('keyboard') or {}).get('keyboard') for m, p in bot.telegram.sent if m == 'sendMessage')
         inbox = bot.store.current_folder(1)
         await bot.show_notes(1, None, inbox)
         assert bot.store.one('SELECT screen FROM folder_views WHERE owner=1')['screen'] is None
@@ -192,7 +192,7 @@ def test_settings_without_prior_folder_visit_and_return_to_folder(bot):
         await bot.refresh_due_views()
         # Even an empty folder retains the one message carrying its reply keyboard.
         assert bot.bottom_state(1)['screen'] == 'root'
-        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
+        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage' and p['text'] != 'Загружаю папку…']
         assert len(sent) == 1 and sent[0]['keyboard']['keyboard']
         await bot.settings_menu(1, None)
         bot.cleanup.begin(1)
@@ -211,8 +211,9 @@ def test_old_topic_cleanup_does_not_block_switch_and_clears_before_header(bot):
             bot.store.db.execute('INSERT INTO deletion_jobs VALUES (1,0)')
             bot.store.db.execute("INSERT INTO deletion_targets VALUES (1,'topic',99,NULL)")
         await bot.show_notes(1, None, work)
-        assert bot.telegram.sent[0][0] == 'deleteMessage'
-        header = next(p for m, p in bot.telegram.sent if m == 'sendMessage')
+        assert bot.telegram.sent[0][1]['text'] == 'Загружаю папку…'
+        assert bot.telegram.sent[1][0] == 'deleteMessage'
+        header = next(p for m, p in bot.telegram.sent if m == 'sendMessage' and p.get('keyboard'))
         assert '✓ 📌 Работа' in str(header)
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert {1001, 1002, 3001} <= deleted
@@ -234,7 +235,7 @@ def test_switch_has_all_records_and_no_persistent_header_or_menu(bot):
             saved(bot, work, f'Запись {i}', 1000 + i)
         bot.telegram.sent.clear()
         await receive(bot, '📌 Работа', 2000)
-        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
+        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage' and p['text'] != 'Загружаю папку…']
         assert len(sent) == 11
         assert 'Работа' in sent[0]['keyboard']['input_field_placeholder']
         assert bot.telegram.sent[next(i for i, (m, _) in enumerate(bot.telegram.sent)
