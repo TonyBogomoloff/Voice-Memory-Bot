@@ -68,7 +68,7 @@ def test_background_export_keeps_command_until_response(bot):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('command', ['/move', '/ai', '/delete', '/ai@your_audio_notes_bot'])
+@pytest.mark.parametrize('command', ['/move', '/ai', '/delete', '/ai@your_audio_notes_bot', '/Options', '/options@your_audio_notes_bot'])
 @pytest.mark.parametrize('target', [100, 999])
 def test_reply_action_command_stays_visible(bot, command, target):
     async def run():

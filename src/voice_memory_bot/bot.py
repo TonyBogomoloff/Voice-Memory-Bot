@@ -321,7 +321,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                     notice="Эта кнопка устарела. Выбери действие внизу.")
             text = navigation
             command = text.split()[0].split("@", 1)[0].lower() if text else ""
-            keep_reply_command = "reply_to_message" in message and command in {"/move", "/ai", "/delete"}
+            keep_reply_command = "reply_to_message" in message and command in {"/move", "/ai", "/delete", "/options"}
             if text.startswith("/") and not keep_reply_command:
                 await self.remove_menu_message(owner, message["message_id"])
             if text and text.split()[0].split("@", 1)[0].lower() == "/options":
