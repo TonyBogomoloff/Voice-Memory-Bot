@@ -6,36 +6,52 @@ from test_commands import receive
 from test_folder_shortcuts import labels
 
 
-@pytest.mark.parametrize('target', [100, 200, None, 300])
-def test_reply_minus_targets_only_owned_record_and_requires_confirmation(bot, target):
+@pytest.mark.parametrize('target', [100, 200, None, 300, 999])
+@pytest.mark.parametrize('command', ['/delete', '/delete@your_audio_notes_bot'])
+def test_reply_delete_only_owned_record_without_confirmation(bot, target, command):
     async def run():
         await receive(bot, 'Сохранённая заметка', 100)
         note = bot.store.notes(1)[0]
         bot.messages.record(note, 200, None, 'transcript')
+        directory = bot.archive.directory(note)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "note.md").write_text("Сохранённая заметка")
         bot.store.add_note(2, bot.store.ensure_user(2), {'message_id': 300}, 'text', transcript='Чужая')
         bot.store.set_action(1, 'create')
-        message = {'message_id': 400, 'from': {'id': 1}, 'chat': {'id': 1, 'type': 'private'}, 'text': '➖'}
+        message = {'message_id': 400, 'from': {'id': 1}, 'chat': {'id': 1, 'type': 'private'}, 'text': command}
         if target:
             message['reply_to_message'] = {'message_id': target}
+        bot.telegram.sent.clear()
         await bot.handle({'message': message})
-        assert len(bot.store.notes(1)) == 1
-        assert bot.store.note(1, note['id'])
+        assert len(bot.store.notes(1)) == (0 if target in {100, 200} else 1)
+        assert len(bot.store.notes(2)) == 1
+        assert directory.exists() == (target not in {100, 200})
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
-        confirmation = f"confirmarchive:{note['id']}"
-        assert (confirmation in str(sent[-1])) == (target in {100, 200})
+        assert not sent[-1].get('keyboard')
         if target in {100, 200}:
-            bot.telegram.sent.clear()
-            await bot.callback(1, None, 500, confirmation)
-            assert bot.store.notes(1) == []
-            assert len(bot.store.notes(2)) == 1
-            assert not any(m == 'deleteMessage' and p['message_id'] in {100, 200, 300}
-                           for m, p in bot.telegram.sent)
+            assert 'удалено из базы' in sent[-1]['text']
+            assert bot.store.one('SELECT transcript FROM notes WHERE id=?', (note['id'],))['transcript'] is None
+        assert not any(m == 'deleteMessage' and p['message_id'] in {100, 200, 300}
+                       for m, p in bot.telegram.sent)
     asyncio.run(run())
 
 
-def test_minus_present_on_home_and_settings(bot):
+def test_processing_record_cannot_be_deleted(bot):
     async def run():
-        for command in ['/start', '/settings', '/folders']:
+        await receive(bot, 'Ещё обрабатывается', 100)
+        note = bot.store.notes(1)[0]
+        bot.store.update_note(1, note['id'], state='processing')
+        await bot.handle({'message': {'message_id': 400, 'from': {'id': 1},
+            'chat': {'id': 1, 'type': 'private'}, 'text': '/delete', 'reply_to_message': {'message_id': 100}}})
+        assert bot.store.note(1, note['id'])
+        assert any('Дождись завершения' in p.get('text', '') for m, p in bot.telegram.sent)
+    asyncio.run(run())
+
+
+def test_minus_removed_and_stale_button_does_not_create_note(bot):
+    async def run():
+        for command in ['/start', '/settings', '/folders', '➖']:
             await receive(bot, command)
-            assert labels(bot).count('➖') == 1
+            assert '➖' not in labels(bot)
+        assert bot.store.notes(1) == []
     asyncio.run(run())

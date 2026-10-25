@@ -60,7 +60,7 @@ def test_folder_name_input_does_not_import_unknown_source_thread(bot):
     asyncio.run(run())
 
 
-def test_start_registers_only_three_commands(bot):
+def test_start_registers_menu_commands(bot):
     from unittest.mock import AsyncMock
 
     async def run():
@@ -74,5 +74,6 @@ def test_start_registers_only_three_commands(bot):
             {"command": "start", "description": "Start"},
             {"command": "help", "description": "Help"},
             {"command": "ai", "description": "Поговорить с ИИ"},
+            {"command": "delete", "description": "Удалить запись"},
         ]
     asyncio.run(run())

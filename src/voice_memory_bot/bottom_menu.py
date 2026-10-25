@@ -12,7 +12,6 @@ BACK = "⬅️ Назад"
 ROOT = "🏠 Главная"
 PREVIOUS = "◀️ Страница"
 NEXT = "Страница ▶️"
-DELETE = "➖"
 CONFIRMATIONS = {"🗑 Да, удалить папку", "🗑 Да, удалить запись", "🗑 Да, удалить всё"}
 PAGE_SIZE = 6
 
@@ -36,7 +35,7 @@ class BottomMenuMixin:
         return json.loads(row["state"]) if row else None
 
     def is_bottom_control(self, owner, text):
-        return text in {BACK, ROOT, PREVIOUS, NEXT, DELETE} | CONFIRMATIONS or bool(self.store.one(
+        return text in {BACK, ROOT, PREVIOUS, NEXT} | CONFIRMATIONS or bool(self.store.one(
             "SELECT 1 FROM bottom_menu_labels WHERE owner=? AND label=?", (owner, text)))
 
     async def remove_menu_message(self, owner, message_id):
@@ -73,7 +72,7 @@ class BottomMenuMixin:
         pages = max(1, (len(rows) + PAGE_SIZE - 1) // PAGE_SIZE)
         page = state["page"] = min(max(0, state["page"]), pages - 1)
         actions, keyboard, used = {}, [], set()
-        reserved = {BACK, ROOT, PREVIOUS, NEXT, DELETE}
+        reserved = {BACK, ROOT, PREVIOUS, NEXT}
         for row_index, row in enumerate(rows):
             rendered = []
             for item in row:
@@ -103,10 +102,6 @@ class BottomMenuMixin:
                             else [{"text": BACK}, {"text": ROOT}])
         keys = raw_keys or {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True,
                             "input_field_placeholder": self.folder_input_placeholder(owner)}
-        if keys["keyboard"]:
-            keys["keyboard"][-1].append({"text": DELETE})
-        else:
-            keys["keyboard"].append([{"text": DELETE}])
         state["actions"] = actions
         previous = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,))
         # Persist before send: a lost Telegram response must not turn the displayed controls into notes.

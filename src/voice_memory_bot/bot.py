@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .ai_bot import AIBotMixin
 from .archive import Archive, is_audio
-from .bottom_menu import DELETE, BottomMenuMixin
+from .bottom_menu import BottomMenuMixin
 from .cleanup import CleanupMixin
 from .config import Config
 from .folder_menu import MENU_COMMANDS, OPTION_ACTIONS, FolderMenuMixin
@@ -56,6 +56,8 @@ HOME = keyboard([button("📂 Все папки", "folders"), button("＋ Нов
                 [button("🗑 Удалить всё", "deleteall")])
 
 HELP = """🎙 Voice Memory Bot
+
+/delete — удалить запись из базы без подтверждения: ответь этой командой на запись.
 
 Выбери папку внизу — новые голосовые, тексты и фото сохраняются туда.
 Активная папка отмечена ✓. Стрелки листают страницы папок.
@@ -108,6 +110,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             {"command": "start", "description": "Start"},
             {"command": "help", "description": "Help"},
             {"command": "ai", "description": "Поговорить с ИИ"},
+            {"command": "delete", "description": "Удалить запись"},
         ])
         # Finish physical deletion interrupted by a previous shutdown.
         for note in self.store.all("SELECT * FROM notes WHERE deleted=1"):
@@ -259,8 +262,11 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             if "forum_topic_created" in message or "forum_topic_edited" in message:
                 return
             text = message.get("text", "").strip()
-            if text == DELETE:
+            if text and text.split()[0].split("@", 1)[0].lower() == "/delete":
                 return await self.delete_reply(owner, thread, message)
+            if text == "➖":
+                return await self.refresh_folder_keyboard(owner, thread, force=True,
+                    notice="Для удаления выбери «Ответить» на запись и команду /delete в меню.")
             if await self.bottom_input(owner, thread, text, message["message_id"]):
                 return
             # Folder taps remain as view anchors until the next selection.
@@ -722,7 +728,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         reply = message.get("reply_to_message") or {}
         target = reply.get("message_id")
         if not target:
-            return await self._show(owner, "Выбери «Ответить» на запись и нажми ➖.", thread)
+            return await self._show(owner, "Выбери «Ответить» на запись и команду /delete — «Удалить запись» в меню.", thread)
         note = self.store.one(
             "SELECT n.* FROM notes n WHERE n.owner=? AND n.deleted=0 AND "
             "(n.message_id=? OR n.transcript_message_id=? OR n.result_message_id=? OR EXISTS "
@@ -731,10 +737,12 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             (owner, target, target, target, target))
         if not note:
             return await self._show(owner, "Не нашёл запись в базе. Ответь на исходное сообщение или расшифровку.", thread)
-        return await self._show(owner,
-            f"Удалить из базы «{note['title'] or 'Запись'}» вместе с файлами?\nСообщения в Telegram останутся.",
-            thread, keyboard([button("Удалить", f"confirmarchive:{note['id']}"),
-                              button("Отмена", f"canceldelete:{note['id']}")]))
+        identity = note["id"]
+        if note["state"] == "processing" or self.note_locks[identity].locked():
+            raise ValueError("Дождись завершения обработки, затем удали запись")
+        self.store.delete(owner, identity)
+        self.archive.delete(note)
+        return await self._show(owner, "Сообщение удалено из базы. Сообщения в Telegram остались.", thread)
 
     async def delete_note_messages(self, note, *, details=False):
         owner, identity = note["owner"], note["id"]

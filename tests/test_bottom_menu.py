@@ -39,7 +39,7 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
         await receive(bot, "☰ Меню", 1001)
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
-        assert {"Включить кнопки под сообщениями", "ℹ️ Help", "🤖 Поговорить с ИИ", BACK, ROOT, "➖"} == set(labels(bot))
+        assert {"Включить кнопки под сообщениями", "ℹ️ Help", "🤖 Поговорить с ИИ", BACK, ROOT} == set(labels(bot))
         await receive(bot, "/settings", 1002)
         export = next(label for label in labels(bot) if label.startswith("📦 Экспорт"))
         await receive(bot, export, 1003)
@@ -240,7 +240,7 @@ def test_home_add_folder_and_options_back(bot):
         folder = bot.store.current_folder(1)
         assert bot.store.folder(1, folder)["name"] == "Новая с главной"
         await receive(bot, "📁 Папка", 2005)
-        assert set(labels(bot)) == {"✏️ Переименовать", "🗑 Удалить папку", "📦 Экспорт", BACK, "➖"}
+        assert set(labels(bot)) == {"✏️ Переименовать", "🗑 Удалить папку", "📦 Экспорт", BACK}
         assert bot.bottom_state(1)["actions"]["📦 Экспорт"] == f"zip:{folder}:all"
         await receive(bot, BACK, 2006)
         assert bot.bottom_state(1)["screen"] == "root"
