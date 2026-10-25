@@ -23,20 +23,20 @@ def test_reply_delete_only_owned_record_without_confirmation(bot, target, comman
             message['reply_to_message'] = {'message_id': target}
         bot.telegram.sent.clear()
         await bot.handle({'message': message})
-        assert len(bot.store.notes(1)) == (0 if target in {100, 200} else 1)
+        assert len(bot.store.notes(1)) == (0 if target in {100, 200, None} else 1)
         assert len(bot.store.notes(2)) == 1
-        assert directory.exists() == (target not in {100, 200})
+        assert directory.exists() == (target not in {100, 200, None})
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
         assert not sent[-1].get('keyboard')
-        if target in {100, 200}:
+        if target in {100, 200, None}:
             assert sent[-1]['text'] == 'Сообщение удалено.'
             assert bot.store.one('SELECT transcript FROM notes WHERE id=?', (note['id'],))['transcript'] is None
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert 300 not in deleted
-        if target in {100, 200}:
+        if target in {100, 200, None}:
             assert {100, 200, 400} <= deleted
         else:
-            assert not ({100, 200} & deleted)
+            assert not ({100, 200, None} & deleted)
     asyncio.run(run())
 
 

@@ -34,6 +34,14 @@ class ReplyMoveMixin:
     def reply_note(self, owner, message):
         target = (message.get("reply_to_message") or {}).get("message_id")
         if not target:
+            if "reply_to_message" in message or not self.store.folders(owner):
+                return None
+            folder = self.store.current_folder(owner)
+            return self.store.one(
+                "SELECT * FROM notes WHERE owner=? AND folder_id=? AND deleted=0 "
+                "AND origin='telegram' AND message_id>0 ORDER BY created_at DESC,rowid DESC LIMIT 1",
+                (owner, folder))
+        if message["reply_to_message"].get("chat", {}).get("id", owner) != owner:
             return None
         return self.store.one(
             "SELECT n.* FROM notes n WHERE n.owner=? AND n.deleted=0 AND "
@@ -45,7 +53,7 @@ class ReplyMoveMixin:
     async def move_reply(self, owner, thread, message):
         note = self.reply_note(owner, message)
         if not note:
-            return await self._show(owner, "Выбери «Ответить» на запись и команду /move — «Перенести запись» в меню.", thread)
+            return await self._show(owner, "В этой папке нет подходящей записи. Пришли сообщение или ответь на сохранённую запись.", thread)
         token = new_id()
         with self.store.db:
             self.store.db.execute("INSERT INTO reply_moves(token,owner,note_id,command_id) VALUES (?,?,?,?)",

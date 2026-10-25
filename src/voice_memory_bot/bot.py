@@ -58,8 +58,10 @@ HOME = keyboard([button("📂 Все папки", "folders"), button("＋ Нов
 
 HELP = """🎙 Voice Memory Bot
 
-/delete — удалить запись из базы и чата без подтверждения: ответь этой командой на запись.
-/move — перенести запись: ответь командой, затем выбери папку.
+/ai — изменить запись с ИИ.
+/move — перенести запись в другую папку.
+/delete — удалить запись из базы и чата без подтверждения.
+Без ответа на сообщение команды выбирают последнюю твою запись в открытой папке.
 
 Выбери папку внизу — новые голосовые, тексты и фото сохраняются туда.
 Активная папка отмечена ✓. Стрелки листают страницы папок.
@@ -268,6 +270,11 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 return await self.delete_reply(owner, thread, message)
             if text and text.split()[0].split("@", 1)[0].lower() == "/move":
                 return await self.move_reply(owner, thread, message)
+            if text and text.split()[0].split("@", 1)[0].lower() == "/ai":
+                note = self.reply_note(owner, message)
+                if not note:
+                    return await self._show(owner, "Не нашёл запись. Пришли сообщение или ответь на сохранённую запись.", thread)
+                return await self.ai_callback(owner, thread, None, f"aiask:{note['id']}")
             if text == "➖":
                 return await self.refresh_folder_keyboard(owner, thread, force=True,
                     notice="Для удаления выбери «Ответить» на запись и команду /delete в меню.")
@@ -735,10 +742,6 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             return await self._show(owner, text, thread)
 
     async def delete_reply(self, owner, thread, message):
-        reply = message.get("reply_to_message") or {}
-        target = reply.get("message_id")
-        if not target:
-            return await self._show(owner, "Выбери «Ответить» на запись и команду /delete — «Удалить запись» в меню.", thread)
         note = self.reply_note(owner, message)
         if not note:
             return await self._show(owner, "Не нашёл запись в базе. Ответь на исходное сообщение или расшифровку.", thread)
