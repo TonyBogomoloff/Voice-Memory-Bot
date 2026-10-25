@@ -103,7 +103,7 @@ def test_document_saved_before_source_cleanup_without_asr(bot):
                              'document': {'file_id': 'doc-id', 'file_size': len(raw), 'file_name': 'report.pdf'}}}
         await bot.handle(event)
         await bot.clear_folder_view(1, None, all_threads=True)
-        assert not any(method == 'deleteMessage' and payload['message_id'] == 200
+        assert not any(method in {'deleteMessage', 'deleteMessages'} and 200 in payload.get('message_ids', [payload.get('message_id')])
                        for method, payload in bot.telegram.sent)
         await bot.process(bot.store.claim_note())
         note = bot.store.notes(1)[0]
@@ -112,7 +112,7 @@ def test_document_saved_before_source_cleanup_without_asr(bot):
         assert bot.groq.calls == 0
         bot.telegram.sent.clear()
         await bot.clear_folder_view(1, None, all_threads=True)
-        assert any(method == 'deleteMessage' and payload['message_id'] == 200
+        assert any(method in {'deleteMessage', 'deleteMessages'} and 200 in payload.get('message_ids', [payload.get('message_id')])
                    for method, payload in bot.telegram.sent)
         assert bot.archive.audio(note).read_bytes() == raw
     asyncio.run(run())

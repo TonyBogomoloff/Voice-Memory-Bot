@@ -8,6 +8,11 @@ from voice_memory_bot.folder_view import RENEW_AFTER
 from voice_memory_bot.providers import ProviderError, TelegramError
 
 
+def deleted_ids(bot):
+    return {mid for method, payload in bot.telegram.sent if method in {'deleteMessage', 'deleteMessages'}
+            for mid in payload.get('message_ids', [payload.get('message_id')])}
+
+
 def saved(bot, folder, text, mid):
     note, _ = bot.store.add_note(1, folder, {'message_id': mid}, 'text', transcript=text)
     bot.store.update_note(1, note['id'], state='ready', delivery='sent', transcript_delivery='sent', title=text)
@@ -28,7 +33,7 @@ def test_switch_renders_only_selected_folder_and_preserves_archive(bot, tmp_path
         bot.cleanup.remember(2, 2001)
         bot.cleanup.remember(1, 3001, 99)
         await bot.show_notes(1, None, work)
-        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        deleted = deleted_ids(bot)
         assert {1001, 1002, 3001} <= deleted and 2001 not in deleted
         texts = [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage']
         assert 'Текст второй папки' in texts and 'Текст первой папки' not in texts
@@ -59,7 +64,7 @@ def test_renewal_uses_oldest_send_not_recent_activity_and_survives_restart(bot):
         await bot.refresh_due_views(now=1000 + RENEW_AFTER - 1)
         assert bot.telegram.sent == []
         await bot.refresh_due_views(now=1000 + RENEW_AFTER)
-        assert any(m == 'deleteMessage' and p['message_id'] == old for m, p in bot.telegram.sent)
+        assert old in deleted_ids(bot)
         assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
         bot.telegram.sent.clear()
         await bot.refresh_due_views(now=1000 + RENEW_AFTER + 1)
@@ -93,7 +98,7 @@ def test_failed_delete_remains_retryable_and_expired_id_stays_available_to_delet
         error = ProviderError('telegram_transport_unknown')
 
         async def fail(method, **payload):
-            if method == 'deleteMessage' and payload['message_id'] == 1001:
+            if method in {'deleteMessage', 'deleteMessages'} and 1001 in payload.get('message_ids', [payload.get('message_id')]):
                 raise error
             return await call(method, **payload)
 
@@ -136,7 +141,7 @@ def test_rate_limit_retries_only_refused_send_and_keeps_unsaved_source(bot, monk
         bot.telegram.call = limited
         await bot.show_notes(1, None, inbox)
         assert refused
-        assert not any(m == 'deleteMessage' and p['message_id'] == 1001 for m, p in bot.telegram.sent)
+        assert 1001 not in deleted_ids(bot)
         assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
         assert bot.store.one('SELECT * FROM telegram_messages WHERE message_id=1001')
         bot.store.set_action(1, 'create')
@@ -163,7 +168,7 @@ def test_daily_cleanup_restores_settings_after_restart_and_cleans_all_known_thre
         await bot.refresh_due_views(now=1000 + RENEW_AFTER - 1)
         assert not bot.telegram.sent
         await bot.refresh_due_views(now=1000 + RENEW_AFTER)
-        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        deleted = deleted_ids(bot)
         assert {3001, 3003} <= deleted and 3002 not in deleted
         assert bot.bottom_state(1)['screen'] == 'settings:all'
         assert any((p.get('keyboard') or {}).get('keyboard') for m, p in bot.telegram.sent if m == 'sendMessage')
@@ -212,10 +217,10 @@ def test_old_topic_cleanup_does_not_block_switch_and_clears_before_header(bot):
             bot.store.db.execute("INSERT INTO deletion_targets VALUES (1,'topic',99,NULL)")
         await bot.show_notes(1, None, work)
         assert bot.telegram.sent[0][1]['text'] == 'Загружаю папку…'
-        assert bot.telegram.sent[1][0] == 'deleteMessage'
+        assert bot.telegram.sent[1][0] in {'deleteMessage', 'deleteMessages'}
         header = next(p for m, p in bot.telegram.sent if m == 'sendMessage' and p.get('keyboard'))
         assert '✅ Работа' in str(header)
-        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        deleted = deleted_ids(bot)
         assert {1001, 1002, 3001} <= deleted
         assert any(p.get('text') == 'Вторая' for _, p in bot.telegram.sent)
         assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
@@ -239,13 +244,13 @@ def test_switch_has_all_records_and_no_persistent_header_or_menu(bot):
         assert len(sent) == 11
         assert 'Работа' in sent[0]['keyboard']['input_field_placeholder']
         assert bot.telegram.sent[next(i for i, (m, _) in enumerate(bot.telegram.sent)
-                                      if m == 'sendMessage') + 1][0] == 'deleteMessage'
+                                      if m == 'sendMessage') + 1][0] in {'deleteMessage', 'deleteMessages'}
         assert all('Входящие' not in p['text'] for p in sent)
         assert {p['text'] for p in sent[1:]} == {f'Запись {i}' for i in range(10)}
         for p in sent[1:]:
             rows = p['keyboard']['inline_keyboard']
             assert [[b['text'] for b in row] for row in rows] == [['Переместить', 'Удалить', 'ИИ']]
-        deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+        deleted = deleted_ids(bot)
         assert previous <= deleted
         await bot.show_main_menu(1)
         await bot.callback(1, None, 5000, f'foldermenu:{work}')
@@ -263,7 +268,7 @@ def test_folder_tap_keeps_latest_message_until_next_selection(bot, deferred):
         bot.cleanup.remember(2, 6002)
         await receive(bot, '📌 Работа', 7001)
         def deleted():
-            return {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
+            return deleted_ids(bot)
         assert 6001 in deleted() and 7001 not in deleted() and 6002 not in deleted()
         assert bot.store.one('SELECT 1 FROM telegram_messages WHERE owner=1 AND message_id=7001')
         if deferred:

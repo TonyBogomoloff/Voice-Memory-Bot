@@ -97,7 +97,7 @@ class FolderViewMixin:
         else:
             rows = self.store.all("SELECT message_id FROM telegram_messages WHERE owner=? "
                                   "AND thread_id IS ? AND view_blocked=0", (owner, thread))
-        leftovers = 0
+        eligible = []
         for row in rows:
             mid = row['message_id']
             if mid in keep_ids:
@@ -105,25 +105,41 @@ class FolderViewMixin:
             if self.store.one("SELECT 1 FROM notes WHERE owner=? AND message_id=? AND deleted=0 "
                               "AND file_id IS NOT NULL AND audio_bytes=0", (owner, mid)):
                 continue
-            try:
-                await self.view_send(self.telegram.call, 'deleteMessage', chat_id=owner, message_id=mid)
-            except ProviderError as exc:
-                reason = getattr(exc, 'reason', None)
-                if reason == 'delete_forbidden':
-                    leftovers += 1
-                    with self.store.db:
-                        self.store.db.execute('UPDATE telegram_messages SET view_blocked=1 '
-                                              'WHERE owner=? AND message_id=?', (owner, mid))
-                    continue
-                elif reason != 'delete_target_missing':
-                    # Retry transient/unknown failures without forgetting the deletion target.
-                    raise
-            with self.store.db:
-                self.store.db.execute('DELETE FROM telegram_messages WHERE owner=? AND message_id=?', (owner, mid))
-                self.store.db.execute('UPDATE note_messages SET deleted=1 WHERE owner=? AND message_id=?', (owner, mid))
-                # Telegram reply links are disposable; archived AI conversations remain intact.
-                self.store.db.execute('DELETE FROM ai_links WHERE owner=? AND message_id=?', (owner, mid))
+            eligible.append(mid)
+        leftovers = 0
+        for offset in range(0, len(eligible), 100):
+            leftovers += await self.delete_view_batch(owner, eligible[offset:offset + 100])
         return leftovers
+
+    async def delete_view_batch(self, owner, message_ids):
+        try:
+            if len(message_ids) == 1:
+                await self.view_send(self.telegram.call, 'deleteMessage', chat_id=owner, message_id=message_ids[0])
+            else:
+                await self.view_send(self.telegram.call, 'deleteMessages', chat_id=owner, message_ids=message_ids)
+        except ProviderError as exc:
+            reason = getattr(exc, 'reason', None)
+            if len(message_ids) > 1 and reason in {'delete_forbidden', 'delete_target_missing'}:
+                # A rejected batch can contain both deletable and expired messages.
+                leftovers = 0
+                for mid in message_ids:
+                    leftovers += await self.delete_view_batch(owner, [mid])
+                return leftovers
+            if reason == 'delete_forbidden':
+                with self.store.db:
+                    self.store.db.execute('UPDATE telegram_messages SET view_blocked=1 '
+                                          'WHERE owner=? AND message_id=?', (owner, message_ids[0]))
+                return 1
+            if reason != 'delete_target_missing':
+                # Keep every receipt after an ambiguous network failure; deletion is idempotent.
+                raise
+        targets = [(owner, mid) for mid in message_ids]
+        with self.store.db:
+            self.store.db.executemany('DELETE FROM telegram_messages WHERE owner=? AND message_id=?', targets)
+            self.store.db.executemany('UPDATE note_messages SET deleted=1 WHERE owner=? AND message_id=?', targets)
+            # Telegram reply links are disposable; archived AI conversations remain intact.
+            self.store.db.executemany('DELETE FROM ai_links WHERE owner=? AND message_id=?', targets)
+        return 0
 
     async def render_folder_view(self, owner, *, restore_screen=False, notice=None, progress_text="Загружаю папку…"):
         from .bot import transcript_chunks
