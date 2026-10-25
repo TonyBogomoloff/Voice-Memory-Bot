@@ -36,7 +36,9 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
     async def run():
         folder = bot.store.current_folder(1)
         await receive(bot, "/start", 1000)
+        assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
         await receive(bot, "☰ Меню", 1001)
+        assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
         assert {"Включить кнопки под сообщениями", "ℹ️ Help", "🤖 Поговорить с ИИ", BACK, ROOT} == set(labels(bot))
         await receive(bot, "/settings", 1002)
         export = next(label for label in labels(bot) if label.startswith("📦 Экспорт"))
@@ -87,6 +89,7 @@ def test_all_folders_are_reachable_and_stale_labels_never_archive(bot):
         await receive(bot, stale, 1005)
         assert bot.store.current_folder(1) == selected and bot.store.notes(1) == []
         assert "устарела" in last_message(bot)["text"]
+        assert reply_keyboard(bot)["input_field_placeholder"] == "📁 " + bot.store.folder(1, selected)["name"]
         await receive(bot, ROOT, 1006)
         await receive(bot, "☰ Меню", 1007)
         await receive(bot, "📁 Папка", 1008)

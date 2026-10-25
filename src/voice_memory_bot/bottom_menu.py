@@ -100,11 +100,8 @@ class BottomMenuMixin:
         if state["screen"] != "root":
             keyboard.append([{"text": BACK}] if state["screen"].startswith("foldermenu:")
                             else [{"text": BACK}, {"text": ROOT}])
-        placeholder = state["text"].split("\n", 1)[0]
-        if pages > 1:
-            placeholder = f"{page + 1}/{pages} · {placeholder}"
         keys = raw_keys or {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True,
-                            "input_field_placeholder": placeholder[:64]}
+                            "input_field_placeholder": self.folder_input_placeholder(owner)}
         state["actions"] = actions
         previous = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,))
         # Persist before send: a lost Telegram response must not turn the displayed controls into notes.

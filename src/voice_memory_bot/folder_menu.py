@@ -89,6 +89,11 @@ class FolderMenuMixin:
         # Keep pinned shortcuts on their own first page, including intentional empty slots.
         return ([pinned] if pinned else []) + [others[i:i + 4] for i in range(0, len(others), 4)] or [[]]
 
+    def folder_input_placeholder(self, owner):
+        active = self.store.current_folder(owner)
+        name = self.store.folder(owner, active)["name"] if active else "Выбери папку"
+        return ("📁 " + name)[:64]
+
     def folder_keyboard(self, owner):
         active = self.store.current_folder(owner)
         pages = self.folder_keyboard_pages(owner)
@@ -107,8 +112,7 @@ class FolderMenuMixin:
                 rows[1].append({"text": "➡️"})
         return {"keyboard": rows + [[{"text": "＋"}, {"text": "📁 Папка"}, {"text": "☰ Меню"}]],
                 "resize_keyboard": True, "is_persistent": True,
-                "input_field_placeholder": ("📁 " + self.store.folder(owner, active)["name"] +
-                                            " · голосовое, текст или фото")[:64]}
+                "input_field_placeholder": self.folder_input_placeholder(owner)}
 
     async def turn_folder_page(self, owner, thread, text):
         self.leave_folder_options(owner)
