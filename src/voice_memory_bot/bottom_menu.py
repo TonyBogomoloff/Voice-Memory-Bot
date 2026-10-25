@@ -114,9 +114,10 @@ class BottomMenuMixin:
             else:
                 keyboard.append([cancel])
             actions["Отмена"] = "cancel_record_options"
+        elif state.screen.kind == "foldermenu":
+            keyboard[-1].insert(0, {"text": BACK})
         elif state.screen.kind not in {"root", "replymove"}:
-            keyboard.append([{"text": BACK}] if state.screen.kind == "foldermenu"
-                            else [{"text": BACK}, {"text": ROOT}])
+            keyboard.append([{"text": BACK}, {"text": ROOT}])
         keys = raw_keys or {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True,
                             "input_field_placeholder": self.folder_input_placeholder(owner)}
         state.actions = actions
