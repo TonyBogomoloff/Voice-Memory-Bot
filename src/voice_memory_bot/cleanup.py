@@ -90,7 +90,7 @@ class CleanupStore:
                 if table in tables:
                     self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
             for table in ("ai_requests", "ai_links", "ai_note_context", "ai_active", "ai_conversations", "notes", "folders", "implicit_topics",
-                          "telegram_messages", "ai_settings", "user_export_settings", "user_message_settings", "asr_usage"):
+                          "telegram_messages", "ai_settings", "user_export_settings", "user_message_settings", "user_view_settings", "asr_usage"):
                 self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
             if self.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='folder_views'"):
                 self.db.execute("DELETE FROM folder_views WHERE owner=?", (owner,))

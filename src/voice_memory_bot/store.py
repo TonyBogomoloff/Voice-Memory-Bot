@@ -15,6 +15,8 @@ from .states import DeliveryState, InputAction, NoteState
 from .update_queue import UpdateQueue
 
 MAX_PINNED_FOLDERS = 4
+FOLDER_PAGE_SIZES = (10, 20, 50, 100)
+DEFAULT_FOLDER_PAGE_SIZE = 20
 
 
 def normalize(value: str) -> str:
@@ -116,6 +118,19 @@ class Store:
             self.db.execute("INSERT INTO user_message_settings(owner,buttons_enabled) VALUES (?,?) "
                             "ON CONFLICT(owner) DO UPDATE SET buttons_enabled=excluded.buttons_enabled",
                             (owner, int(enabled)))
+
+    def folder_page_size(self, owner: int) -> int:
+        row = self.one("SELECT page_size FROM user_view_settings WHERE owner=?", (owner,))
+        return row["page_size"] if row else DEFAULT_FOLDER_PAGE_SIZE
+
+    def set_folder_page_size(self, owner: int, size: int):
+        if type(size) is not int or size not in FOLDER_PAGE_SIZES:
+            raise ValueError("Выбери 10, 20, 50 или 100 записей")
+        self.register_user(owner)
+        with self.transaction():
+            self.db.execute("INSERT INTO user_view_settings(owner,page_size) VALUES (?,?) "
+                            "ON CONFLICT(owner) DO UPDATE SET page_size=excluded.page_size", (owner, size))
+            self.db.execute("UPDATE folder_views SET page=0 WHERE owner=?", (owner,))
 
     def export_format(self, owner: int) -> str:
         row = self.one("SELECT text_format FROM user_export_settings WHERE owner=?", (owner,))
@@ -360,7 +375,8 @@ class Store:
 
     def export_preferences(self, owner: int):
         user = self.one("SELECT active_folder FROM users WHERE id=?", (owner,))
-        result = {"text_format": self.export_format(owner), "active_folder": user["active_folder"] if user else None}
+        result = {"text_format": self.export_format(owner), "active_folder": user["active_folder"] if user else None,
+                  "folder_page_size": self.folder_page_size(owner)}
         if self.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_settings'"):
             ai = self.one("SELECT wake_enabled,names,model,notes_access FROM ai_settings WHERE owner=?", (owner,))
             if ai:

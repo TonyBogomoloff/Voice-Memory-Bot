@@ -40,6 +40,7 @@ ACTION_ICONS = {
     'aisettings': 'settings', 'aimodels': 'model', 'aimodel': 'model', 'aiaccessmenu': 'access',
     'aiaccess': 'access', 'aiwake': 'toggle', 'ainames': 'edit', 'aiundo': 'undo',
     'airetry': 'retry', 'aicollapse': 'back', 'export': 'export', 'zip': 'export',
+    'pagesettings': 'notes', 'pagesize': 'notes',
     'exportsettings': 'settings', 'exportformat': 'text', 'settings': 'settings', 'help': 'help',
     'deleteall': 'delete', 'delete': 'delete', 'dropfolder': 'delete',
     'confirmdelete': 'delete', 'confirmdeleteall': 'delete', 'confirmdrop': 'delete',

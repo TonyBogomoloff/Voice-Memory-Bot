@@ -1,27 +1,87 @@
 import asyncio
 
+import pytest
+from support.base import make_bot
 from support.commands import bot as bot
-from support.folders import saved
+from support.commands import receive
+from support.folders import deleted_ids, saved
+from support.menus import labels
+
+from voice_memory_bot.bottom_menu import BACK
+from voice_memory_bot.custom_emoji import ARROW_LABELS, icon_id, themed_markup
+from voice_memory_bot.store import Store
 
 
-def test_folder_pages_cover_archive_keep_photos_and_clamp_stale_page(bot):
+@pytest.mark.parametrize("size", [10, 20, 50, 100])
+def test_folder_pages_cover_archive_keep_photos_and_clamp_stale_page(bot, size):
     async def run():
+        assert bot.store.folder_page_size(1) == 20
+        bot.store.set_folder_page_size(1, size)
         folder = bot.store.current_folder(1)
-        notes = [saved(bot, folder, f'Запись {i}', 1000 + i) for i in range(18)]
-        bot.store.update_note(1, notes[16]['id'], audio_bytes=1)
-        with bot.store.db:
-            bot.store.db.execute("UPDATE notes SET kind='photo',file_id='photo-id' WHERE id=?", (notes[16]['id'],))
+        count = size * 2 + 2
+        notes = [saved(bot, folder, f'Запись {i}', 1000 + i) for i in range(count)]
+        bot.store.update_note(1, notes[-2]['id'], audio_bytes=1)
+        with bot.store.transaction():
+            bot.store.db.execute("UPDATE notes SET kind='photo',file_id='photo-id' WHERE id=?", (notes[-2]['id'],))
         before = bot.store.all('SELECT * FROM notes ORDER BY id')
-        for page, expected in [(0, range(10, 18)), (1, range(2, 10)), (2, range(2)), (999, range(2))]:
+        for page, expected in [(0, range(size + 2, count)), (1, range(2, size + 2)),
+                               (2, range(2)), (999, range(2))]:
             bot.telegram.sent.clear()
-            await bot.callback(1, None, 9999, f'folder:{folder}:{page}')
+            await bot.callback(1, None, None, f'folder:{folder}:{page}')
             sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
+            assert sent[0]['text'] == f'Страница {min(page, 2) + 1} из 3'
             assert [p['text'] for p in sent if p['text'].startswith('Запись ')] == [f'Запись {i}' for i in expected]
-            navigation = sent[-1]['keyboard']['inline_keyboard'][0]
-            assert {b['callback_data'] for b in navigation} == (
-                {f'folder:{folder}:1'} if page == 0 or page >= 2 else {f'folder:{folder}:0', f'folder:{folder}:2'})
+            navigation = sent[0]['keyboard']['inline_keyboard'][0]
+            expected_pages = [1] if page == 0 or page >= 2 else [0, 2]
+            assert [b['callback_data'] for b in navigation] == [f'folder:{folder}:{p}' for p in expected_pages]
+            icons = ['next'] if page == 0 else ['back'] if page >= 2 else ['back', 'next']
+            themed, _ = themed_markup(sent[0]['keyboard'])
+            assert [b['icon_custom_emoji_id'] for b in themed['inline_keyboard'][0]] == [icon_id(i) for i in icons]
+            assert [b['text'] for b in themed['inline_keyboard'][0]] == [ARROW_LABELS[i] for i in icons]
             photos = [p for m, p in bot.telegram.sent if m == 'sendPhoto']
             assert [p['photo'] for p in photos] == (['photo-id'] if page == 0 else [])
             assert bot.store.one('SELECT page FROM folder_views WHERE owner=1')['page'] == min(page, 2)
+            live_ids = {r['message_id'] for r in bot.store.all('SELECT message_id FROM telegram_messages WHERE owner=1')}
+            assert not live_ids & deleted_ids(bot)
         assert bot.store.all('SELECT * FROM notes ORDER BY id') == before
+    asyncio.run(run())
+
+
+def test_default_twenty_and_single_page_has_no_arrows(bot):
+    async def run():
+        folder = bot.store.current_folder(1)
+        for i in range(20):
+            saved(bot, folder, f'Запись {i}', 1000 + i)
+        await bot.show_notes(1, None, folder)
+        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
+        assert sent[0]['text'] == 'Страница 1 из 1' and not sent[0]['keyboard']
+        assert len([p for p in sent if p['text'].startswith('Запись ')]) == 20
+        assert not any('folder:' in str(p.get('keyboard')) for p in sent)
+    asyncio.run(run())
+
+
+def test_page_size_settings_persist_are_owner_scoped_and_keep_back_path(bot, tmp_path):
+    async def run():
+        await receive(bot, '/settings', 5000)
+        await receive(bot, '📝 Записей на странице · 20', 5001)
+        assert {'10', '✓ 20', '50', '100'} <= set(labels(bot))
+        await receive(bot, '50', 5002)
+        assert '✓ 50' in labels(bot)
+        await receive(bot, BACK, 5003)
+        assert '📝 Записей на странице · 50' in labels(bot)
+        reopened = Store(tmp_path / 'archive.sqlite3', bot.store.limits)
+        try:
+            assert reopened.folder_page_size(1) == 50 and reopened.folder_page_size(2) == 20
+            restarted = make_bot(tmp_path, reopened)
+            await receive(restarted, '📝 Записей на странице · 50', 5004)
+            await receive(restarted, '10', 5005)
+            assert reopened.folder_page_size(1) == 10
+            assert reopened.export_preferences(1)['folder_page_size'] == 10
+            assert reopened.notes(1) == []
+            for invalid in ['0', '101', '-1', 'wrong']:
+                with pytest.raises(ValueError):
+                    await restarted.callback(1, None, None, f'pagesize:{invalid}')
+            assert reopened.folder_page_size(1) == 10
+        finally:
+            reopened.close()
     asyncio.run(run())

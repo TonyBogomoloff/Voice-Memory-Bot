@@ -11,7 +11,6 @@ from .providers import ProviderError, silent_delivery
 
 log = logging.getLogger(__name__)
 RENEW_AFTER = 24 * 3600
-VIEW_PAGE_SIZE = 8
 
 
 class FolderViewMixin:
@@ -149,25 +148,37 @@ class FolderViewMixin:
         bottom = self.bottom_state(owner) if restore_screen else None
         count = self.store.one("SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0 AND entry_type='note'",
                                (owner, identity))['n']
-        page = min(page, max(0, (count - 1) // VIEW_PAGE_SIZE))
+        page_size = self.store.folder_page_size(owner)
+        page = min(page, max(0, (count - 1) // page_size))
         with self.store.transaction():
             self.store.db.execute('UPDATE folder_views SET dirty=1,folder_id=?,page=? WHERE owner=?',
                                   (identity, page, owner))
         self.view_rendering.add(owner)
         token = silent_delivery.set(True)
-        loading_id = None
+        loading_id = navigation_id = None
         started = time.monotonic()
         cleanup_started = delivery_started = None
         rendered = 0
         complete = False
         try:
+            if count and not (restore_screen and view['screen']):
+                nav = []
+                if page:
+                    nav.append({'text': '⬅️', 'callback_data': f'folder:{identity}:{page - 1}'})
+                if (page + 1) * page_size < count:
+                    nav.append({'text': '➡️', 'callback_data': f'folder:{identity}:{page + 1}'})
+                pages = (count + page_size - 1) // page_size
+                navigation = await self.view_send(self.telegram.text, owner,
+                    f'Страница {page + 1} из {pages}', thread,
+                    {'inline_keyboard': [nav]} if nav else None)
+                navigation_id = navigation['message_id']
             loading = await self.view_send(self.telegram.text, owner, progress_text, thread)
             loading_id = loading["message_id"]
             self.folder_keyboards.pop(owner, None)
             header = await self.refresh_folder_keyboard(owner, thread, notice=notice, transient=not notice)
             cleanup_started = time.monotonic()
             leftovers = await self.clear_folder_view(owner, thread, all_threads=True,
-                keep_ids=(view['command_message_id'], loading_id, (header or {}).get('message_id')))
+                keep_ids=(view['command_message_id'], navigation_id, loading_id, (header or {}).get('message_id')))
             delivery_started = time.monotonic()
             if restore_screen and view['screen'] and not bottom:
                 screen = json.loads(view['screen'])
@@ -177,7 +188,7 @@ class FolderViewMixin:
                     self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
                 complete = True
                 return
-            notes = self.store.notes(owner, identity, limit=VIEW_PAGE_SIZE, offset=page * VIEW_PAGE_SIZE)
+            notes = self.store.notes(owner, identity, limit=page_size, offset=page * page_size)
             for note in reversed(notes):
                 rendered += 1
                 content = note.get('content') if note.get('content') is not None else note['transcript']
@@ -202,15 +213,6 @@ class FolderViewMixin:
                             {'inline_keyboard': [[{'text': 'Опции', 'callback_data': f"aioptions:{note['id']}"}]]},
                             reply_to=instruction_id)
                         self.ai_state.link(owner, response['message_id'], request['conversation_id'])
-            if count > VIEW_PAGE_SIZE:
-                nav = []
-                if (page + 1) * VIEW_PAGE_SIZE < count:
-                    nav.append({'text': '← Раньше', 'callback_data': f'folder:{identity}:{page + 1}'})
-                if page:
-                    nav.append({'text': 'Новее →', 'callback_data': f'folder:{identity}:{page - 1}'})
-                pages = (count + VIEW_PAGE_SIZE - 1) // VIEW_PAGE_SIZE
-                await self.view_send(self.telegram.text, owner, f'Записи · страница {page + 1} из {pages}', thread,
-                                     {'inline_keyboard': [nav]})
             if bottom and bottom['screen'] != 'root':
                 if self.store.action(owner):
                     await self.send_bottom(owner, thread, bottom)

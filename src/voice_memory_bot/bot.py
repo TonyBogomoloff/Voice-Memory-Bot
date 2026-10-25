@@ -690,6 +690,14 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             return await self.export_menu(owner, thread, identity, message_id)
         if action == "settings":
             return await self.settings_menu(owner, thread, message_id)
+        if action == "pagesettings":
+            return await self.page_size_menu(owner, thread, message_id)
+        if action == "pagesize":
+            from .store import FOLDER_PAGE_SIZES
+            if identity not in {str(size) for size in FOLDER_PAGE_SIZES}:
+                raise ValueError("Выбери 10, 20, 50 или 100 записей")
+            self.store.set_folder_page_size(owner, int(identity))
+            return await self.page_size_menu(owner, thread, message_id)
         if action in {"messagebuttons", "menumessagebuttons"}:
             if identity not in {"0", "1"}:
                 raise ValueError("Открой настройки заново")
@@ -845,7 +853,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         enabled = self.store.message_buttons_enabled(owner)
         rows = [[button("Кнопки у сообщений: " + ("вкл" if enabled else "выкл"),
                         f"messagebuttons:{0 if enabled else 1}")],
-                [button(f"📦 Экспорт · {label}", "exportsettings:all")]]
+                [button(f"📦 Экспорт · {label}", "exportsettings:all")],
+                [button(f"📝 Записей на странице · {self.store.folder_page_size(owner)}", "pagesettings")]]
         if hasattr(self, "ai_settings"):
             rows.append([button("🤖 Настройки ИИ", "aisettings")])
         rows.append([button("🗑 Удалить всё", "deleteall")])
@@ -855,6 +864,18 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 "Архив и расшифровка работают в обоих режимах.")
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen="settings:all",
                                back="home", edit_id=edit_id)
+
+    async def page_size_menu(self, owner, thread, edit_id=None):
+        from .store import FOLDER_PAGE_SIZES
+        selected = self.store.folder_page_size(owner)
+        choices = [button(("✓ " if size == selected else "") + str(size), f"pagesize:{size}")
+                   for size in FOLDER_PAGE_SIZES]
+        await self.show_bottom(owner,
+            f"📝 Записей на странице · {selected}\n\n"
+            "Выбери, сколько записей показывать при открытии папки. "
+            "Меньше записей — быстрее загрузка. Выбор применяется при следующем открытии папки.",
+            thread, keyboard(choices[:2], choices[2:]), screen="pagesettings", back="settings:all",
+            keep=True, edit_id=edit_id)
 
     async def export_settings(self, owner, thread, scope="all", edit_id=None):
         if scope != "all":

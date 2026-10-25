@@ -263,7 +263,16 @@ def baseline(store):
                           "owner INTEGER PRIMARY KEY, folder_id TEXT NOT NULL)")
 
 
-MIGRATIONS = (baseline,)
+def folder_page_settings(store):
+    store.db.execute("""CREATE TABLE IF NOT EXISTS user_view_settings (
+        owner INTEGER PRIMARY KEY REFERENCES users(id),
+        page_size INTEGER NOT NULL DEFAULT 20 CHECK(page_size IN (10, 20, 50, 100))
+    )""")
+    # Page offsets from the previous eight-record view no longer identify the same records.
+    store.db.execute("UPDATE folder_views SET page=0")
+
+
+MIGRATIONS = (baseline, folder_page_settings)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

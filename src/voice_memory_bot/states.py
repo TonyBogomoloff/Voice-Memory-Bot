@@ -57,7 +57,7 @@ class Target:
     @property
     def can_reopen(self):
         # Back must never replay a mutation, deletion or confirmation.
-        return self.kind in {'folders', 'foldermenu', 'settings', 'export', 'exportsettings',
+        return self.kind in {'folders', 'foldermenu', 'settings', 'pagesettings', 'export', 'exportsettings',
                              'aisettings', 'aimodels', 'aiaccessmenu', 'ailist'}
 
 

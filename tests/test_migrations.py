@@ -61,3 +61,26 @@ def test_failed_legacy_migration_rolls_back_schema_and_version(tmp_path, monkeyp
         assert db.execute('PRAGMA user_version').fetchone()[0] == 0
         assert 'transcript_message_id' not in {r[1] for r in db.execute('PRAGMA table_info(notes)')}
         assert db.execute('SELECT transcript FROM notes WHERE id=?', (note['id'],)).fetchone()[0] == 'Не потерять'
+
+
+
+def test_page_settings_upgrade_preserves_archive_and_resets_old_offsets(tmp_path):
+    path = tmp_path / 'db'
+    store = Store(path, Limits())
+    note = add(store, kind='text', transcript='Сохранённый текст')
+    before = store.note(1, note['id'])
+    with store.transaction():
+        store.db.execute('DROP TABLE user_view_settings')
+        store.db.execute('PRAGMA user_version=1')
+        store.db.execute('INSERT INTO folder_views(owner,folder_id,page,dirty) VALUES (?,?,4,0)',
+                         (1, note['folder_id']))
+    store.close()
+    store = Store(path, Limits())
+    try:
+        assert store.folder_page_size(1) == 20
+        assert store.note(1, note['id']) == before
+        assert store.one('SELECT page,dirty FROM folder_views WHERE owner=1') == {'page': 0, 'dirty': 0}
+        store.set_folder_page_size(1, 100)
+        assert store.folder_page_size(1) == 100
+    finally:
+        store.close()

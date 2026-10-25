@@ -82,6 +82,8 @@ def test_menu_requires_confirmation_and_cancel_expiry_replay_are_safe(bot):
 
 def test_full_cleanup_removes_only_owner_data_and_all_known_telegram_locations(bot):
     async def run():
+        bot.store.set_folder_page_size(1, 100)
+        bot.store.set_folder_page_size(2, 50)
         folder = bot.store.create_folder(1, "Проект", 110)
         bot.store.select(1, folder["id"])
         own = note(bot, folder=folder["id"])
@@ -117,6 +119,8 @@ def test_full_cleanup_removes_only_owner_data_and_all_known_telegram_locations(b
                           incoming(owner=2, message_id=1003, update_id=6)], {1, 2})
         bot.store.fail_update(5)
         await confirm(bot, thread=110)
+        assert bot.store.folder_page_size(1) == 20
+        assert bot.store.folder_page_size(2) == 50
         assert bot.store.folders(1) == []
         assert bot.store.export_notes(1) == []
         assert bot.store.all("SELECT * FROM emoji_keyboard_labels WHERE owner=1") == []
