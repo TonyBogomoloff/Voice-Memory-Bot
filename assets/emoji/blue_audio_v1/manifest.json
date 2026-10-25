@@ -209,6 +209,11 @@
       "name": "record",
       "emoji": "🔴",
       "label": "Запись"
+    },
+    {
+      "name": "menu_list",
+      "emoji": "🎛️",
+      "label": "Меню · список"
     }
   ]
 }

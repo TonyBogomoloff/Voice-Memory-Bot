@@ -8,6 +8,7 @@ const types = {voice: ["microphone", "Голосовая запись"], audio: 
 let toastTimer, pollTimer;
 
 function icon(name, className = "") {
+  if (name === "menu") name = "menu_list";
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("class", "blue-icon " + className);
   svg.setAttribute("aria-hidden", "true");

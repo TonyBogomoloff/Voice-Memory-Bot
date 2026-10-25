@@ -9,6 +9,12 @@ from pathlib import Path
 PACK = json.loads(Path(__file__).with_name('emoji_pack.json').read_text())
 IDS = PACK['ids']
 
+def icon_id(name):
+    return IDS['menu_list' if name == 'menu' else name]
+
+# Non-whitespace invisible labels survive Telegram's required text and input stripping.
+ARROW_LABELS = {'back': '\u2060', 'next': '\u2060\u2060'}
+
 # Unicode stays in message text as a portable fallback; Telegram draws these entities in blue.
 GLYPHS = {
     '🎙': 'microphone', '🎤': 'microphone', '🎚': 'recorder', '📼': 'cassette',
@@ -53,6 +59,8 @@ def utf16(text):
 
 def semantic_icon(item):
     text = item['text'].strip()
+    if text == '📁 Папка':
+        return 'settings'
     match = PATTERN.match(text)
     marker = GLYPHS[match.group().replace('\ufe0f', '')] if match else None
     if marker in {'check', 'folder_active', 'back', 'next'}:
@@ -84,6 +92,10 @@ def semantic_icon(item):
 
 
 def button_label(text, name):
+    if name in ARROW_LABELS:
+        return ARROW_LABELS[name]
+    if text == '📁 Папка':
+        return 'Настройки'
     # Only the UI's leading marker is removed. A user's emoji in a title is kept.
     match = PATTERN.match(text)
     if match:
@@ -110,12 +122,12 @@ def themed_markup(markup):
                 label = 'Папка · ' + label
             stem, n = label, 2
             while kind == 'keyboard' and label in used:
-                label = f'{stem} · {n}'
+                label = stem + '\u200b' * n if name in ARROW_LABELS else f'{stem} · {n}'
                 n += 1
             used.add(label)
             if kind == 'keyboard':
                 aliases[label] = item['text']
-            row[i] = {**item, 'text': label, 'icon_custom_emoji_id': IDS[name]}
+            row[i] = {**item, 'text': label, 'icon_custom_emoji_id': icon_id(name)}
     if result.get('input_field_placeholder', '').startswith('📁 '):
         result['input_field_placeholder'] = result['input_field_placeholder'][2:]
     return result, aliases
@@ -133,7 +145,7 @@ def themed_text(text, existing=()):
         if any(e['offset'] < offset + length and offset < e['offset'] + e['length'] for e in entities):
             continue
         entities.append({'type': 'custom_emoji', 'offset': offset, 'length': length,
-                         'custom_emoji_id': IDS[GLYPHS[glyph]]})
+                         'custom_emoji_id': icon_id(GLYPHS[glyph])})
     return sorted(entities, key=lambda e: e['offset'])
 
 

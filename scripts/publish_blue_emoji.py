@@ -42,8 +42,20 @@ def main():
         name='AudioNotesBlueTape_by_'+me['username']
         old=api('getStickerSet',missing=True,name=name)
         if old:
-            if old['sticker_type']!='custom_emoji' or len(old['stickers'])!=len(manifest['icons']):
+            if old['sticker_type']!='custom_emoji' or len(old['stickers'])>len(manifest['icons']):
                 raise SystemExit('Existing set differs; refusing to replace/reorder it')
+            receipt=json.loads((args.assets/'publication.json').read_text())
+            for item, sticker in zip(manifest['icons'], old['stickers']):
+                if receipt['ids'].get(item['name']) != sticker['custom_emoji_id']:
+                    raise SystemExit('Existing IDs differ; refusing to append')
+            for item in manifest['icons'][len(old['stickers']):]:
+                path=args.assets/(item['name']+'.png')
+                with path.open('rb') as handle:
+                    uploaded=api('uploadStickerFile',user_id=str(args.owner),sticker_format='static',
+                                 files={'sticker':(path.name,handle,'image/png')})
+                api('addStickerToSet',user_id=args.owner,name=name,
+                    sticker={'sticker':uploaded['file_id'],'format':'static','emoji_list':[item['emoji']]})
+            old=api('getStickerSet',name=name)
         else:
             stickers=[]
             for item in manifest['icons']:
