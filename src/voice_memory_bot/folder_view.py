@@ -10,6 +10,7 @@ from .providers import ProviderError, silent_delivery
 
 log = logging.getLogger(__name__)
 RENEW_AFTER = 24 * 3600
+VIEW_PAGE_SIZE = 8
 
 
 class FolderViewMixin:
@@ -155,7 +156,7 @@ class FolderViewMixin:
         bottom = self.bottom_state(owner) if restore_screen else None
         count = self.store.one("SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0 AND entry_type='note'",
                                (owner, identity))['n']
-        page = min(page, max(0, (count - 1) // 8))
+        page = min(page, max(0, (count - 1) // VIEW_PAGE_SIZE))
         with self.store.db:
             self.store.db.execute('UPDATE folder_views SET dirty=1,folder_id=?,page=? WHERE owner=?',
                                   (identity, page, owner))
@@ -176,7 +177,7 @@ class FolderViewMixin:
                 with self.store.db:
                     self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
                 return
-            notes = self.store.notes(owner, identity, limit=count)
+            notes = self.store.notes(owner, identity, limit=VIEW_PAGE_SIZE, offset=page * VIEW_PAGE_SIZE)
             for note in reversed(notes):
                 content = note.get('content') if note.get('content') is not None else note['transcript']
                 answer = self.ai_state.result_request(owner, note['id'])
@@ -200,6 +201,15 @@ class FolderViewMixin:
                             {'inline_keyboard': [[{'text': 'Опции', 'callback_data': f"aioptions:{note['id']}"}]]},
                             reply_to=instruction_id)
                         self.ai_state.link(owner, response['message_id'], request['conversation_id'])
+            if count > VIEW_PAGE_SIZE:
+                nav = []
+                if (page + 1) * VIEW_PAGE_SIZE < count:
+                    nav.append({'text': '← Раньше', 'callback_data': f'folder:{identity}:{page + 1}'})
+                if page:
+                    nav.append({'text': 'Новее →', 'callback_data': f'folder:{identity}:{page - 1}'})
+                pages = (count + VIEW_PAGE_SIZE - 1) // VIEW_PAGE_SIZE
+                await self.view_send(self.telegram.text, owner, f'Записи · страница {page + 1} из {pages}', thread,
+                                     {'inline_keyboard': [nav]})
             if bottom and bottom['screen'] != 'root':
                 if self.store.action(owner):
                     await self.send_bottom(owner, thread, bottom)

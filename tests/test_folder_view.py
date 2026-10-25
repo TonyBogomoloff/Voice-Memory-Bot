@@ -229,7 +229,7 @@ def test_old_topic_cleanup_does_not_block_switch_and_clears_before_header(bot):
     asyncio.run(run())
 
 
-def test_switch_has_all_records_and_no_persistent_header_or_menu(bot):
+def test_switch_has_latest_page_and_keeps_folder_keyboard(bot):
     async def run():
         bot.store.set_message_buttons(1, True)
         old = bot.store.ensure_user(1)
@@ -241,13 +241,14 @@ def test_switch_has_all_records_and_no_persistent_header_or_menu(bot):
         bot.telegram.sent.clear()
         await receive(bot, '📌 Работа', 2000)
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage' and p['text'] != 'Загружаю папку…']
-        assert len(sent) == 11
+        assert len(sent) == 10
         assert 'Работа' in sent[0]['keyboard']['input_field_placeholder']
         assert bot.telegram.sent[next(i for i, (m, _) in enumerate(bot.telegram.sent)
                                       if m == 'sendMessage') + 1][0] in {'deleteMessage', 'deleteMessages'}
         assert all('Входящие' not in p['text'] for p in sent)
-        assert {p['text'] for p in sent[1:]} == {f'Запись {i}' for i in range(10)}
-        for p in sent[1:]:
+        assert [p['text'] for p in sent[1:-1]] == [f'Запись {i}' for i in range(2, 10)]
+        assert sent[-1]['keyboard']['inline_keyboard'][0][0]['callback_data'] == f'folder:{work}:1'
+        for p in sent[1:-1]:
             rows = p['keyboard']['inline_keyboard']
             assert [[b['text'] for b in row] for row in rows] == [['Переместить', 'Удалить', 'ИИ']]
         deleted = deleted_ids(bot)
