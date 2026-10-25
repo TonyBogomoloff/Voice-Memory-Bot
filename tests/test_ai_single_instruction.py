@@ -18,12 +18,15 @@ def message(identity, text=None, *, voice=False, reply=None):
     return {'message': value}
 
 
+@pytest.mark.parametrize('instruction_reply', [None, 'source', 'prompt'])
 @pytest.mark.parametrize('entry', ['command', 'reply_command', 'button'])
 @pytest.mark.parametrize('voice', [False, True])
-def test_ai_instruction_is_consumed_before_processing_and_saved_answer_can_be_replied_to(bot, entry, voice):
+def test_ai_instruction_is_consumed_before_processing_and_saved_answer_can_be_replied_to(bot, entry, voice, instruction_reply):
     async def run():
         await bot.show_home(1)
         source = await receive(bot, 'Исходная мысль', 1000)
+        old_conversation = bot.ai_state.start_note_conversation(1, source['id'])
+        bot.ai_state.link(1, source['message_id'], old_conversation)
         bottom, keyboard = bot.bottom_state(1), reply_keyboard(bot)
         if entry == 'button':
             await bot.callback(1, None, source['message_id'], f"aiask:{source['id']}")
@@ -38,7 +41,8 @@ def test_ai_instruction_is_consumed_before_processing_and_saved_answer_can_be_re
         assert bot.bottom_state(1) == bottom and reply_keyboard(bot) == keyboard
         assert bot.ai_state.claim() is None
 
-        await bot.handle(message(1002, 'Сделай короче', voice=voice))
+        reply = {'source': source['message_id'], 'prompt': prompt_id}.get(instruction_reply)
+        await bot.handle(message(1002, 'Сделай короче', voice=voice, reply=reply))
         assert bot.store.action(1) is None
         assert any(method == 'editMessageReplyMarkup' and payload['message_id'] == prompt_id
                    and payload['reply_markup'] == {'inline_keyboard': []}

@@ -73,17 +73,28 @@ class AIBotMixin:
         reply = self.reply_input(owner, message)
         conversation = self.ai_state.reply_conversation(owner, reply["message_id"]) if reply else None
         action = self.store.action(owner) or ""
-        if scoped and not reply and action.startswith("ai_note:"):
-            conversation = action.split(":", 1)[1]
-            context = self.ai_state.note_context(owner, conversation)
-            if context:
-                self.store.note(owner, context["note_id"])
+        prompt = None
+        consume_action = False
+        if scoped and action.startswith("ai_note:"):
+            pending = action.split(":", 1)[1]
+            pending_prompt = self.store.one(
+                "SELECT * FROM ai_instruction_prompts WHERE owner=? AND conversation_id=?", (owner, pending))
+            context = self.ai_state.note_context(owner, pending)
+            replied_note = self.ai_state.message_note(owner, reply["message_id"]) if reply else None
+            # Reply to the selected record must not revive an older conversation.
+            # Reply to our invitation is also an instruction, not source material.
+            prompt_reply = pending_prompt and reply and reply["message_id"] == pending_prompt["message_id"]
+            source_reply = context and replied_note and replied_note["id"] == context["note_id"]
+            if not reply or prompt_reply or source_reply or conversation == pending:
+                conversation, prompt, consume_action = pending, pending_prompt, True
+                if context:
+                    self.store.note(owner, context["note_id"])
+                if prompt_reply:
+                    reply = None
         if reply or conversation or note["input_mode"] == "chat":
             trigger = "reply" if reply or conversation else "folder"
             if not reply and not conversation and not self.ai_state.request(owner, note["id"]):
                 conversation = self.ai_state.active(owner, note["source_folder"])
-            prompt = self.store.one("SELECT * FROM ai_instruction_prompts WHERE owner=? AND conversation_id=?",
-                                    (owner, conversation)) if scoped and action.startswith("ai_note:") else None
             with self.store.transaction():
                 request = self.ai_state.enqueue(owner, note["id"], trigger,
                                       message.get("message_thread_id"), prompt["reply_to"] if prompt else message["message_id"], conversation,
@@ -91,7 +102,7 @@ class AIBotMixin:
                 self.ai_state.link(owner, message['message_id'], request['conversation_id'])
                 if reply:
                     self.ai_state.link(owner, reply['message_id'], request['conversation_id'])
-                if scoped and action.startswith("ai_note:"):
+                if consume_action:
                     # Consume at acceptance, before ASR or AI can leave another message waiting.
                     self.store.set_action(owner, None)
 
