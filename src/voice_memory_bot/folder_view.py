@@ -51,7 +51,8 @@ class FolderViewMixin:
             self.store.one("SELECT 1 FROM ai_requests WHERE owner=? AND "
                            "(state IN ('queued','running') OR delivery='pending') LIMIT 1", (owner,)))
 
-    async def show_notes(self, owner, thread, identity, page=0, edit_id=None, notice=None, command_message_id=None):
+    async def show_notes(self, owner, thread, identity, page=0, edit_id=None, notice=None, command_message_id=None,
+                         progress_text="Загружаю папку…"):
         self.store.folder(owner, identity)
         self.leave_folder_options(owner)
         self.store.set_action(owner, None)
@@ -70,7 +71,7 @@ class FolderViewMixin:
         if self.view_busy(owner):
             return await self.refresh_folder_keyboard(owner, thread, force=True,
                 notice="Папка выбрана. Обновлю сообщения, когда завершу текущую обработку.")
-        await self.render_folder_view(owner, notice=notice)
+        await self.render_folder_view(owner, notice=notice, progress_text=progress_text)
 
     async def view_send(self, method, *args, **kwargs):
         for attempt in range(4):
@@ -121,7 +122,7 @@ class FolderViewMixin:
                 self.store.db.execute('UPDATE note_messages SET deleted=1 WHERE owner=? AND message_id=?', (owner, mid))
         return leftovers
 
-    async def render_folder_view(self, owner, *, restore_screen=False, notice=None):
+    async def render_folder_view(self, owner, *, restore_screen=False, notice=None, progress_text="Загружаю папку…"):
         from .bot import transcript_chunks
         view = self.store.one('SELECT * FROM folder_views WHERE owner=?', (owner,))
         if not view or (self.cleanup.job(owner) or {}).get('files_pending') or owner in self.deleting_owners:
@@ -143,7 +144,7 @@ class FolderViewMixin:
         token = silent_delivery.set(True)
         loading_id = None
         try:
-            loading = await self.view_send(self.telegram.text, owner, "Загружаю папку…", thread)
+            loading = await self.view_send(self.telegram.text, owner, progress_text, thread)
             loading_id = loading["message_id"]
             self.folder_keyboards.pop(owner, None)
             leftovers = await self.clear_folder_view(owner, thread, all_threads=True,

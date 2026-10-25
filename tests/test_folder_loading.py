@@ -47,3 +47,29 @@ def test_only_selected_folder_has_primary_style(bot):
         buttons = [b for row in bot.folder_keyboard(1)['keyboard'] for b in row]
         styled = [b for b in buttons if b.get('style') == 'primary']
         assert [b['text'] for b in styled] == ['✓ 📌 ' + bot.store.folder(1, selected)['name']]
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_create_progress_is_visible_during_cleanup_and_removed(bot, fail):
+    async def run():
+        original = bot.clear_folder_view
+        progress_id = None
+
+        async def clear(*args, **kwargs):
+            nonlocal progress_id
+            assert bot.telegram.sent[-1][1]["text"] == "Создаю папку…"
+            progress_id = bot.telegram.message_sequence
+            assert progress_id in kwargs["keep_ids"]
+            if fail:
+                raise ProviderError("telegram_transport_unknown")
+            return await original(*args, **kwargs)
+
+        bot.clear_folder_view = clear
+        if fail:
+            with pytest.raises(ProviderError):
+                await bot.create_folder(1, None, "Новая папка")
+        else:
+            await bot.create_folder(1, None, "Новая папка")
+        assert bot.telegram.sent[-1] == ("deleteMessage", {"chat_id": 1, "message_id": progress_id})
+        assert any(f["name"] == "Новая папка" for f in bot.store.folders(1))
+    asyncio.run(run())

@@ -442,7 +442,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         folder = self.store.create_folder(owner, name)
         if note_id:
             return await self.move(owner, note_id, folder["id"], thread)
-        await self.show_notes(owner, thread, folder["id"], notice=f"✅ Папка «{folder['name']}» создана.")
+        await self.show_notes(owner, thread, folder["id"], notice=f"✅ Папка «{folder['name']}» создана.",
+                              progress_text="Создаю папку…")
 
     async def show_folders(self, owner, thread=None, edit_id=None, page=0, note_id=None):
         if not note_id:
