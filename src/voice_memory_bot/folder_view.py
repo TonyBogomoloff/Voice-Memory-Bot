@@ -19,6 +19,7 @@ class FolderViewMixin:
     def init_folder_view(self):
         self.view_locks = defaultdict(asyncio.Lock)
         self.view_rendering = set()
+        self.view_refresh_event = asyncio.Event()
         if "view_blocked" not in {r[1] for r in self.store.db.execute("PRAGMA table_info(telegram_messages)")}:
             self.store.db.execute("ALTER TABLE telegram_messages ADD COLUMN view_blocked INTEGER NOT NULL DEFAULT 0")
         self.store.db.executescript("""
@@ -70,6 +71,7 @@ class FolderViewMixin:
             self.store.db.execute("UPDATE folder_views SET command_message_id=? WHERE owner=?",
                                   (command_message_id, owner))
         if self.view_busy(owner):
+            self.view_refresh_event.set()
             return await self.refresh_folder_keyboard(owner, thread, force=True,
                 notice="Папка выбрана. Обновлю сообщения, когда завершу текущую обработку.")
         await self.render_folder_view(owner, notice=notice, progress_text=progress_text)
@@ -82,7 +84,9 @@ class FolderViewMixin:
                 # 429 is an explicit refusal, so retry this operation, not the whole page.
                 if str(exc) != "telegram_429" or attempt == 3:
                     raise
-                await asyncio.sleep(max(1, min(60, getattr(exc, "retry_after", 5))))
+                delay = max(1, min(60, getattr(exc, "retry_after", 5)))
+                log.info('folder view rate limit retry attempt=%s wait_s=%s', attempt + 1, delay)
+                await asyncio.sleep(delay)
 
     async def clear_folder_view(self, owner, thread, all_threads=False, keep_ids=()):
         # Daily renewal covers every known message of this owner, never guessed IDs or other chats.
@@ -163,22 +167,30 @@ class FolderViewMixin:
         self.view_rendering.add(owner)
         token = silent_delivery.set(True)
         loading_id = None
+        started = time.monotonic()
+        cleanup_started = delivery_started = None
+        rendered = 0
+        complete = False
         try:
             loading = await self.view_send(self.telegram.text, owner, progress_text, thread)
             loading_id = loading["message_id"]
             self.folder_keyboards.pop(owner, None)
+            header = await self.refresh_folder_keyboard(owner, thread, notice=notice, transient=not notice)
+            cleanup_started = time.monotonic()
             leftovers = await self.clear_folder_view(owner, thread, all_threads=True,
-                                                      keep_ids=(view['command_message_id'], loading_id))
-            await self.refresh_folder_keyboard(owner, thread, notice=notice, transient=not notice)
+                keep_ids=(view['command_message_id'], loading_id, (header or {}).get('message_id')))
+            delivery_started = time.monotonic()
             if restore_screen and view['screen'] and not bottom:
                 screen = json.loads(view['screen'])
                 # Upgrade old saved inline menus through the same bottom navigation path.
                 await self.show(owner, screen['text'], thread, screen['keys'])
                 with self.store.db:
                     self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
+                complete = True
                 return
             notes = self.store.notes(owner, identity, limit=VIEW_PAGE_SIZE, offset=page * VIEW_PAGE_SIZE)
             for note in reversed(notes):
+                rendered += 1
                 content = note.get('content') if note.get('content') is not None else note['transcript']
                 answer = self.ai_state.result_request(owner, note['id'])
                 if answer:
@@ -221,12 +233,21 @@ class FolderViewMixin:
                     'Их можно убрать вручную. Все записи сохранены в архиве.', thread)
             with self.store.db:
                 self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
+            complete = True
         finally:
             try:
                 await self.remove_menu_message(owner, loading_id)
             finally:
                 silent_delivery.reset(token)
                 self.view_rendering.discard(owner)
+                finished = time.monotonic()
+                log.info('folder view render owner=%s page=%s notes=%s complete=%s '
+                         'menu_ms=%.1f cleanup_ms=%.1f delivery_ms=%.1f total_ms=%.1f',
+                         owner, page, rendered, complete,
+                         ((cleanup_started or finished) - started) * 1000,
+                         ((delivery_started or finished) - cleanup_started) * 1000 if cleanup_started else 0,
+                         (finished - delivery_started) * 1000 if delivery_started else 0,
+                         (finished - started) * 1000)
 
     async def render_empty_view(self, owner, view):
         self.view_rendering.add(owner)
@@ -286,5 +307,11 @@ class FolderViewMixin:
 
     async def folder_view_worker(self):
         while True:
+            self.view_refresh_event.clear()
             await self.refresh_due_views()
-            await asyncio.sleep(5)
+            # Completion signals wake immediately; the short dirty fallback covers external uploads.
+            timeout = 1 if self.store.one('SELECT 1 FROM folder_views WHERE dirty=1 LIMIT 1') else 5
+            try:
+                await asyncio.wait_for(self.view_refresh_event.wait(), timeout)
+            except TimeoutError:
+                pass

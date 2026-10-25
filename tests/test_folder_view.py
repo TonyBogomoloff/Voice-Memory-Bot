@@ -205,7 +205,7 @@ def test_settings_without_prior_folder_visit_and_return_to_folder(bot):
     asyncio.run(run())
 
 
-def test_old_topic_cleanup_does_not_block_switch_and_clears_before_header(bot):
+def test_old_topic_cleanup_preserves_new_folder_header(bot):
     async def run():
         inbox = bot.store.ensure_user(1)
         work = bot.store.create_folder(1, 'Работа')['id']
@@ -217,7 +217,7 @@ def test_old_topic_cleanup_does_not_block_switch_and_clears_before_header(bot):
             bot.store.db.execute("INSERT INTO deletion_targets VALUES (1,'topic',99,NULL)")
         await bot.show_notes(1, None, work)
         assert bot.telegram.sent[0][1]['text'] == 'Загружаю папку…'
-        assert bot.telegram.sent[1][0] in {'deleteMessage', 'deleteMessages'}
+        assert bot.telegram.sent[1][0] == 'sendMessage'
         header = next(p for m, p in bot.telegram.sent if m == 'sendMessage' and p.get('keyboard'))
         assert '✅ Работа' in str(header)
         deleted = deleted_ids(bot)
@@ -244,7 +244,7 @@ def test_switch_has_latest_page_and_keeps_folder_keyboard(bot):
         assert len(sent) == 10
         assert 'Работа' in sent[0]['keyboard']['input_field_placeholder']
         assert bot.telegram.sent[next(i for i, (m, _) in enumerate(bot.telegram.sent)
-                                      if m == 'sendMessage') + 1][0] in {'deleteMessage', 'deleteMessages'}
+                                      if m == 'sendMessage') + 1][0] == 'sendMessage'
         assert all('Входящие' not in p['text'] for p in sent)
         assert [p['text'] for p in sent[1:-1]] == [f'Запись {i}' for i in range(2, 10)]
         assert sent[-1]['keyboard']['inline_keyboard'][0][0]['callback_data'] == f'folder:{work}:1'

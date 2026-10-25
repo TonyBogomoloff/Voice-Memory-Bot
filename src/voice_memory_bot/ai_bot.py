@@ -439,6 +439,7 @@ class AIBotMixin:
             if self.view_rendering:
                 await asyncio.sleep(.2)
                 continue
+            request = ready = None
             try:
                 await self.ai_note_actions.resume()
                 self.flush_ai_archive()
@@ -454,4 +455,7 @@ class AIBotMixin:
             except (OSError, ProviderError) as exc:
                 log.warning("AI worker unavailable type=%s", type(exc).__name__)
                 await asyncio.sleep(3)
+            finally:
+                if request or ready:
+                    self.view_refresh_event.set()
             await asyncio.sleep(.5)

@@ -181,6 +181,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         completed = None
         try:
             selected = self.coalesce_folder_updates(update)
+            if len(selected) > 1:
+                log.info('folder navigation coalesced count=%s', len(selected))
             for skipped in selected[:-1]:
                 message = skipped['message']
                 self.cleanup.remember(message['from']['id'], message['message_id'],
@@ -698,6 +700,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             task = asyncio.create_task(self.send_export(owner, thread, folder_id, content))
             self.export_tasks.add(task)
             task.add_done_callback(self.export_tasks.discard)
+            task.add_done_callback(lambda _: self.view_refresh_event.set())
             return
         note = self.store.note(owner, identity)
         if action == "recordmove":
@@ -1295,6 +1298,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                                       "AND delivery='pending' AND deleted=0 ORDER BY created_at LIMIT 1")
                 if note:
                     await self.deliver(note)
+                    self.view_refresh_event.set()
                 else:
                     photo = self.store.one("SELECT n.* FROM notes n JOIN note_messages m ON m.note_id=n.id "
                         "WHERE n.kind='photo' AND n.deleted=0 AND n.transcript_delivery='sent' "
@@ -1313,6 +1317,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                                            "ORDER BY created_at LIMIT 1")
                     if stale:
                         await self.clear_status(stale)
+                    if stale or move or photo:
+                        self.view_refresh_event.set()
                     await asyncio.sleep(3 if stale or move or photo else .5)
                 continue
             await self.process(note)
+            self.view_refresh_event.set()
