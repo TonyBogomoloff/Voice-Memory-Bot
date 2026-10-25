@@ -31,7 +31,9 @@ def test_options_pin_target_and_dispatch(bot, reply, label, action):
             assert bot.store.one('SELECT note_id FROM reply_moves')['note_id'] == expected['id']
         else:
             keys = next(p for m, p in reversed(bot.telegram.sent) if m == 'sendMessage')['keyboard']['inline_keyboard']
-            assert keys[0][0]['callback_data'] == f"confirmdelete:{expected['id']}"
+            assert keys[0][0]["callback_data"] == bot.bottom_state(1)["actions"]["Удалить"]
+            assert bot.bottom_state(1)["screen"] == f"notedelete:{expected['id']}"
+            assert bot.bottom_state(1)['reply_to'] == (reply or 200)
             assert bot.store.note(1, expected['id'])
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert (300 in deleted) == (reply is None)

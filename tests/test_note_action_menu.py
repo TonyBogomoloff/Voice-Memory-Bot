@@ -18,17 +18,16 @@ def test_note_actions_preserve_bottom_menu(tmp_path, store, screen, action):
             await bot.show_home(1, 200)
         else:
             await bot.settings_menu(1, 200)
-        before = bot.bottom_state(1)
-        carrier = store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"]
         active = store.current_folder(1)
         bot.telegram.sent.clear()
         if action in {"delete", "cancel"}:
             await bot.callback(1, 200, note["transcript_message_id"], f"delete:{note['id']}")
             prompt_id = bot.telegram.message_sequence
             assert bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"]
-            assert bot.bottom_state(1) == before
+            state = bot.bottom_state(1)
+            assert state["screen"] == f"notedelete:{note['id']}"
             await bot.callback(1, 200, prompt_id,
-                               f"{'confirmdelete' if action == 'delete' else 'canceldelete'}:{note['id']}")
+                               state["actions"]["Удалить" if action == "delete" else "Отмена"])
         else:
             picker = "pick" if action == "move" else "choose"
             await bot.callback(1, 200, note["transcript_message_id"], f"{picker}:{note['id']}:0")
@@ -38,13 +37,8 @@ def test_note_actions_preserve_bottom_menu(tmp_path, store, screen, action):
             assert store.current_folder(1) == active
             assert bot.bottom_state(1)["screen"] == "root"
             return
-        assert bot.bottom_state(1) == before
+        assert bot.bottom_state(1)["screen"] == "root"
         assert store.current_folder(1) == active
-        assert store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"] == carrier
-        for method, payload in bot.telegram.sent:
-            assert not (method == "deleteMessage" and payload["message_id"] == carrier)
-            markup = payload.get("keyboard") or payload.get("reply_markup") or {}
-            assert "keyboard" not in markup and not markup.get("remove_keyboard")
     asyncio.run(run())
 
 

@@ -22,6 +22,9 @@ def test_menu_uses_latest_user_voice_in_active_folder(bot, command):
         assert bot.store.note(1, elsewhere['id'])
         assert bot.store.note(1, generated['id'])
         if command == '/delete':
+            assert bot.bottom_state(1)['screen'] == f"notedelete:{voice['id']}"
+            assert bot.store.note(1, voice['id'])
+            await receive(bot, 'Удалить', 501)
             assert bot.store.one('SELECT deleted FROM notes WHERE id=?', (voice['id'],))['deleted'] == 1
         elif command == '/move':
             assert bot.store.one('SELECT note_id FROM reply_moves')['note_id'] == voice['id']
@@ -52,6 +55,9 @@ def test_explicit_reply_never_falls_back(bot, target, command):
         elif command == '/move':
             assert bot.store.one('SELECT note_id FROM reply_moves')['note_id'] == first['id']
         else:
+            assert bot.bottom_state(1)['screen'] == f"notedelete:{first['id']}"
+            assert bot.store.note(1, first['id'])
+            await receive(bot, 'Удалить', 301)
             assert bot.store.one('SELECT deleted FROM notes WHERE id=?', (first['id'],))['deleted']
     asyncio.run(run())
 

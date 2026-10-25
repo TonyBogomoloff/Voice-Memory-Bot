@@ -55,18 +55,20 @@ class BottomMenuMixin:
             self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?", (owner, message_id))
 
     async def show_bottom(self, owner, text, thread=None, keys=None, *, screen="home", back="root",
-                          keep=False, page=0, edit_id=None):
+                          keep=False, page=0, edit_id=None, mirror=False, reply_to=None):
         if screen.split(":")[0] not in {"foldermenu", "rename", "dropfolder"}:
             self.leave_folder_options(owner)
         rows = (keys or {}).get("inline_keyboard", [])
         # Navigation is always in the same last row, independent of the screen.
         rows = [[b for b in row if b.get("callback_data") != "home"
-                 and not b["text"].startswith("← ") and (screen.startswith("replymove:")
+                 and not b["text"].startswith("← ") and (screen.split(":")[0] in {"replymove", "notedelete"}
                  or b["text"] not in {"Отмена", "✖️ Отмена"})]
                 for row in rows]
         rows = [row for row in rows if row]
         state = MenuState(Target.parse(screen), Target.parse(back), text, rows, page, keep)
-        if any(b.get("callback_data", "").startswith("confirm") for row in rows for b in row):
+        if mirror or reply_to:
+            state.extra.update(mirror=mirror, reply_to=reply_to)
+        if state.screen.kind == "notedelete" or any(b.get("callback_data", "").startswith("confirm") for row in rows for b in row):
             state.epoch, state.expires = self.bottom_epoch, time.time() + 600
         self.remember_screen(owner, thread, text, {"bottom_menu": True})
         return await self.send_bottom(owner, thread, state, edit_id=edit_id)
@@ -118,12 +120,12 @@ class BottomMenuMixin:
             actions["Отмена"] = "cancel_record_options"
         elif state.screen.kind == "foldermenu":
             keyboard[-1].insert(0, {"text": BACK})
-        elif state.screen.kind not in {"root", "replymove"}:
+        elif state.screen.kind not in {"root", "replymove", "notedelete"}:
             keyboard.append([{"text": BACK}, {"text": ROOT}])
         keys = raw_keys or {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True,
                             "input_field_placeholder": self.folder_input_placeholder(owner)}
         state.actions = actions
-        previous = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,))
+        previous = self.store.one("SELECT message_id,state FROM bottom_menus WHERE owner=?", (owner,))
         # Persist before send: a lost Telegram response must not turn the displayed controls into notes.
         with self.store.transaction():
             self.store.db.execute("INSERT INTO bottom_menus(owner,state) VALUES (?,?) ON CONFLICT(owner) "
@@ -139,7 +141,9 @@ class BottomMenuMixin:
         token = silent_delivery.set(True)
         try:
             text = state.text if state.keep else state.text.split("\n", 1)[0]
-            response = await self.view_send(self.telegram.text, owner, text, thread, keys)
+            response = await self.view_send(self.telegram.text, owner,
+                ("Удаление записи" if state.screen.kind == "notedelete" else "Перенос записи")
+                if state.extra.get("mirror") else text, thread, keys)
         finally:
             silent_delivery.reset(token)
         with self.store.transaction():
@@ -150,6 +154,16 @@ class BottomMenuMixin:
         # the new keyboard has been delivered and its receipt saved.
         if previous and previous["message_id"] != response["message_id"]:
             await self.remove_menu_message(owner, previous["message_id"])
+        if previous:
+            old_prompt = MenuState.from_json(previous["state"]).extra.get("inline_prompt_id")
+            if old_prompt:
+                await self.remove_menu_message(owner, old_prompt)
+        if state.extra.get("mirror"):
+            response = await self.view_send(self.telegram.text, owner, state.text, thread,
+                {"inline_keyboard": state.rows}, reply_to=state.extra.get("reply_to"))
+            state.extra["inline_prompt_id"] = response["message_id"]
+            with self.store.transaction():
+                self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
         return response
 
     async def bottom_input(self, owner, thread, text, message_id):

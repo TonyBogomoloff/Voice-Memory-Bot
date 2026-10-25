@@ -28,7 +28,7 @@ from .reply_move import ReplyMoveMixin
 from .routing import fallback_title
 from .scheduling import dispatch_by_owner, run_for_owners
 from .states import InputKind
-from .store import Store, clean_name
+from .store import Store, clean_name, new_id
 from .update_queue import update_owner
 
 log = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ HELP = """🎙 Voice Memory Bot
 
 /ai — изменить запись с ИИ.
 /move — перенести запись в другую папку.
-/delete — удалить запись из базы и чата без подтверждения.
+/delete — удалить запись из базы и чата после подтверждения.
 Без ответа на сообщение команды выбирают последнюю твою запись в открытой папке.
 
 Выбери папку внизу — новые голосовые, тексты и фото сохраняются туда.
@@ -658,6 +658,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             "message_id": 0, "reply_to_message": {"message_id": note["message_id"]}})
 
     async def callback(self, owner, thread, message_id, data):
+        if await self.note_delete_callback(owner, thread, message_id, data):
+            return
         if await self.reply_move_callback(owner, thread, message_id, data):
             return
         if data.split(":", 1)[0] not in {"aioptions", "aicollapse", "aiend", "aicancel"}:
@@ -782,22 +784,21 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 raise ValueError("Исходный файл пока недоступен")
             return await self.telegram.document(owner, path, thread,
                                                 "Исходный файл без изменений")
-        if action == "delete":
-            return await self._show(owner,
-                "Удалить запись и исходный файл из архива бота?\nИсходное сообщение и расшифровка также будут удалены из чата.", thread,
-                keyboard([button("🗑 Да, удалить запись", f"confirmdelete:{identity}"),
-                          button("Отмена", f"canceldelete:{identity}")]))
+        if action in {"delete", "confirmdelete"}:
+            # Old confirmation buttons must also open a fresh, scoped confirmation.
+            state = self.menu_state(owner)
+            target = state.extra.get("reply_to") if state and state.screen.wire == f"recordoptions:{identity}" else None
+            if message_id:
+                selected = self.reply_note(owner, {"reply_to_message": {"message_id": message_id}})
+                if selected and selected["id"] == identity:
+                    target = message_id
+            return await self.confirm_note_deletion(owner, thread, note, target)
         if action == "canceldelete":
             return await self.remove_menu_message(owner, message_id)
         if action == "confirmarchive":
             note = self.notes.delete(owner, identity)
             await self.remove_menu_message(owner, message_id)
             return await self._show(owner, "Запись удалена из базы. Сообщения в Telegram остались.", thread)
-        if action == "confirmdelete":
-            note = self.notes.delete(owner, identity)
-            result = await self.announce_note_deletion(note, thread)
-            await self.remove_menu_message(owner, message_id)
-            return result
 
     async def record_options(self, owner, thread, message):
         note = self.reply_note(owner, message)
@@ -810,16 +811,51 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             [button("Изменить с ИИ", f"aiask:{identity}"),
              button("Перенести запись", f"recordmove:{identity}")],
             [button("Удалить запись", f"delete:{identity}")]),
-            screen=f"recordoptions:{identity}", back="root", keep=True)
+            screen=f"recordoptions:{identity}", back="root", keep=True,
+            reply_to=(message.get("reply_to_message") or {}).get("message_id"))
 
     async def delete_reply(self, owner, thread, message):
         note = self.reply_note(owner, message)
         if not note:
             return await self._show(owner, "Не нашёл запись в базе. Ответь на исходное сообщение или расшифровку.", thread)
-        identity = note["id"]
-        note = self.notes.delete(owner, identity)
         target = (message.get("reply_to_message") or {}).get("message_id")
-        return await self.announce_note_deletion(note, thread, target)
+        return await self.confirm_note_deletion(owner, thread, note, target)
+
+    async def confirm_note_deletion(self, owner, thread, note, target=None):
+        if note["state"] == "processing" or self.note_locks[note["id"]].locked():
+            raise ValueError("Дождись завершения обработки, затем удали запись")
+        if not target:
+            receipt = self.store.one(
+                "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0 "
+                "ORDER BY message_id DESC LIMIT 1", (owner, note["id"]))
+            target = receipt["message_id"] if receipt else note["message_id"]
+        self.store.set_action(owner, None)
+        token = new_id()
+        return await self.show_bottom(owner, "Удалить запись?", thread, keyboard([
+            button("Удалить", f"notedel:{token}"), button("Отмена", f"notecancel:{token}")]),
+            screen=f"notedelete:{note['id']}", keep=True, mirror=True, reply_to=target)
+
+    async def note_delete_callback(self, owner, thread, message_id, data):
+        if data.split(":", 1)[0] not in {"notedel", "notecancel"}:
+            return False
+        state = self.menu_state(owner)
+        if (not state or state.screen.kind != "notedelete" or data not in state.actions.values()
+                or state.epoch != self.bottom_epoch or time.time() >= state.expires
+                or (message_id is not None and message_id != state.extra.get("inline_prompt_id"))):
+            return True
+        if data.startswith("notecancel:"):
+            await self.show_home(owner, thread)
+            return True
+        # Both keyboards share one target and a single-use confirmation.
+        note = self.notes.delete(owner, state.screen.argument)
+        state.actions.clear()
+        with self.store.transaction():
+            self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
+        try:
+            await self.announce_note_deletion(note, thread, state.extra.get("reply_to"))
+        finally:
+            await self.show_home(owner, thread)
+        return True
 
     async def announce_note_deletion(self, note, thread, target=None):
         if not target:

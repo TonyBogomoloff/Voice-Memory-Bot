@@ -26,6 +26,7 @@ def test_delete_removes_voice_and_all_transcript_parts(tmp_path, store, blocked)
         assert path.exists()
         await bot.callback(1, 200, note["transcript_message_id"], f"delete:{note['id']}")
         assert not store.note(1, note["id"])["deleted"]
+        confirmation = bot.bottom_state(1)
         bot.telegram.sent.clear()
         original = bot.telegram.call
 
@@ -36,7 +37,7 @@ def test_delete_removes_voice_and_all_transcript_parts(tmp_path, store, blocked)
             return await original(method, **kwargs)
 
         bot.telegram.call = call
-        await bot.callback(1, 200, 5000, f"confirmdelete:{note['id']}")
+        await bot.callback(1, 200, confirmation["inline_prompt_id"], confirmation["actions"]["Удалить"])
         deleted = {p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"}
         assert expected <= deleted
         assert not ({3000, 3001} & deleted)

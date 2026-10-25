@@ -77,7 +77,7 @@ class ReplyMoveMixin:
             rows.append(nav)
         rows.extend([[button("＋ Новая папка", f"rnew:{token}")], [button("Отмена", f"rcancel:{token}")]])
         result = await self.show_bottom(owner, "В какую папку ты хочешь переместить запись?", thread,
-                                  keyboard(*rows), screen=f"replymove:{token}", keep=True)
+                                  keyboard(*rows), screen=f"replymove:{token}", keep=True, mirror=True)
         with self.store.transaction():
             self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                   (result["message_id"], owner, token))
@@ -116,7 +116,7 @@ class ReplyMoveMixin:
             self.store.note(owner, session["note_id"])
             self.store.set_action(owner, f"replymove:{token}")
             result = await self.show_bottom(owner, "Как назвать новую папку?", thread,
-                keyboard([button("Отмена", f"rcancel:{token}")]), screen=f"replymove:{token}", keep=True)
+                keyboard([button("Отмена", f"rcancel:{token}")]), screen=f"replymove:{token}", keep=True, mirror=True)
             with self.store.transaction():
                 self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                       (result["message_id"], owner, token))
