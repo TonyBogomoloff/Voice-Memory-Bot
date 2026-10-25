@@ -21,6 +21,7 @@ class BottomMenuMixin:
 
     def init_bottom_menu(self):
         self.bottom_epoch = new_id()
+        self.command_cleanups = {}
         self.store.db.executescript("""
             CREATE TABLE IF NOT EXISTS bottom_menus (
                 owner INTEGER PRIMARY KEY, state TEXT NOT NULL, message_id INTEGER
@@ -40,6 +41,10 @@ class BottomMenuMixin:
 
     async def remove_menu_message(self, owner, message_id):
         if not message_id:
+            return
+        pending = self.command_cleanups.get(owner)
+        if pending and pending["message_id"] == message_id:
+            pending["remove"] = True
             return
         try:
             await self.view_send(self.telegram.call, "deleteMessage", chat_id=owner, message_id=message_id)
@@ -99,7 +104,13 @@ class BottomMenuMixin:
         if pages > 1:
             keyboard.append(([{"text": PREVIOUS}] if page else []) +
                             ([{"text": NEXT}] if page + 1 < pages else []))
-        if state["screen"] == "create" or state["screen"].startswith("recordoptions:"):
+        if state["screen"].startswith("ai_note:"):
+            keyboard = [[{"text": "Отмена"}]]
+            actions = {"Отмена": "aicancel:" + state["screen"].split(":", 1)[1]}
+        elif state["screen"] == "settings:all":
+            keyboard[1].append({"text": BACK})
+            keyboard.append([{"text": ROOT}])
+        elif state["screen"] == "create" or state["screen"].startswith("recordoptions:"):
             cancel = {"text": "Отмена"}
             if keyboard and len(keyboard[-1]) < 2:
                 keyboard[-1].append(cancel)

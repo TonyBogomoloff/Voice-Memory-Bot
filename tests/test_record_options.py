@@ -30,7 +30,7 @@ def test_options_pin_target_and_dispatch(bot, reply, label, action):
         elif action == 'recordmove':
             assert bot.store.one('SELECT note_id FROM reply_moves')['note_id'] == expected['id']
         else:
-            keys = bot.telegram.sent[-1][1]['keyboard']['inline_keyboard']
+            keys = next(p for m, p in reversed(bot.telegram.sent) if m == 'sendMessage')['keyboard']['inline_keyboard']
             assert keys[0][0]['callback_data'] == f"confirmdelete:{expected['id']}"
             assert bot.store.note(1, expected['id'])
     asyncio.run(run())
@@ -56,7 +56,7 @@ def test_compact_options_cancel_restores_folder_keyboard(bot):
     async def run():
         await receive(bot, 'Запись', 100)
         await receive(bot, '/options', 200)
-        keys = bot.telegram.sent[-1][1]['keyboard']['keyboard']
+        keys = next(p for m, p in reversed(bot.telegram.sent) if m == 'sendMessage')['keyboard']['keyboard']
         assert [[b['text'] for b in row] for row in keys] == [
             ['Изменить с ИИ', 'Перенести запись'], ['Удалить запись', 'Отмена']]
         await receive(bot, 'Отмена', 300)

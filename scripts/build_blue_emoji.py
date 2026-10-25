@@ -82,6 +82,7 @@ icons = [
     ('warning', '⚠️', 'Внимание', path('M12 2 L23 21 H1 Z')+path('M12 8 V13',stroke=LIGHT)+circle(12,17,1,fill=LIGHT,stroke='none')),
     ('record', '🔴', 'Запись', circle(12,12,9)+circle(12,12,5,fill=LIGHT,stroke='none')),
     ('menu_list', '🎛️', 'Меню · список', circle(4,5,1.5,fill=LIGHT,stroke='none')+circle(4,12,1.5,fill=LIGHT,stroke='none')+circle(4,19,1.5,fill=LIGHT,stroke='none')+path('M9 5 H21 M9 12 H18 M9 19 H21',stroke=BLUE)),
+    ('toggle_off', '🔘', 'Кнопки выкл', rect(2,6,20,12,6)+circle(9,12,3.5,fill=LIGHT,stroke='none')),
 ]
 
 

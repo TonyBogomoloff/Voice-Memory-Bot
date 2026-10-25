@@ -215,7 +215,7 @@ class FolderMenuMixin:
         await self.refresh_folder_keyboard(owner, thread, force=True)
         self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
 
-    async def show_main_menu(self, owner, thread=None, edit_id=None):
+    async def show_main_menu(self, owner, thread=None, edit_id=None, *, notice=None):
         self.leave_folder_options(owner)
         from .bot import button, keyboard
         self.store.set_action(owner, None)
@@ -226,7 +226,7 @@ class FolderMenuMixin:
         rows = [[button(("Выключить" if enabled else "Включить") + " кнопки под сообщениями",
                         f"menumessagebuttons:{0 if enabled else 1}")],
                 [button("ℹ️ Help", "help"), button("🤖 Поговорить с ИИ", "aiopen")]]
-        await self.show_bottom(owner, "🎛️ Меню" + (f" · {folder['name']}" if folder else ""), thread, keyboard(*rows),
+        await self.show_bottom(owner, notice or ("🎛️ Меню" + (f" · {folder['name']}" if folder else "")), thread, keyboard(*rows),
                                screen="home", back="root", edit_id=edit_id)
 
     async def folder_menu_callback(self, owner, thread, message_id, data):

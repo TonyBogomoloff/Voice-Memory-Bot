@@ -204,11 +204,11 @@ def test_selected_note_ai_instruction_has_no_finish_and_can_go_back_after_restar
         await receive(bot, "Исходник", 1000)
         note = bot.store.notes(1)[0]
         await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
-        assert "Завершить" not in labels(bot) and BACK in labels(bot)
+        assert labels(bot) == ["Отмена"]
         assert bot.store.action(1).startswith("ai_note:")
         assert bot.ai_state.claim() is None
         restarted = Bot(bot.config, bot.store, FakeTelegram(), FakeGroq(), FakeRouter())
-        await receive(restarted, BACK, 1001)
+        await receive(restarted, "Отмена", 1001)
         assert restarted.store.action(1) is None
         await receive(restarted, "Обычная заметка", 1002)
         assert restarted.ai_state.claim() is None

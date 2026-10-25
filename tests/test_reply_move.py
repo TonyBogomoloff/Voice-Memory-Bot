@@ -46,7 +46,7 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         assert bot.store.note(1, note['id'])['transcript'] == 'Запись для переноса'
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert {100, 200, prompt} <= deleted
-        assert 400 not in deleted
+        assert 400 in deleted
         assert bot.store.one('SELECT * FROM reply_moves') is None
         assert bot.store.action(1) is None
     asyncio.run(run())

@@ -66,6 +66,12 @@ def semantic_icon(item):
     if marker in {'check', 'folder_active', 'back', 'next'}:
         return marker
     action = item.get('callback_data', '').split(':', 1)[0]
+    if action in {'menumessagebuttons', 'messagebuttons'}:
+        # Callback encodes the next state; the icon shows the current one.
+        return 'toggle_off' if item['callback_data'].endswith(':1') else 'toggle'
+    lower = text.lower()
+    if lower.startswith('включить кнопки') or lower.startswith('кнопки у сообщений: выкл'):
+        return 'toggle_off'
     if action in {'audio'} and marker:
         return marker
     if action in ACTION_ICONS:

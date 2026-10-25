@@ -167,3 +167,26 @@ def test_icon_only_navigation_keeps_distinct_routes():
     assert settings['icon_custom_emoji_id'] == IDS['settings']
     assert aliases['Настройки'] == '📁 Папка'
     assert menu['icon_custom_emoji_id'] == IDS['menu_list']
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_toggle_icon_reflects_current_state(bot, enabled):
+    async def run():
+        await receive(bot, '/menu', 700)
+        bot.store.set_message_buttons(1, not enabled)
+        await bot.show_main_menu(1)
+        bot.telegram.sent.clear()
+        command = ('Включить' if enabled else 'Выключить') + ' кнопки под сообщениями'
+        await receive(bot, command, 701)
+        messages = [p for m, p in bot.telegram.sent if m == 'sendMessage']
+        assert len(messages) == 1
+        assert messages[0]['text'] == 'Кнопки под сообщениями ' + ('включены.' if enabled else 'выключены.')
+        markup, _ = themed_markup(messages[0]['keyboard'])
+        toggle = markup['keyboard'][0][0]
+        assert toggle['text'] == ('Выключить' if enabled else 'Включить') + ' кнопки под сообщениями'
+        assert toggle['icon_custom_emoji_id'] == IDS['toggle' if enabled else 'toggle_off']
+        assert bot.store.message_buttons_enabled(1) == enabled
+        inline, _ = themed_markup({'inline_keyboard': [[{'text': 'Кнопки',
+            'callback_data': f'messagebuttons:{0 if enabled else 1}'}]]})
+        assert inline['inline_keyboard'][0][0]['icon_custom_emoji_id'] == toggle['icon_custom_emoji_id']
+    asyncio.run(run())

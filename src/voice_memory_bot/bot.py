@@ -209,6 +209,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
 
     async def show(self, owner, text, thread=None, keys=None, edit_id=None):
         if keys and "inline_keyboard" in keys:
+            action = self.store.action(owner) or ""
+            if action.startswith("ai_note:"):
+                return await self.show_bottom(owner, text, thread, screen=action, keep=True)
             state = self.bottom_state(owner) or {}
             return await self.show_bottom(owner, text, thread, keys, screen="notice",
                                           back=state.get("back" if state.get("screen") == "notice" else "screen", "home"),
@@ -234,8 +237,30 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
     async def handle(self, update):
         callback = update.get("callback_query")
         sender = (callback or update.get("message") or update.get("edited_message", {})).get("from", {})
-        async with self.view_locks[sender.get("id")]:
-            return await self._handle(update)
+        owner = sender.get("id")
+        async with self.view_locks[owner]:
+            message = update.get("message") or {}
+            pending = {"message_id": message.get("message_id"), "remove": False, "tasks": []}
+            self.command_cleanups[owner] = pending
+            try:
+                result = await self._handle(update)
+            except BaseException:
+                # Keep the user's command when the response could not be delivered.
+                self.command_cleanups.pop(owner, None)
+                raise
+            self.command_cleanups.pop(owner, None)
+            if pending["remove"]:
+                if pending["tasks"]:
+                    task = asyncio.create_task(self.finish_command_cleanup(owner, pending))
+                    self.export_tasks.add(task)
+                    task.add_done_callback(self.export_tasks.discard)
+                else:
+                    await self.remove_menu_message(owner, pending["message_id"])
+            return result
+
+    async def finish_command_cleanup(self, owner, pending):
+        await asyncio.gather(*pending["tasks"])
+        await self.remove_menu_message(owner, pending["message_id"])
 
     async def _handle(self, update):
         callback = update.get("callback_query")
@@ -292,6 +317,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 return await self.refresh_folder_keyboard(owner, thread, force=True,
                     notice="Эта кнопка устарела. Выбери действие внизу.")
             text = navigation
+            if text.startswith("/"):
+                await self.remove_menu_message(owner, message["message_id"])
             if text and text.split()[0].split("@", 1)[0].lower() == "/options":
                 return await self.record_options(owner, thread, message)
             if text and text.split()[0].split("@", 1)[0].lower() == "/delete":
@@ -664,7 +691,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 raise ValueError("Открой настройки заново")
             self.store.set_message_buttons(owner, identity == "1")
             if action == "menumessagebuttons":
-                return await self.show_main_menu(owner, thread, message_id)
+                notice = "Кнопки под сообщениями " + ("включены." if identity == "1" else "выключены.")
+                return await self.show_main_menu(owner, thread, message_id, notice=notice)
             return await self.settings_menu(owner, thread, message_id)
         if action == "exportsettings":
             return await self.export_settings(owner, thread, identity or "all", message_id)
@@ -683,6 +711,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             # Keep old 'texts + audio' buttons working after the update.
             content = "all" if pieces[2] == "audio" else pieces[2]
             task = asyncio.create_task(self.send_export(owner, thread, folder_id, content))
+            pending = self.command_cleanups.get(owner)
+            if pending:
+                pending["tasks"].append(task)
             self.export_tasks.add(task)
             task.add_done_callback(self.export_tasks.discard)
             task.add_done_callback(lambda _: self.view_refresh_event.set())

@@ -214,6 +214,11 @@
       "name": "menu_list",
       "emoji": "🎛️",
       "label": "Меню · список"
+    },
+    {
+      "name": "toggle_off",
+      "emoji": "🔘",
+      "label": "Кнопки выкл"
     }
   ]
 }
