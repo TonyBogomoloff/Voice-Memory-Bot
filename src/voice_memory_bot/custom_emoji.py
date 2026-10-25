@@ -71,7 +71,7 @@ def semantic_icon(item):
         # Callback encodes the next state; the icon shows the current one.
         return 'toggle_off' if item['callback_data'].endswith(':1') else 'toggle'
     lower = text.lower()
-    if lower.startswith('включить кнопки') or lower.startswith('кнопки у сообщений: выкл'):
+    if lower.startswith(('включить кнопки', 'отправлять кнопки действий')) or lower.startswith('кнопки у сообщений: выкл'):
         return 'toggle_off'
     if action in {'audio'} and marker:
         return marker

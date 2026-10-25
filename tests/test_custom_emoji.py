@@ -176,14 +176,14 @@ def test_toggle_icon_reflects_current_state(bot, enabled):
         bot.store.set_message_buttons(1, not enabled)
         await bot.show_main_menu(1)
         bot.telegram.sent.clear()
-        command = ('Включить' if enabled else 'Выключить') + ' кнопки под сообщениями'
+        command = ('Отправлять кнопки действий' if enabled else 'Скрывать кнопки действий')
         await receive(bot, command, 701)
         messages = [p for m, p in bot.telegram.sent if m == 'sendMessage']
         assert len(messages) == 1
         assert messages[0]['text'] == 'Кнопки под сообщениями ' + ('включены.' if enabled else 'выключены.')
         markup, _ = themed_markup(messages[0]['keyboard'])
         toggle = markup['keyboard'][0][0]
-        assert toggle['text'] == ('Выключить' if enabled else 'Включить') + ' кнопки под сообщениями'
+        assert toggle['text'] == ('Скрывать кнопки действий' if enabled else 'Отправлять кнопки действий')
         assert toggle['icon_custom_emoji_id'] == IDS['toggle' if enabled else 'toggle_off']
         assert bot.store.message_buttons_enabled(1) == enabled
         inline, _ = themed_markup({'inline_keyboard': [[{'text': 'Кнопки',

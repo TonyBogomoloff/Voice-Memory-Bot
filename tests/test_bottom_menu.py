@@ -39,7 +39,7 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
         await receive(bot, "☰ Меню", 1001)
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
         assert [[b["text"] for b in row] for row in reply_keyboard(bot)["keyboard"]] == [
-            ["Включить кнопки под сообщениями"], [BACK, "ℹ️ Помощь"]]
+            ["Отправлять кнопки действий"], [BACK, "ℹ️ Помощь"]]
         await receive(bot, "/settings", 1002)
         export = next(label for label in labels(bot) if label.startswith("📦 Экспорт"))
         await receive(bot, export, 1003)
@@ -261,10 +261,10 @@ def test_minimal_menu_toggle_help_and_back(bot):
     async def run():
         await receive(bot, "☰ Меню", 3000)
         assert not bot.store.message_buttons_enabled(1)
-        await receive(bot, "Включить кнопки под сообщениями", 3001)
+        await receive(bot, "Отправлять кнопки действий", 3001)
         assert bot.store.message_buttons_enabled(1)
         assert bot.bottom_state(1)["screen"] == "home"
-        await receive(bot, "Выключить кнопки под сообщениями", 3002)
+        await receive(bot, "Скрывать кнопки действий", 3002)
         assert not bot.store.message_buttons_enabled(1)
         await receive(bot, "ℹ️ Помощь", 3003)
         assert bot.bottom_state(1)["screen"] == "help"

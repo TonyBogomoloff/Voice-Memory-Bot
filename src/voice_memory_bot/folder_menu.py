@@ -224,7 +224,7 @@ class FolderMenuMixin:
         identity = self.store.current_folder(owner)
         folder = self.store.folder(owner, identity) if identity else None
         enabled = self.store.message_buttons_enabled(owner)
-        rows = [[button(("Выключить" if enabled else "Включить") + " кнопки под сообщениями",
+        rows = [[button("Скрывать кнопки действий" if enabled else "Отправлять кнопки действий",
                         f"menumessagebuttons:{0 if enabled else 1}")],
                 [button("ℹ️ Помощь", "help")]]
         await self.show_bottom(owner, notice or ("🎛️ Меню" + (f" · {folder['name']}" if folder else "")), thread, keyboard(*rows),
