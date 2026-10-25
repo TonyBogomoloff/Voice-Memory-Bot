@@ -489,7 +489,7 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
         text += "\n✓ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
         rows = [[button("✏️ Переименовать", f"rename:{identity}"),
                  button("🗑 Удалить папку", f"dropfolder:{identity}")],
-                [button("📦 Экспорт папки", f"export:{identity}")]]
+                [button("📦 Экспорт", f"zip:{identity}:all")]]
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"foldermenu:{identity}",
                                back="root", edit_id=edit_id)
 

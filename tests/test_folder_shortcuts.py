@@ -118,7 +118,7 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         await bot.callback(1, None, 500, f"rename:{work['id']}")
         await receive(bot, "Проекты", 2)
         assert "Проекты" in reply_keyboard(bot)["input_field_placeholder"]
-        assert "📦 Экспорт папки" in labels(bot)
+        assert "📦 Экспорт" in labels(bot)
         await receive(bot, "📌 Работа", 3)
         assert "устарела" in next(p["text"] for m, p in reversed(bot.telegram.sent) if m == "sendMessage")
         assert bot.store.current_folder(1) == work["id"]

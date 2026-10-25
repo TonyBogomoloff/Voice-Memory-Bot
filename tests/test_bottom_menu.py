@@ -237,8 +237,8 @@ def test_home_add_folder_and_options_back(bot):
         folder = bot.store.current_folder(1)
         assert bot.store.folder(1, folder)["name"] == "Новая с главной"
         await receive(bot, "📁 Папка", 2005)
-        assert set(labels(bot)) == {"✏️ Переименовать", "🗑 Удалить папку", "📦 Экспорт папки", BACK}
-        assert bot.bottom_state(1)["actions"]["📦 Экспорт папки"] == f"export:{folder}"
+        assert set(labels(bot)) == {"✏️ Переименовать", "🗑 Удалить папку", "📦 Экспорт", BACK}
+        assert bot.bottom_state(1)["actions"]["📦 Экспорт"] == f"zip:{folder}:all"
         await receive(bot, BACK, 2006)
         assert bot.bottom_state(1)["screen"] == "root"
         assert bot.options_folder(1) is None

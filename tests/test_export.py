@@ -244,3 +244,40 @@ def test_export_buttons_settings_scope_and_lowered_quota(tmp_path, store):
             await bot.callback(1, None, 50, f"zip:{private_folder}:text")
         assert not list((tmp_path / "exports").iterdir())
     asyncio.run(run())
+
+
+def test_folder_export_button_sends_complete_archive_without_submenu(tmp_path, store):
+    async def run():
+        telegram = ExportTelegram()
+        bot = Bot(Config("123:secret", frozenset({1}), "secret", tmp_path),
+                  store, telegram, None, None)
+        note = saved_audio(store, bot.archive, transcript="Исходная расшифровка")
+        with store.db:
+            store.db.execute("UPDATE notes SET content=? WHERE id=?", ("Обработанный текст", note["id"]))
+        ai = add(store, message=2, kind="text", transcript="Сохранённый ответ ИИ")
+        with store.db:
+            store.db.execute("UPDATE notes SET entry_type='ai' WHERE id=?", (ai["id"],))
+        other = store.create_folder(1, "Другая")
+        outside = add(store, message=3, kind="text", transcript="Не из этой папки")
+        store.update_note(1, outside["id"], folder_id=other["id"])
+        folder = note["folder_id"]
+        await bot.show_folder_options(1, None, folder)
+        assert bot.bottom_state(1)["actions"]["📦 Экспорт"] == f"zip:{folder}:all"
+        await bot.handle({"message": {"message_id": 900, "from": {"id": 1},
+                          "chat": {"id": 1, "type": "private"}, "text": "📦 Экспорт"}})
+        await asyncio.gather(*bot.export_tasks)
+        assert len(telegram.documents) == 1
+        assert not any("Только тексты" in str(values) for _, values in telegram.sent)
+        with zipfile.ZipFile(BytesIO(telegram.documents[0][1])) as zipped:
+            audio = next(n for n in zipped.namelist() if n.endswith(".ogg"))
+            assert zipped.read(audio) == b"original audio bytes"
+            metadata = manifest(zipped)
+            history = next(f for f in metadata["files"] if f["kind"] == "history")
+            assert {n["id"] for n in history["notes"]} == {note["id"], ai["id"]}
+            text = "\n".join(p.extract_text() for p in PdfReader(BytesIO(
+                zipped.read(next(n for n in zipped.namelist() if n.endswith(".pdf"))))).pages)
+            assert "Исходная расшифровка" in text
+            assert "Обработанный текст" in text
+            assert "Сохранённый ответ ИИ" in text
+            assert "Не из этой папки" not in text
+    asyncio.run(run())
