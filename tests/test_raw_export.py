@@ -22,7 +22,7 @@ def test_options_bind_actions_to_folder_and_survive_restart(bot, tmp_path):
         folder = bot.store.current_folder(1)
         await receive(bot, '⚙️ Options')
         assert {'✏️ Переименовать', '🗑 Удалить папку', '📦 Экспорт',
-                '⬅️ Назад'} == set(labels(bot))
+                '⬅️ Назад', '➖'} == set(labels(bot))
         assert bot.store.current_folder(1) == folder
         restarted = make_bot(tmp_path, bot.store)
         assert restarted.options_folder(1) == folder

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .ai_bot import AIBotMixin
 from .archive import Archive, is_audio
-from .bottom_menu import BottomMenuMixin
+from .bottom_menu import DELETE, BottomMenuMixin
 from .cleanup import CleanupMixin
 from .config import Config
 from .folder_menu import MENU_COMMANDS, OPTION_ACTIONS, FolderMenuMixin
@@ -259,6 +259,8 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
             if "forum_topic_created" in message or "forum_topic_edited" in message:
                 return
             text = message.get("text", "").strip()
+            if text == DELETE:
+                return await self.delete_reply(owner, thread, message)
             if await self.bottom_input(owner, thread, text, message["message_id"]):
                 return
             # Folder taps remain as view anchors until the next selection.
@@ -698,6 +700,13 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                           button("Отмена", f"canceldelete:{identity}")]))
         if action == "canceldelete":
             return await self.remove_menu_message(owner, message_id)
+        if action == "confirmarchive":
+            if note["state"] == "processing" or self.note_locks[identity].locked():
+                raise ValueError("Дождись завершения обработки, затем удали запись")
+            self.store.delete(owner, identity)
+            self.archive.delete(note)
+            await self.remove_menu_message(owner, message_id)
+            return await self._show(owner, "Запись удалена из базы. Сообщения в Telegram остались.", thread)
         if action == "confirmdelete":
             if note["state"] == "processing" or self.note_locks[identity].locked():
                 raise ValueError("Дождись завершения обработки, затем удали запись")
@@ -708,6 +717,24 @@ class Bot(BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, 
                     "Запись удалена из архива, но часть сообщений не удалось удалить из Telegram.")
             await self.remove_menu_message(owner, message_id)
             return await self._show(owner, text, thread)
+
+    async def delete_reply(self, owner, thread, message):
+        reply = message.get("reply_to_message") or {}
+        target = reply.get("message_id")
+        if not target:
+            return await self._show(owner, "Выбери «Ответить» на запись и нажми ➖.", thread)
+        note = self.store.one(
+            "SELECT n.* FROM notes n WHERE n.owner=? AND n.deleted=0 AND "
+            "(n.message_id=? OR n.transcript_message_id=? OR n.result_message_id=? OR EXISTS "
+            "(SELECT 1 FROM note_messages m WHERE m.owner=n.owner AND m.note_id=n.id "
+            "AND m.message_id=? AND m.deleted=0))",
+            (owner, target, target, target, target))
+        if not note:
+            return await self._show(owner, "Не нашёл запись в базе. Ответь на исходное сообщение или расшифровку.", thread)
+        return await self._show(owner,
+            f"Удалить из базы «{note['title'] or 'Запись'}» вместе с файлами?\nСообщения в Telegram останутся.",
+            thread, keyboard([button("Удалить", f"confirmarchive:{note['id']}"),
+                              button("Отмена", f"canceldelete:{note['id']}")]))
 
     async def delete_note_messages(self, note, *, details=False):
         owner, identity = note["owner"], note["id"]
