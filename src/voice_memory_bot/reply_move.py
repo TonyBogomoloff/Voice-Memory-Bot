@@ -76,7 +76,7 @@ class ReplyMoveMixin:
         if nav:
             rows.append(nav)
         rows.extend([[button("＋ Новая папка", f"rnew:{token}")], [button("Отмена", f"rcancel:{token}")]])
-        result = await self.show_bottom(owner, "В какую папку ты хочешь перенести сообщение?", thread,
+        result = await self.show_bottom(owner, "В какую папку ты хочешь переместить запись?", thread,
                                   keyboard(*rows), screen=f"replymove:{token}", keep=True)
         with self.store.transaction():
             self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
