@@ -38,9 +38,11 @@ def test_reply_delete_only_owned_record_without_confirmation(bot, target, comman
             assert bot.store.one('SELECT transcript FROM notes WHERE id=?', (note['id'],))['transcript'] is None
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert 300 not in deleted
+        if target is not None:
+            assert 400 not in deleted
         if target in {100, 200, None}:
             assert {100, 200} <= deleted
-            assert 400 in deleted
+            assert (400 in deleted) == (target is None)
         else:
             assert not ({100, 200, None} & deleted)
     asyncio.run(run())

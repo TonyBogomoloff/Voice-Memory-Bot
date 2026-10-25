@@ -320,7 +320,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 return await self.refresh_folder_keyboard(owner, thread, force=True,
                     notice="Эта кнопка устарела. Выбери действие внизу.")
             text = navigation
-            if text.startswith("/"):
+            command = text.split()[0].split("@", 1)[0].lower() if text else ""
+            keep_reply_command = "reply_to_message" in message and command in {"/move", "/ai", "/delete"}
+            if text.startswith("/") and not keep_reply_command:
                 await self.remove_menu_message(owner, message["message_id"])
             if text and text.split()[0].split("@", 1)[0].lower() == "/options":
                 return await self.record_options(owner, thread, message)

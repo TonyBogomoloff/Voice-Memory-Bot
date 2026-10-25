@@ -66,3 +66,19 @@ def test_background_export_keeps_command_until_response(bot):
         assert [m for m, _ in bot.telegram.sent] == ['sendMessage', 'deleteMessage']
         assert bot.telegram.sent[-1][1]['message_id'] == 200
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('command', ['/move', '/ai', '/delete', '/ai@your_audio_notes_bot'])
+@pytest.mark.parametrize('target', [100, 999])
+def test_reply_action_command_stays_visible(bot, command, target):
+    async def run():
+        bot.telegram.message_sequence = 1000
+        await receive(bot, 'Заметка', 100)
+        bot.telegram.sent.clear()
+        await bot.handle({'message': {'message_id': 200, 'from': {'id': 1},
+            'chat': {'id': 1, 'type': 'private'}, 'text': command,
+            'reply_to_message': {'message_id': target}}})
+        assert any(m == 'sendMessage' for m, _ in bot.telegram.sent)
+        assert not any(m == 'deleteMessage' and p['message_id'] == 200 for m, p in bot.telegram.sent)
+        assert not bot.command_cleanups
+    asyncio.run(run())

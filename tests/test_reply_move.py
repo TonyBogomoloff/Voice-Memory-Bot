@@ -46,14 +46,14 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         assert bot.store.note(1, note['id'])['transcript'] == 'Запись для переноса'
         deleted = {p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'}
         assert {100, 200, prompt} <= deleted
-        assert 400 in deleted
+        assert 400 not in deleted
         assert bot.store.one('SELECT * FROM reply_moves') is None
         assert bot.store.action(1) is None
     asyncio.run(run())
 
 
 @pytest.mark.parametrize('new_folder', [False, True])
-def test_cancel_removes_only_menu_and_command_even_after_restart(bot, tmp_path, new_folder):
+def test_cancel_preserves_reply_command_even_after_restart(bot, tmp_path, new_folder):
     async def run():
         note = await prepare(bot)
         session = await open_move(bot)
@@ -63,7 +63,8 @@ def test_cancel_removes_only_menu_and_command_even_after_restart(bot, tmp_path, 
         restarted = make_bot(tmp_path, bot.store)
         await restarted.callback(1, None, session['prompt_id'], f'rcancel:{session["token"]}')
         deleted = {p['message_id'] for m, p in restarted.telegram.sent if m == 'deleteMessage'}
-        assert {400, session['prompt_id']} <= deleted
+        assert session['prompt_id'] in deleted
+        assert 400 not in deleted
         assert bot.store.note(1, note['id'])['folder_id'] == note['folder_id']
         assert bot.store.action(1) is None
         await restarted.callback(1, None, session['prompt_id'], f'rnew:{session["token"]}')

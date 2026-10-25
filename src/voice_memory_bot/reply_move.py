@@ -50,9 +50,11 @@ class ReplyMoveMixin:
         if not note:
             return await self._show(owner, "В этой папке нет подходящей записи. Пришли сообщение или ответь на сохранённую запись.", thread)
         token = new_id()
+        # Reply commands stay in chat, including after cancellation and restart.
+        cleanup_command_id = 0 if "reply_to_message" in message else message["message_id"]
         with self.store.transaction():
             self.store.db.execute("INSERT INTO reply_moves(token,owner,note_id,command_id) VALUES (?,?,?,?)",
-                                  (token, owner, note["id"], message["message_id"]))
+                                  (token, owner, note["id"], cleanup_command_id))
         self.store.set_action(owner, None)
         await self.reply_move_menu(owner, thread, token)
 
