@@ -123,8 +123,7 @@ class ReplyMoveMixin:
         elif action == "rmove":
             result = await self.move(owner, session["note_id"], parts[2], thread)
             await self.finish_reply_move(owner, token)
-            await self.show_home(owner, thread)
-            await self._show(owner, result, thread)
+            await self.show_home(owner, thread, title=result)
         return True
 
     async def reply_move_new_folder(self, owner, thread, token, name):
@@ -143,5 +142,4 @@ class ReplyMoveMixin:
             session["target_folder"] = folder["id"]
         result = await self.move(owner, session["note_id"], session["target_folder"], thread)
         await self.finish_reply_move(owner, token)
-        await self.show_home(owner, thread)
-        await self._show(owner, result, thread)
+        await self.show_home(owner, thread, title=result)

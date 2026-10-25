@@ -34,6 +34,7 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         assert 'inline_keyboard' not in menu['keyboard']
         assert all('style' not in b for row in menu['keyboard']['keyboard'] for b in row)
         prompt = session['prompt_id']
+        bot.telegram.sent.clear()
         if new_folder:
             await receive(bot, '＋ Новая папка', 450)
             menu = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]
@@ -49,6 +50,12 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         assert 400 not in deleted
         assert bot.store.one('SELECT * FROM reply_moves') is None
         assert bot.store.action(1) is None
+        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
+        assert len(sent) == (2 if new_folder else 1)
+        assert sent[-1]['text'] == f"Перенесено в «{other['name']}»."
+        assert other['name'] in sent[-1]['text']
+        assert sent[-1]['keyboard'] == bot.folder_keyboard(1)
+        assert bot.bottom_state(1)['screen'] == 'root'
     asyncio.run(run())
 
 

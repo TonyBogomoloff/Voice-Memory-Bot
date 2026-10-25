@@ -207,13 +207,13 @@ class FolderMenuMixin:
         self.folder_keyboards[owner] = signature
         return response
 
-    async def show_home(self, owner, thread=None):
+    async def show_home(self, owner, thread=None, *, title=None):
         self.leave_folder_options(owner)
         if not self.store.folders(owner):
             return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
-        await self.refresh_folder_keyboard(owner, thread, force=True)
+        await self.refresh_folder_keyboard(owner, thread, force=True, title=title)
         self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
 
     async def show_main_menu(self, owner, thread=None, edit_id=None, *, notice=None):
