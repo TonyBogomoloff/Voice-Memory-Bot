@@ -103,7 +103,7 @@ def test_button_waits_for_instruction_and_keeps_selected_note_context(bot):
         assert bot.assistant.calls[-1][0]['history'][0]['user'] == 'Сделай краткое резюме'
         assert bot.store.note(1, note['id']) == original
         assert bot.groq.calls == 1
-        await bot.callback(1, None, 500, f"aiend:{request['conversation_id']}")
+        assert bot.store.action(1) is None
         plain = await receive(bot, 'Обычная заметка', 203)
         assert plain['entry_type'] == 'note' and bot.ai_state.claim() is None
         bot.cleanup.begin(1)
@@ -395,14 +395,14 @@ def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
         assert not (transcript_sends[-1].get('keyboard') or
                     transcript_sends[-1].get('reply_markup') or {}).get('inline_keyboard')
         request = bot.ai_state.claim()
-        await bot.process_ai(request)
-        assert bot.telegram.sent[-1][0] == 'editMessageText'
-        assert bot.telegram.sent[-1][1]['reply_markup']['inline_keyboard'] == []
         before_refresh = len(bot.telegram.sent)
         with bot.store.db:
             bot.store.db.execute('UPDATE telegram_messages SET sent_at=1')
         await bot.refresh_due_views()
         assert len(bot.telegram.sent) == before_refresh
+        await bot.process_ai(request)
+        assert bot.telegram.sent[-1][0] == 'editMessageText'
+        assert bot.telegram.sent[-1][1]['reply_markup']['inline_keyboard'] == []
         await bot.show_note(1, note['id'], 100)
         assert bot.telegram.sent[-1][0] == 'sendPhoto'
         assert bot.telegram.sent[-1][1]['photo'] == note['file_id']
@@ -412,7 +412,7 @@ def test_selected_photo_is_attached_to_instructions_and_followups(bot, voice):
         assert calls[-1][1] == [bot.archive.audio(note)]
         assert bot.ai_state.request(1, request['note_id'])['state'] == 'ready'
         bot.init_ai(bot.assistant)
-        assert bot.store.action(1).startswith("ai_note:")
+        assert bot.store.action(1) is None
         await bot.callback(1, 100, 900, f"aicontinue:{request['note_id']}")
         followup = await receive(bot, "Теперь переведи", 202, thread=100)
         await bot.process_ai(bot.ai_state.claim())
@@ -440,15 +440,14 @@ def test_reply_continuation_keeps_more_than_twelve_turns(bot):
             assert not any(b['callback_data'].startswith('aicontinue:')
                            for row in keyboard.get('inline_keyboard', []) for b in row)
             bot.init_ai(bot.assistant)
-            await receive(bot, f"Уточнение {index}", 402 + index)
-            assert bot.store.action(1).startswith("ai_note:")
+            await receive(bot, f"Уточнение {index}", 402 + index, reply=sent['message_id'])
+            assert bot.store.action(1) is None
             await bot.process_ai(bot.ai_state.claim())
         payload = bot.assistant.calls[-1][0]
         assert len(payload['history']) == 14
         assert payload['history'][0]['user'] == 'Первый вопрос'
         assert payload['history'][0]['assistant'] == 'Ответ'
         assert payload['selected_note']['content'] == 'Исходная заметка'
-        await bot.bottom_input(1, None, 'Отмена', 499)
         plain = await receive(bot, 'Новая заметка', 500)
         assert plain['entry_type'] == 'note'
         assert bot.ai_state.request(1, plain['id']) is None
@@ -464,17 +463,18 @@ def test_cancel_continuation_deletes_prompt_and_restores_note_input(bot):
         request = bot.ai_state.request(1, question['id'])
         await bot.callback(1, None, 500, f"aicontinue:{question['id']}")
         prompt_id = bot.telegram.message_sequence
-        controls = next(p['keyboard']['keyboard'] for m, p in reversed(bot.telegram.sent)
-                        if m == 'sendMessage' and p.get('keyboard'))
-        assert controls == [[{'text': 'Отмена'}]]
-        cancel_action = bot.bottom_state(1)['actions']['Отмена']
+        controls = bot.telegram.sent[-1][1]['keyboard']['inline_keyboard']
+        cancel_action = f"aicancel:{request['conversation_id']}"
+        assert controls == [[{'text': 'Отмена', 'callback_data': cancel_action}]]
+        bottom = bot.bottom_state(1)
         assert bot.store.action(1) == f"ai_note:{request['conversation_id']}"
         before = len(bot.telegram.sent)
         await bot.callback(1, None, prompt_id, cancel_action)
         assert bot.store.action(1) is None
         events = bot.telegram.sent[before:]
-        assert next(i for i, (m, _) in enumerate(events) if m == 'sendMessage') < next(
-            i for i, (m, p) in enumerate(events) if m == 'deleteMessage' and p['message_id'] == prompt_id)
+        assert any(m == 'deleteMessage' and p['message_id'] == prompt_id for m, p in events)
+        assert not any(m == 'sendMessage' for m, _ in events)
+        assert bot.bottom_state(1) == bottom
         plain = await receive(bot, "Обычная заметка", 202)
         assert plain['entry_type'] == 'note'
         assert bot.ai_state.claim() is None

@@ -82,12 +82,16 @@ class AIBotMixin:
             trigger = "reply" if reply or conversation else "folder"
             if not reply and not conversation and not self.ai_state.request(owner, note["id"]):
                 conversation = self.ai_state.active(owner, note["source_folder"])
-            request = self.ai_state.enqueue(owner, note["id"], trigger,
-                                  message.get("message_thread_id"), message["message_id"], conversation,
-                                  reply_context=self.reply_context(owner, reply) if reply else None)
-            self.ai_state.link(owner, message['message_id'], request['conversation_id'])
-            if reply:
-                self.ai_state.link(owner, reply['message_id'], request['conversation_id'])
+            with self.store.transaction():
+                request = self.ai_state.enqueue(owner, note["id"], trigger,
+                                      message.get("message_thread_id"), message["message_id"], conversation,
+                                      reply_context=self.reply_context(owner, reply) if reply else None)
+                self.ai_state.link(owner, message['message_id'], request['conversation_id'])
+                if reply:
+                    self.ai_state.link(owner, reply['message_id'], request['conversation_id'])
+                if scoped and action.startswith("ai_note:"):
+                    # Consume at acceptance, before ASR or AI can leave another message waiting.
+                    self.store.set_action(owner, None)
 
     async def route_ai(self, note, detect=True):
         owner, identity = note["owner"], note["id"]
@@ -239,21 +243,25 @@ class AIBotMixin:
         elif action in {"aiask", "aicontinue"}:
             if action == "aiask":
                 conversation = self.ai_state.start_note_conversation(owner, identity)
-                prompt = "Отправь инструкцию для ИИ текстом или голосовым. Можно добавить ссылку."
+                prompt = "Отправь инструкцию для ИИ текстом или голосовым."
             else:
                 request = self.ai_state.request(owner, identity)
                 if not request or not request["response"]:
                     raise ValueError("Дождись ответа ИИ")
                 conversation = request["conversation_id"]
-                prompt = "Продолжаем общаться с ИИ. Отправь ещё одно сообщение."
+                prompt = "Отправь следующую инструкцию для ИИ текстом или голосовым."
+            # Retire a reply keyboard left by the former persistent AI mode.
+            if (self.bottom_state(owner) or {}).get("screen", "").startswith("ai_note:"):
+                await self.show_home(owner, thread)
             self.store.set_action(owner, f"ai_note:{conversation}")
-            response = await self.show_bottom(owner, prompt, thread, keys(),
-                screen=f"ai_note:{conversation}", back="root", keep=True)
+            response = await self._show(owner, prompt, thread,
+                keys([key("Отмена", f"aicancel:{conversation}")]))
             self.ai_state.link(owner, response["message_id"], conversation)
         elif action == "aicancel":
             if self.store.action(owner) == f"ai_note:{identity}":
                 self.store.set_action(owner, None)
-                await self.show_home(owner, thread)
+                if (self.bottom_state(owner) or {}).get("screen") == f"ai_note:{identity}":
+                    await self.show_home(owner, thread)
             await self.remove_menu_message(owner, message_id)
         elif action == "aiend":
             if self.store.action(owner) == f"ai_note:{identity}":

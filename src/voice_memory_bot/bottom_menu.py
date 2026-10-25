@@ -74,6 +74,9 @@ class BottomMenuMixin:
     async def send_bottom(self, owner, thread, state, *, edit_id=None, raw_keys=None):
         if not isinstance(state, MenuState):
             state = MenuState.from_mapping(state)
+        if state.screen.kind == "ai_note":
+            # Saved legacy screens must not bring back the AI-only bottom keyboard.
+            return await self.refresh_folder_keyboard(owner, thread, force=True)
         rows = state.rows
         page_size = max(1, len(rows)) if state.screen.kind == "replymove" else PAGE_SIZE
         pages = max(1, (len(rows) + page_size - 1) // page_size)
@@ -101,10 +104,7 @@ class BottomMenuMixin:
         if pages > 1:
             keyboard.append(([{"text": PREVIOUS}] if page else []) +
                             ([{"text": NEXT}] if page + 1 < pages else []))
-        if state.screen.kind == "ai_note":
-            keyboard = [[{"text": "Отмена"}]]
-            actions = {"Отмена": "aicancel:" + state.screen.argument}
-        elif state.screen.wire == "settings:all":
+        if state.screen.wire == "settings:all":
             keyboard[1].append({"text": BACK})
             keyboard.append([{"text": ROOT}])
         elif state.screen.kind in {"create", "recordoptions"}:

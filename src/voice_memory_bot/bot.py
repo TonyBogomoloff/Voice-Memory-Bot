@@ -213,7 +213,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         if keys and "inline_keyboard" in keys:
             action = self.store.action(owner) or ""
             if action.startswith("ai_note:"):
-                return await self.show_bottom(owner, text, thread, screen=action, keep=True)
+                return await self._show(owner, text, thread,
+                    keyboard([button("Отмена", "aicancel:" + action.split(":", 1)[1])]), edit_id)
             state = self.bottom_state(owner) or {}
             return await self.show_bottom(owner, text, thread, keys, screen="notice",
                                           back=state.get("back" if state.get("screen") == "notice" else "screen", "home"),

@@ -197,17 +197,23 @@ def test_initial_folder_prompt_uses_bottom_controls(bot):
     asyncio.run(run())
 
 
-def test_selected_note_ai_instruction_has_no_finish_and_can_go_back_after_restart(bot):
+def test_selected_note_ai_keeps_bottom_menu_and_inline_cancel_survives_restart(bot):
     async def run():
+        await receive(bot, "/start", 999)
         await receive(bot, "Исходник", 1000)
         note = bot.store.notes(1)[0]
+        bottom, keyboard = bot.bottom_state(1), reply_keyboard(bot)
         await bot.callback(1, None, note["transcript_message_id"], f"aiask:{note['id']}")
-        assert labels(bot) == ["Отмена"]
+        prompt_id = bot.telegram.message_sequence
+        cancel = last_message(bot)['keyboard']['inline_keyboard'][0][0]
+        assert cancel['text'] == 'Отмена'
+        assert bot.bottom_state(1) == bottom and reply_keyboard(bot) == keyboard
         assert bot.store.action(1).startswith("ai_note:")
         assert bot.ai_state.claim() is None
         restarted = Bot(bot.config, bot.store, FakeTelegram(), FakeGroq(), FakeRouter())
-        await receive(restarted, "Отмена", 1001)
+        await restarted.callback(1, None, prompt_id, cancel['callback_data'])
         assert restarted.store.action(1) is None
+        assert restarted.bottom_state(1) == bottom
         await receive(restarted, "Обычная заметка", 1002)
         assert restarted.ai_state.claim() is None
         assert restarted.store.note(1, note["id"])["transcript"] == "Исходник"
