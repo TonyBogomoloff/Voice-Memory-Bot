@@ -92,11 +92,8 @@ class BottomMenuMixin:
                 used.add(label)
                 if not page * page_size <= row_index < (page + 1) * page_size:
                     continue
-                if "web_app" in item:
-                    rendered.append({"text": label, "web_app": item["web_app"]})
-                else:
-                    actions[label] = item["callback_data"]
-                    rendered.append({"text": label})
+                actions[label] = item["callback_data"]
+                rendered.append({"text": label})
                 if item.get("style"):
                     rendered[-1]["style"] = item["style"]
             if rendered:

@@ -75,9 +75,9 @@ async def execute_image(engine, request, index):
                 raise ValueError("Не удалось сохранить картинку: конфликт идентификатора")
             created_note = note
             state.db.execute("UPDATE notes SET state='ready',origin='web',original_name='image.png',"
-                "mime_type='image/png',upload_key=?,audio_bytes=?,sha256=?,title=?,ai_generated_from=?,"
+                "mime_type='image/png',audio_bytes=?,sha256=?,title=?,ai_generated_from=?,"
                 "delivery='sent',transcript_delivery='sent',routing='manual',archive_dirty=1 WHERE id=? AND owner=?",
-                (key, len(data), hashlib.sha256(data).hexdigest(), title, identity, note["id"], owner))
+                (len(data), hashlib.sha256(data).hexdigest(), title, identity, note["id"], owner))
             note = state.store.note(owner, note["id"])
             target = engine.archive.audio(note)
             target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

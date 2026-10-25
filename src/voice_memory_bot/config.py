@@ -38,8 +38,6 @@ class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     limits: Limits = field(default_factory=Limits)
     assistant_models: tuple[str, ...] = ()
-    web_url: str = ""
-    web_port: int = 18767
     folder_name_model: str = ""
     telegram_api_base: str = "https://api.telegram.org"
     telegram_file_root: Path | None = None
@@ -92,14 +90,6 @@ class Config:
         directory = Path(raw.get("data_dir", "data"))
         if not directory.is_absolute():
             directory = path.resolve().parent / directory
-        web_url = os.environ.get("VOICE_MEMORY_WEB_URL", raw.get("web_url", "")).rstrip("/")
-        web_port = int(os.environ.get("VOICE_MEMORY_WEB_PORT", raw.get("web_port", 18767)))
-        parsed = urlsplit(web_url)
-        if web_url and (parsed.scheme != "https" or not parsed.hostname or parsed.username
-                        or parsed.password or parsed.query or parsed.fragment or parsed.path):
-            raise ValueError("web_url: нужен HTTPS адрес без пути и параметров")
-        if not 1024 <= web_port <= 65535:
-            raise ValueError("web_port: допустимо 1024–65535")
         return cls(token, frozenset(ids), key, directory.resolve(),
-                   raw.get("groq_model", "whisper-large-v3-turbo"), llm, limits, tuple(models), web_url, web_port,
+                   raw.get("groq_model", "whisper-large-v3-turbo"), llm, limits, tuple(models),
                    name_model, api_base, Path(file_root).resolve() if local_api else None)

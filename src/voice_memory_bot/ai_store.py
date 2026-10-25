@@ -252,15 +252,10 @@ class AIStore:
                             "VALUES (?,?,?,?,?,?,?)", (note_id, owner, conversation, trigger, thread, reply_to,
                                                       note["created_at"]))
             self.db.execute("UPDATE ai_requests SET reply_context=? WHERE note_id=?", (reply_context, note_id))
-            if trigger == "miniapp":
-                text = note["content"] if note["content"] is not None else note["transcript"]
-                self.db.execute("UPDATE ai_requests SET input_text=? WHERE note_id=?", (text, note_id))
-            else:
-                self.db.execute("UPDATE notes SET entry_type='ai' WHERE id=? AND owner=?", (note_id, owner))
+            self.db.execute("UPDATE notes SET entry_type='ai' WHERE id=? AND owner=?", (note_id, owner))
         return self.request(owner, note_id)
 
     def finish_reply(self, owner, note_id, text):
-        from .web_store import result_text
         request = self.request(owner, note_id)
         with self.db:
             if not request["result_note_id"] and not self.command_reply(owner, note_id):
@@ -288,7 +283,6 @@ class AIStore:
         requests = self.store.all("SELECT a.* FROM ai_requests a JOIN notes n ON n.id=a.note_id "
                                   "WHERE a.state='ready' AND a.result_note_id IS NULL "
                                   "AND a.response IS NOT NULL AND n.deleted=0 ORDER BY a.created_at")
-        from .web_store import result_text
         for request in requests:
             if not request["response"].strip() or self.command_reply(request["owner"], request["note_id"]):
                 continue
@@ -442,9 +436,6 @@ class AIStore:
                 created_at,state,transcript,title,routing,delivery,transcript_delivery,archive_dirty)
                 VALUES (?,?,?,?,?,'text','txt',?,'ready',?,?,'manual','sent','sent',1)""",
                 (identity, owner, folder_id, folder_id, message, time.time(), content, title))
-            if self.request(owner, request_id)["trigger"] == "miniapp":
-                self.db.execute("UPDATE notes SET origin='web',ai_generated_from=? WHERE id=?",
-                                (request_id, identity))
             return {"ok": True, "action": action, "id": identity, "title": title, "revision": 0}
         note = self.store.note(owner, command["note_id"])
         if folder_id and folder_id != note["folder_id"]:
@@ -481,3 +472,24 @@ class AIStore:
             self.db.execute("UPDATE notes SET title=?,content=?,folder_id=?,revision=revision+1,archive_dirty=1 "
                             "WHERE id=? AND owner=?", (old["title"], old["content"], old["folder_id"], note_id, owner))
         return self.store.note(owner, note_id)
+
+
+def result_text(store, source, text, *, created_at=None):
+    """Archive an accepted AI result inside the caller's transaction.
+
+    Intake quotas must not discard a reply after its request has been accepted.
+    This also preserves complete historical replies without the intake length limit.
+    """
+    from .store import new_id
+    store.note(source["owner"], source["id"])
+    identity = new_id()
+    message = store.one("SELECT min(0,coalesce(min(message_id),0))-1 AS id FROM notes WHERE owner=?",
+                        (source["owner"],))["id"]
+    store.db.execute("""INSERT INTO notes(id,owner,folder_id,source_folder,message_id,source_thread,
+        kind,extension,created_at,state,transcript,title,origin,ai_generated_from,routing,
+        delivery,transcript_delivery,archive_dirty)
+        VALUES (?,?,?,?,?,?,'text','txt',?,'ready',?,'Ответ ИИ',?,?,'manual','sent','sent',1)""",
+        (identity, source["owner"], source["folder_id"], source["folder_id"], message, source["source_thread"],
+         time.time() if created_at is None else created_at, text,
+         "ai", source["id"]))
+    return store.note(source["owner"], identity)

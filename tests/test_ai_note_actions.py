@@ -256,36 +256,3 @@ def test_new_folder_and_move_roll_back_together_if_receipt_cannot_be_saved(bot, 
         assert bot.store.note(1, note["id"])["folder_id"] == note["folder_id"]
         assert bot.store.all("SELECT * FROM ai_message_jobs") == []
     asyncio.run(run())
-
-
-def test_miniapp_folder_choice_uses_same_permissions_and_one_time_move(tmp_path):
-    from test_miniapp import client_for
-
-    from voice_memory_bot.config import Limits
-    from voice_memory_bot.store import Store
-
-    async def run():
-        store = Store(tmp_path / "web.sqlite3", Limits())
-        store.ensure_user(1)
-        try:
-            async with client_for(tmp_path, store) as (app, mini, client):
-                note = ready_note(app)
-                request = request_for(app)
-                read(app, request, note)
-                await act(app, request, "move_note", note, title="Отпуск")
-                app.ai_state.finish_reply(1, request, "Выбери папку")
-                public = mini.public_note(store.note(1, request))
-                assert public["ai"]["folder_choices"][0]["name"] == "Отпуск"
-                url = f"/api/notes/{request}/ai-folder"
-                payload = {"step": 1, "target": "new"}
-                client.session.headers["Authorization"] = "Bearer " + mini.sign("session", 2)
-                assert (await client.post(url, json=payload)).status == 400
-                client.session.headers["Authorization"] = "Bearer " + mini.sign("session", 1)
-                assert (await client.post(url, json=payload)).status == 200
-                assert (await client.post(url, json=payload)).status == 200
-                assert len(store.folders(1)) == 2
-                assert store.note(1, note["id"])["revision"] == 1
-                assert mini.public_note(store.note(1, request))["ai"]["folder_choices"] == []
-        finally:
-            store.close()
-    asyncio.run(run())

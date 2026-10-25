@@ -10,7 +10,7 @@ from voice_memory_bot.ai_store import AIStore
 from voice_memory_bot.store import Store
 
 
-@pytest.mark.parametrize("trigger", ["folder", "reply", "name", "button", "miniapp"])
+@pytest.mark.parametrize("trigger", ["folder", "reply", "name", "button"])
 def test_every_ai_reply_is_archived_once_before_delivery_and_searchable(bot, trigger, tmp_path):
     async def run():
         source = ready_note(bot, "Составь план")
@@ -32,7 +32,7 @@ def test_every_ai_reply_is_archived_once_before_delivery_and_searchable(bot, tri
         assert text in (bot.archive.directory(answer) / "note.md").read_text()
         assert bot.store.notes(1, query="астролябия")[0]["id"] == answer["id"]
         assert not bot.store.notes(2, query="астролябия")
-        assert request["delivery"] == ("sent" if trigger == "miniapp" else "unknown")
+        assert request["delivery"] == "unknown"
         bot.telegram.fail_delivery = False
         await bot.ai_engine.run(request)  # Replay a saved model result after an interrupted job.
         await bot.deliver_ai(request, force=True)
@@ -80,22 +80,22 @@ def test_backfill_preserves_full_history_and_delivery_without_resurrecting_delet
 
 
 def test_reply_and_result_note_commit_atomically(bot, monkeypatch):
-    from voice_memory_bot import web_store
+    from voice_memory_bot import ai_store
     source = ready_note(bot)
     bot.ai_state.enqueue(1, source["id"], "button")
-    create = web_store.result_text
+    create = ai_store.result_text
 
     def interrupted(*args, **kwargs):
         create(*args, **kwargs)
         raise OSError("storage interruption")
 
-    monkeypatch.setattr(web_store, "result_text", interrupted)
+    monkeypatch.setattr(ai_store, "result_text", interrupted)
     with pytest.raises(OSError):
         bot.ai_state.finish_reply(1, source["id"], "Готовый ответ")
     assert bot.store.all("SELECT id FROM notes WHERE ai_generated_from=?", (source["id"],)) == []
     request = bot.ai_state.request(1, source["id"])
     assert request["response"] is None and request["result_note_id"] is None
-    monkeypatch.setattr(web_store, "result_text", create)
+    monkeypatch.setattr(ai_store, "result_text", create)
     bot.store.limits = replace(bot.store.limits, max_notes_per_user=1)
     bot.ai_state.finish_reply(1, source["id"], "Готовый ответ")
     assert bot.ai_state.request(1, source["id"])["result_note_id"]

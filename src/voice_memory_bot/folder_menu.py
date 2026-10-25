@@ -64,7 +64,7 @@ class FolderMenuMixin:
         return await self.callback(owner, thread, None, f'{action}:{identity}')
 
     async def configure_menu(self):
-        # Clear both the default Mini App button and existing per-chat overrides.
+        # Restore the command menu globally and for existing per-chat overrides.
         await self.telegram.call("setChatMenuButton", menu_button={"type": "commands"})
         for owner in sorted(self.config.allowed_user_ids):
             await self.telegram.call("setChatMenuButton", chat_id=owner, menu_button={"type": "commands"})

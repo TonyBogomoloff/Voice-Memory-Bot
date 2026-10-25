@@ -598,14 +598,18 @@ def test_shutdown_keeps_inflight_update_for_restart(tmp_path, store, monkeypatch
     asyncio.run(run())
 
 
-def test_config_reads_only_named_bot_from_shared_secrets(tmp_path):
+def test_config_reads_only_named_bot_from_shared_secrets(tmp_path, monkeypatch):
     app = tmp_path / "app.json"
-    app.write_text(json.dumps({"allowed_user_ids": [1]}))
+    app.write_text(json.dumps({"allowed_user_ids": [1], "web_url": "retired", "web_port": "unused",
+                               "folder_name_model": "naming-model"}))
+    monkeypatch.setenv("VOICE_MEMORY_WEB_URL", "retired")
+    monkeypatch.setenv("VOICE_MEMORY_WEB_PORT", "unused")
     secrets = tmp_path / "shared.json"
     secrets.write_text(json.dumps({"bot_token": "123:WRONG_BOT", "bot_token_your_audio_notes": "456:RIGHT",
                                    "groq_voice": "KEY"}))
     config = Config.load(app, secrets)
     assert config.bot_token == "456:RIGHT" and config.groq_voice == "KEY"
+    assert config.folder_name_model == "naming-model"
     assert "RIGHT" not in repr(config) and "KEY" not in repr(config)
     app.write_text(json.dumps({"allowed_user_ids": []}))
     with pytest.raises(ValueError, match="allowed_user_ids"):

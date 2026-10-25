@@ -24,7 +24,7 @@ async def receive(bot, text, message_id=1, thread=None):
 @pytest.mark.parametrize("command, extra_folders", [
     ("/start", set()), ("/menu", set()), ("/help", set()), ("/privacy", set()), ("/folders", set()),
     ("/new", set()), ("/notes", set()), ("/search", set()), ("/export", set()),
-    ("/settings", set()), ("/newchat", set()), ("/cancel", set()), ("/unknown", set()),
+    ("/app", set()), ("/settings", set()), ("/newchat", set()), ("/cancel", set()), ("/unknown", set()),
     ("/START@your_audio_notes_bot payload", set()),
     ("/new Работа", {"Работа"}), ("/ai", set()),
 ])
@@ -68,6 +68,9 @@ def test_start_registers_menu_commands(bot):
         for name in ("poll", "dispatch", "worker", "ai_worker", "folder_view_worker"):
             setattr(bot, name, AsyncMock())
         await bot.start()
+        menu_calls = [c.kwargs for c in bot.telegram.call.call_args_list if c.args == ("setChatMenuButton",)]
+        assert {"menu_button": {"type": "commands"}} in menu_calls
+        assert {"chat_id": 1, "menu_button": {"type": "commands"}} in menu_calls
         commands = next(c.kwargs["commands"] for c in bot.telegram.call.call_args_list
                         if c.args == ("setMyCommands",))
         assert commands == [

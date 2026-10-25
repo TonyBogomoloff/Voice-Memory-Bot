@@ -135,11 +135,6 @@ def main():
             png.save(OUT/f'{name}.png', optimize=True)
         large.unlink()
         manifest['icons'].append({'name':name,'emoji':emoji,'label':label})
-    symbols = [f'<symbol id="{name}" viewBox="0 0 24 24">' +
-               icon(body).split('>', 1)[1].rsplit('</svg>', 1)[0] + '</symbol>'
-               for name, _, _, body in icons]
-    (ROOT/'src/voice_memory_bot/web/emoji.svg').write_text(
-        '<svg xmlns="http://www.w3.org/2000/svg">' + ''.join(symbols) + '</svg>\n')
     (OUT/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
     font_path='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
     title_font=ImageFont.truetype(font_path,34)

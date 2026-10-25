@@ -151,7 +151,7 @@ class FolderViewMixin:
         view = self.store.one('SELECT * FROM folder_views WHERE owner=?', (owner,))
         if not view or (self.cleanup.job(owner) or {}).get('files_pending') or owner in self.deleting_owners:
             return
-        # Folder deletion and Mini App selection may have changed the active folder.
+        # Folder deletion or another selection may have changed the active folder.
         identity = self.store.current_folder(owner)
         if identity is None:
             return await self.render_empty_view(owner, view)

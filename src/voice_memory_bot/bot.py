@@ -100,7 +100,6 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         self.folder_keyboards = {}
         self.folder_pages = {}
         self.init_folder_options()
-        self.web = None
         self.init_folder_view()
         self.init_bottom_menu()
         self.emoji_keyboards = KeyboardAliases(store)
@@ -125,10 +124,6 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             self.archive.delete(note)
         await self.resume_deletions()
         await self.configure_menu()
-        if self.config.web_url:
-            from .miniapp import MiniApp
-            self.web = MiniApp(self)
-            await self.web.start()
         log.info("started bot_id=%s folder_mode=custom telegram_topics=%s", me["id"], me.get("has_topics_enabled", False))
         try:
             async with asyncio.TaskGroup() as group:
@@ -138,8 +133,6 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 group.create_task(self.ai_worker())
                 group.create_task(self.folder_view_worker())
         finally:
-            if self.web:
-                await self.web.close()
             for task in self.export_tasks:
                 task.cancel()
             await asyncio.gather(*self.export_tasks, return_exceptions=True)
@@ -446,9 +439,6 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
     async def command(self, owner, thread, command, argument):
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
-        if command == "/app" and self.config.web_url:
-            return await self.show(owner, "Твои папки, голосовые, фото, видео и файлы.", thread,
-                {"inline_keyboard": [[{"text": "📂 Открыть мини-эп", "web_app": {"url": self.config.web_url}}]]})
         if command == "/delete_all":
             return await self.delete_all_menu(owner, thread)
         if command == "/ai":
@@ -1044,9 +1034,6 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         owner, identity = note["owner"], note["id"]
         async with self.note_locks[identity]:
             note = self.store.note(owner, identity)
-            if note.get("origin") == "web":
-                from .miniapp import process_web_note
-                return await process_web_note(self, note)
             if note["kind"] == "photo":
                 return await self.process_photo(note)
             if note["kind"] in {"file", "video"}:

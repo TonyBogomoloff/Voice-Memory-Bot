@@ -66,18 +66,18 @@ def test_failed_request_and_operation_confirmation_keep_last_substantive_answer(
 
 
 def test_new_answer_storage_failure_leaves_previous_saved_answer(bot, monkeypatch):
-    from voice_memory_bot import web_store
+    from voice_memory_bot import ai_store
 
     async def run():
         source = await receive(bot, 'Исходник', message_id=10000)
         _, _, old = await answer(bot, 'Обсуди', 10001, source['message_id'], step(message='Старый итог'))
         message = bot.ai_state.message_ref(1, old['id'])['telegram_messages'][0]['message_id']
         current = await receive(bot, 'Уточни', message_id=10002, reply=message)
-        create = web_store.result_text
+        create = ai_store.result_text
         def interrupted(*args):
             create(*args)
             raise OSError('storage interruption')
-        monkeypatch.setattr(web_store, 'result_text', interrupted)
+        monkeypatch.setattr(ai_store, 'result_text', interrupted)
         with pytest.raises(OSError):
             bot.ai_state.finish_reply(1, current['id'], 'Новый итог')
         assert bot.store.note(1, old['id'])['entry_type'] == 'note'

@@ -1,5 +1,4 @@
 import asyncio
-from dataclasses import replace
 
 from test_commands import bot as bot
 from test_commands import receive
@@ -184,9 +183,8 @@ def test_note_options_remain_attached_and_do_not_change_bottom_screen(bot):
     asyncio.run(run())
 
 
-def test_minimal_menu_hides_miniapp_and_initial_folder_prompt_uses_bottom_controls(bot):
+def test_initial_folder_prompt_uses_bottom_controls(bot):
     async def run():
-        bot.config = replace(bot.config, web_url="https://example.invalid")
         await receive(bot, "/menu", 1000)
         assert not any("web_app" in b for row in reply_keyboard(bot)["keyboard"] for b in row)
         bot.store.delete_folder(1, bot.store.current_folder(1))

@@ -104,8 +104,16 @@ class Store:
             self.db.execute("UPDATE updates SET state='pending' WHERE state='processing'")
         migrate_ai(self.db)
         migrate_cleanup(self.db)
-        from .web_store import migrate_web
-        migrate_web(self.db)
+        with self.db:
+            for name, declaration in {
+                "origin": "TEXT NOT NULL DEFAULT 'telegram'",
+                "original_name": "TEXT",
+                "mime_type": "TEXT",
+                "ai_generated_from": "TEXT",
+                "source_json": "TEXT",
+            }.items():
+                if name not in columns:
+                    self.db.execute(f"ALTER TABLE notes ADD COLUMN {name} {declaration}")
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             if "pin_slot" not in {row["name"] for row in self.all("PRAGMA table_info(folders)")}:
@@ -426,7 +434,7 @@ class Store:
         allowed = {"state", "transcript", "title", "routing", "requested_folder", "error", "audio_bytes",
                    "sha256", "delivery", "result_message_id", "result_thread", "folder_id",
                    "status_message_id", "transcript_delivery", "transcript_message_id", "archive_dirty",
-                   "origin", "original_name", "mime_type", "upload_key", "duration"}
+                   "origin", "original_name", "mime_type", "duration"}
         if not fields or not fields.keys() <= allowed:
             raise ValueError("Invalid note fields")
         before = self.note(owner, identity)

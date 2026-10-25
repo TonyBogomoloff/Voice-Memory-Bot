@@ -331,8 +331,7 @@ class AIBotMixin:
     async def show_ai_progress(self, request):
         owner, identity = request["owner"], request["note_id"]
         note = self.store.note(owner, identity)
-        if (request["trigger"] == "miniapp"
-                or request["state"] not in {"queued", "running"}):
+        if request["state"] not in {"queued", "running"}:
             return
         # Checkpoint before sending: an ambiguous network failure must not create duplicates.
         with self.store.db:
@@ -392,9 +391,6 @@ class AIBotMixin:
         owner, identity = request["owner"], request["note_id"]
         current = self.ai_state.request(owner, identity)
         if not current or (not force and current["delivery"] != "pending") or not current["response"]:
-            return
-        if current["trigger"] == "miniapp" and not force:
-            self.ai_state.update_request(owner, identity, delivery="sent")
             return
         self.ai_state.conversation(owner, current["conversation_id"])
         _, changes = self.ai_result_controls(owner, identity, current)
