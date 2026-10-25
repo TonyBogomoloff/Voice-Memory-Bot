@@ -770,7 +770,6 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         self.store.delete(owner, identity)
         self.archive.delete(note)
         remaining = await self.delete_note_messages(note)
-        await self.remove_menu_message(owner, message["message_id"])
         text = ("Сообщение удалено." if not remaining else
                 "Сообщение удалено из базы, но часть сообщений не удалось удалить из Telegram.")
         return await self._show(owner, text, thread)
