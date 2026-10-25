@@ -12,6 +12,7 @@ from pathlib import Path
 from .ai_store import migrate_ai
 from .cleanup import migrate_cleanup
 from .config import Limits
+from .update_queue import UpdateQueue
 
 MAX_PINNED_FOLDERS = 4
 
@@ -36,6 +37,7 @@ class Store:
         self.limits = limits
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
+        self.updates = UpdateQueue(self)
         self.db.executescript("""
             PRAGMA journal_mode=WAL;
             PRAGMA foreign_keys=ON;
@@ -526,37 +528,19 @@ class Store:
                              updated.get(field, ""), replace_text, owner, note["id"]))
 
     def ingest(self, updates, allowed):
-        with self.db:
-            for update in updates:
-                message = update.get("message") or update.get("edited_message") or update.get("callback_query", {}).get("message", {})
-                sender = update.get("callback_query", {}).get("from") or message.get("from", {})
-                if sender.get("id") in allowed and message.get("chat", {}).get("type") == "private":
-                    self.db.execute("INSERT OR IGNORE INTO updates(id,payload) VALUES (?,?)",
-                                    (update["update_id"], json.dumps(update, ensure_ascii=False)))
-                self.db.execute("INSERT INTO meta(key,value) VALUES ('offset',?) "
-                                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                                (str(update["update_id"] + 1),))
+        return self.updates.ingest(updates, allowed)
 
     def offset(self):
-        row = self.one("SELECT value FROM meta WHERE key='offset'")
-        return int(row["value"]) if row else 0
+        return self.updates.offset()
 
     def pending_update(self):
-        row = self.one("SELECT * FROM updates WHERE state='pending' ORDER BY id LIMIT 1")
-        if row:
-            with self.db:
-                self.db.execute("UPDATE updates SET state='processing' WHERE id=?", (row["id"],))
-            return json.loads(row["payload"])
+        return self.updates.claim()
 
     def finish_update(self, identity):
-        # Drop payloads after handling; never keep a second copy of private messages in the queue.
-        with self.db:
-            self.db.execute("DELETE FROM updates WHERE id=?", (identity,))
+        return self.updates.finish(identity)
 
     def fail_update(self, identity):
-        # Preserve recoverable source data; replay requires inspection because a UI send may have succeeded.
-        with self.db:
-            self.db.execute("UPDATE updates SET state='failed' WHERE id=?", (identity,))
+        return self.updates.fail(identity)
 
 
 def safe_component(name: str) -> str:

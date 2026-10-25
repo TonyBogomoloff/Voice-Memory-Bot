@@ -140,11 +140,13 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
     async def poll(self):
         while True:
             try:
-                if self.store.one("SELECT count(*) AS n FROM updates")["n"] >= 1000:
+                capacity = self.store.updates.available()
+                if not capacity:
                     await asyncio.sleep(2)
                     continue
                 updates = await self.telegram.call("getUpdates", offset=self.store.offset(), timeout=30,
-                                                   allowed_updates=["message", "edited_message", "callback_query"], limit=50)
+                                                   allowed_updates=["message", "edited_message", "callback_query"],
+                                                   limit=min(50, capacity))
                 self.store.ingest(updates, self.config.allowed_user_ids)
             except ProviderError as exc:
                 if str(exc) in {"telegram_401", "telegram_409"}:
