@@ -310,3 +310,35 @@ def test_selected_folder_button_does_not_clear_or_replay_notes(bot, prefix):
         assert bot.store.current_folder(1) == inbox
         assert any(payload.get('text') == 'Первая запись' for _, payload in bot.telegram.sent)
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_cleanup_does_not_resurrect_ai_receipts_or_retry_blocked_ids(bot, missing):
+    async def run():
+        folder = bot.store.current_folder(1)
+        note = saved(bot, folder, "Сохранённый контекст", 1001)
+        conversation = bot.ai_state.start_note_conversation(1, note['id'])
+        for mid in (1001, 2001, 3001):
+            bot.ai_state.link(1, mid, conversation)
+        bot.messages.record(note, 2001, None, 'view')
+        bot.messages.removed(1, note['id'], 2001)
+        bot.cleanup.remember(1, 3001)
+        with bot.store.db:
+            bot.store.db.execute('UPDATE telegram_messages SET view_blocked=1 WHERE message_id=3001')
+        original = bot.telegram.call
+        async def call(method, **payload):
+            if missing and method == 'deleteMessage':
+                bot.telegram.sent.append((method, payload))
+                raise TelegramError(400, method, 'message to delete not found')
+            return await original(method, **payload)
+        bot.telegram.call = call
+        before = bot.ai_state.note_context(1, conversation)
+        await bot.clear_folder_view(1, None, all_threads=True)
+        assert [p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage'] == [1001]
+        bot.telegram.sent.clear()
+        await bot.clear_folder_view(1, None, all_threads=True)
+        assert not bot.telegram.sent
+        assert bot.ai_state.note_context(1, conversation) == before
+        assert bot.ai_state.conversation(1, conversation)
+        assert bot.store.note(1, note['id'])['deleted'] == 0
+    asyncio.run(run())

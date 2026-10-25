@@ -89,10 +89,11 @@ class FolderViewMixin:
             # Recover legacy receipts too; never enumerate adjacent Telegram IDs.
             legacy = self.store.all("SELECT message_id,thread_id FROM note_messages "
                                     "WHERE owner=? AND deleted=0 UNION SELECT message_id,NULL "
-                                    "FROM ai_links WHERE owner=?", (owner, owner))
+                                    "FROM ai_links a WHERE owner=? AND NOT EXISTS (SELECT 1 FROM note_messages n "
+                                    "WHERE n.owner=a.owner AND n.message_id=a.message_id AND n.deleted=1)", (owner, owner))
             for receipt in legacy:
                 self.cleanup.remember(owner, receipt['message_id'], receipt['thread_id'], sent_at=0)
-            rows = self.store.all("SELECT message_id FROM telegram_messages WHERE owner=?", (owner,))
+            rows = self.store.all("SELECT message_id FROM telegram_messages WHERE owner=? AND view_blocked=0", (owner,))
         else:
             rows = self.store.all("SELECT message_id FROM telegram_messages WHERE owner=? "
                                   "AND thread_id IS ? AND view_blocked=0", (owner, thread))
@@ -120,6 +121,8 @@ class FolderViewMixin:
             with self.store.db:
                 self.store.db.execute('DELETE FROM telegram_messages WHERE owner=? AND message_id=?', (owner, mid))
                 self.store.db.execute('UPDATE note_messages SET deleted=1 WHERE owner=? AND message_id=?', (owner, mid))
+                # Telegram reply links are disposable; archived AI conversations remain intact.
+                self.store.db.execute('DELETE FROM ai_links WHERE owner=? AND message_id=?', (owner, mid))
         return leftovers
 
     async def render_folder_view(self, owner, *, restore_screen=False, notice=None, progress_text="Загружаю папку…"):
