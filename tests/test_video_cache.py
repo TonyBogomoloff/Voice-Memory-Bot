@@ -10,7 +10,7 @@ from support.commands import bot as bot
 
 from voice_memory_bot.bot import Bot
 from voice_memory_bot.custom_emoji import IDS
-from voice_memory_bot.help_menu import HELP_TOPICS, help_video_path
+from voice_memory_bot.help_menu import HELP_COVER, HELP_TOPICS, help_video_path
 from voice_memory_bot.providers import ProviderError, Telegram, silent_delivery
 from voice_memory_bot.video_cache import CACHE_NAME, VideoFileCache
 
@@ -39,24 +39,30 @@ def test_preparation_survives_restart_and_first_help_request_has_no_upload(bot, 
             method = request.url.path.rsplit('/', 1)[-1]
             methods.append(method)
             sequence += 1
-            if method == 'sendVideo':
+            if method in {'sendVideo', 'sendPhoto', 'editMessageMedia'}:
                 if request.headers['content-type'].startswith('multipart/'):
                     uploads.append(request.content)
                     file_id = f'cached-{len(uploads)}'
+                    kind = 'video' if method == 'sendVideo' else 'photo'
+                    message_id = sequence
                 else:
                     payload = json.loads(request.content)
                     reused.append(payload)
-                    file_id = payload['video']
-                return telegram_response({'message_id': sequence, 'video': {'file_id': file_id}})
+                    media = payload.get('media', {})
+                    kind = media.get('type', 'photo' if method == 'sendPhoto' else 'video')
+                    file_id = media.get('media') or payload[kind]
+                    message_id = payload.get('message_id', sequence)
+                value = {'file_id': file_id}
+                return telegram_response({'message_id': message_id, kind: [value] if kind == 'photo' else value})
             return telegram_response(True if method == 'deleteMessage' else {'message_id': sequence, 'file_id': 'valid'})
         cache_path = bot.config.data_dir / CACHE_NAME
         first = Telegram('123:test', httpx.AsyncClient(transport=httpx.MockTransport(handler)), video_cache=cache_path)
         first.on_message = lambda *args: receipts.append(args)
-        videos = {key: (help_video_path(key), 10) for key in HELP_TOPICS}
+        videos = {**{key: (help_video_path(key), 10) for key in HELP_TOPICS}, 'help-cover': (HELP_COVER, 0)}
         report = await prepare.prepare(first, videos, 1)
         await first.close()
-        assert report['ready'] and report['uploaded'] == len(HELP_TOPICS)
-        assert len(uploads) == methods.count('deleteMessage') == len(receipts) == len(HELP_TOPICS)
+        assert report['ready'] and report['uploaded'] == len(videos)
+        assert len(uploads) == methods.count('deleteMessage') == len(receipts) == len(videos)
         before = bot.store.all('SELECT * FROM notes')
         second = Telegram('123:test', httpx.AsyncClient(transport=httpx.MockTransport(handler)))
         restarted = Bot(bot.config, bot.store, second, None, None)
@@ -67,16 +73,20 @@ def test_preparation_survives_restart_and_first_help_request_has_no_upload(bot, 
             carrier = restarted.store.one('SELECT message_id FROM bottom_menus WHERE owner=1')['message_id']
             for topic in HELP_TOPICS:
                 demo = await restarted.callback(1, None, index['message_id'], f'help:{topic}')
-                payload = reused[-1]
+                request = reused[-1]
+                payload = request['media']
+                assert demo['message_id'] == index['message_id']
                 assert payload['caption'] == '\n\n'.join(HELP_TOPICS[topic])
                 assert payload['show_caption_above_media'] and payload['supports_streaming']
-                assert payload['disable_notification'] is True
-                assert payload['reply_markup'] == {'inline_keyboard': [[{
+                assert 'disable_notification' not in request
+                assert request['reply_markup'] == {'inline_keyboard': [[{
                     'text': 'Назад', 'callback_data': 'help', 'icon_custom_emoji_id': IDS['back']}]]}
                 index = await restarted.callback(1, None, demo['message_id'], 'help')
                 assert restarted.bottom_state(1)['screen'] == 'root'
                 assert restarted.store.one('SELECT message_id FROM bottom_menus WHERE owner=1')['message_id'] == carrier
-            assert len(uploads) == len(reused) == len(HELP_TOPICS)
+            assert len(uploads) == len(videos)
+            assert len(reused) == 1 + 2 * len(HELP_TOPICS)
+            assert methods.count('deleteMessage') == len(videos)
             assert bot.store.all('SELECT * FROM notes') == before
         finally:
             await second.close()
@@ -207,7 +217,7 @@ def test_preparation_uses_secrets_next_to_configured_app_symlink(tmp_path, monke
     async def check(telegram, videos, owner, **kwargs):
         assert owner == 1 and kwargs['check_only']
         assert telegram.video_cache.path == physical / 'data' / CACHE_NAME
-        assert set(videos) == set(HELP_TOPICS) | {'start'}
+        assert set(videos) == set(HELP_TOPICS) | {'start', 'help-cover'}
         return {'ready': True, 'uploaded': 0}
     monkeypatch.setattr(module, 'prepare', check)
     asyncio.run(module.main(SimpleNamespace(app=app, check=True)))
@@ -241,4 +251,47 @@ def test_square_start_preparation_and_cached_delivery_keep_valid_payload(bot, mo
             assert 'cover' not in reused[0]  # No unattached multipart reference in a JSON request.
         finally:
             await telegram.close()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('failure', ['invalid', 'timeout', 'not_modified', 'missing', 'emoji'])
+def test_help_edits_never_create_or_delete_messages(tmp_path, failure):
+    async def run():
+        path = tmp_path / 'demo.mp4'
+        path.write_bytes(b'video')
+        cache = VideoFileCache(tmp_path / CACHE_NAME, '123')
+        cache.put(cache.digest(path), 'cached-video')
+        requests = []
+        def handler(request):
+            requests.append(request)
+            assert request.url.path.endswith('/editMessageMedia')
+            if len(requests) == 1:
+                payload = json.loads(request.content)
+                assert payload['message_id'] == 42
+                assert payload['media']['media'] == 'cached-video'
+                assert payload['media']['caption_entities']
+                assert payload['reply_markup']['inline_keyboard'][0][0]['icon_custom_emoji_id'] == IDS['back']
+                if failure == 'timeout':
+                    raise httpx.ReadTimeout('unknown', request=request)
+                reasons = {'invalid': 'wrong file identifier', 'not_modified': 'message is not modified',
+                           'missing': 'message to edit not found', 'emoji': 'custom emoji unavailable'}
+                return httpx.Response(400, json={'ok': False, 'error_code': 400, 'description': reasons[failure]})
+            if failure == 'invalid':
+                assert request.headers['content-type'].startswith('multipart/')
+                assert b'name="message_id"\r\n\r\n42' in request.content
+            return telegram_response({'message_id': 42, 'video': {'file_id': 'refreshed'}})
+        tg = Telegram('123:test', httpx.AsyncClient(transport=httpx.MockTransport(handler)), video_cache=cache.path)
+        try:
+            async def edit():
+                return await tg.help_media(1, path, caption='🎙 Сохранить', edit_id=42,
+                    keyboard={'inline_keyboard': [[{'text': '⬅️ Назад', 'callback_data': 'help'}]]})
+            if failure in {'timeout', 'missing'}:
+                with pytest.raises(ProviderError):
+                    await edit()
+            else:
+                assert (await edit())['message_id'] == 42
+            assert len(requests) == (2 if failure in {'invalid', 'emoji'} else 1)
+            assert cache.get(cache.digest(path)) == ('refreshed' if failure == 'invalid' else 'cached-video')
+        finally:
+            await tg.close()
     asyncio.run(run())

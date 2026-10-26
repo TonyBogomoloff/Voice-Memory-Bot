@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+HELP_COVER = Path(__file__).resolve().parents[2] / "assets" / "help-cover.jpg"
+
 HELP_INTRO = "ℹ️ Помощь\n\nЧто хочешь сделать? Выбери тему — покажу, как это работает."
 
 # Order is shared by the two-column index and the topic lookup.

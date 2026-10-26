@@ -17,7 +17,7 @@ def test_response_precedes_command_cleanup(bot, command):
         await receive(bot, '/new' if command == 'Отмена' else '/start', 101)
         bot.telegram.sent.clear()
         await receive(bot, command, 200)
-        sent = next(i for i, (m, _) in enumerate(bot.telegram.sent) if m == 'sendMessage')
+        sent = next(i for i, (m, _) in enumerate(bot.telegram.sent) if m in {'sendMessage', 'sendPhoto'})
         removed = next(i for i, (m, p) in enumerate(bot.telegram.sent)
                        if m == 'deleteMessage' and p['message_id'] == 200)
         assert sent < removed

@@ -9,14 +9,14 @@ from voice_memory_bot.bot import START_COVER, START_VIDEO
 from voice_memory_bot.cleanup import CleanupStore
 from voice_memory_bot.config import Config
 from voice_memory_bot.delivery import deletion_error
-from voice_memory_bot.help_menu import HELP_TOPICS, help_video_path
+from voice_memory_bot.help_menu import HELP_COVER, HELP_TOPICS, help_video_path
 from voice_memory_bot.providers import ProviderError, Telegram, TelegramError, silent_delivery
 from voice_memory_bot.store import Store
 from voice_memory_bot.video_cache import CACHE_NAME
 
 
 def bundled_videos():
-    return {**{topic: (help_video_path(topic), 10) for topic in HELP_TOPICS}, 'start': (START_VIDEO, 30)}
+    return {**{topic: (help_video_path(topic), 10) for topic in HELP_TOPICS}, 'start': (START_VIDEO, 30), 'help-cover': (HELP_COVER, 0)}
 
 
 async def prepare(telegram, videos, owner, *, check_only=False, forget_message=None):
@@ -49,7 +49,10 @@ async def prepare(telegram, videos, owner, *, check_only=False, forget_message=N
             token = silent_delivery.set(True)
             try:
                 options = {'width': 1080, 'height': 1080, 'cover': START_COVER} if path == START_VIDEO else {}
-                await telegram.video(owner, path, caption='Подготовка видео', duration=duration, **options)
+                if name == 'help-cover':
+                    await telegram.help_media(owner, path, caption='Подготовка помощи')
+                else:
+                    await telegram.video(owner, path, caption='Подготовка видео', duration=duration, **options)
             finally:
                 telegram.on_message = previous
                 silent_delivery.reset(token)
