@@ -117,12 +117,21 @@ def test_real_transport_keyboard_taps_survive_restart_and_never_become_notes(bot
         assert bot.store.notes(1) == []
         await receive(bot, 'Настройки', 103)
         assert bot.bottom_state(1)['screen'] == 'home'
+        keyboard = next(p['reply_markup'] for m, p in reversed(sent) if m == 'sendMessage')
+        assert any(b['text'] == 'Назад' and b['icon_custom_emoji_id'] == IDS['back']
+                   for row in keyboard['keyboard'] for b in row)
+        await receive(bot, 'Назад', 107)
+        assert bot.bottom_state(1)['screen'] == 'root'
+        await receive(bot, 'Настройки', 108)
         # A delayed tap from the old keyboard must not become a note in the current folder.
         await receive(bot, 'Работа', 104)
         assert bot.store.notes(1) == []
         await receive(bot, 'Папка', 105)
         assert bot.bottom_state(1)['screen'] == f"foldermenu:{work['id']}"
-        await receive(bot, '\u2060', 106)
+        keyboard = next(p['reply_markup'] for m, p in reversed(sent) if m == 'sendMessage')
+        assert any(b['text'] == 'Назад' and b['icon_custom_emoji_id'] == IDS['back']
+                   for row in keyboard['keyboard'] for b in row)
+        await receive(bot, 'Назад', 106)
         assert bot.bottom_state(1)['screen'] == 'root'
         await telegram.close()
     asyncio.run(run())
@@ -152,14 +161,16 @@ def test_document_caption_uses_entities_without_changing_export_bytes(tmp_path):
     asyncio.run(run())
 
 
-def test_icon_only_navigation_keeps_distinct_routes():
+def test_labeled_back_and_icon_only_paging_keep_distinct_routes():
     from voice_memory_bot.custom_emoji import IDS, themed_markup
     markup, aliases = themed_markup({'keyboard': [[{'text': '⬅️ Назад'}, {'text': 'Страница ▶️'}],
                                                   [{'text': '📁 Папка'}, {'text': '🎛️ Настройки'}]]})
     left, right = markup['keyboard'][0]
     assert left['text'].strip() and right['text'].strip()
     assert left['text'] != right['text']
-    assert all(c in '\u2060\u200b' for c in left['text'] + right['text'])
+    assert left['text'] == 'Назад'
+    assert left['icon_custom_emoji_id'] == IDS['back']
+    assert all(c in '\u2060\u200b' for c in right['text'])
     assert aliases[left['text']] == '⬅️ Назад'
     assert aliases[right['text']] == 'Страница ▶️'
     settings, menu = markup['keyboard'][1]

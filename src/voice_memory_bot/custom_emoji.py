@@ -101,6 +101,8 @@ def semantic_icon(item):
 
 
 def button_label(text, name):
+    if text == '⬅️ Назад':
+        return 'Назад'
     if name in ARROW_LABELS:
         return ARROW_LABELS[name]
     if text == '📁 Папка':
