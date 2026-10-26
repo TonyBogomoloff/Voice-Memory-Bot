@@ -36,6 +36,8 @@ def test_ai_instruction_is_consumed_before_processing_and_saved_answer_can_be_re
         conversation = bot.store.action(1).split(':', 1)[1]
         prompt_id = bot.store.one("SELECT message_id FROM ai_instruction_prompts WHERE conversation_id=?", (conversation,))["message_id"]
         assert prompt['text'] == 'Отправь инструкцию для ИИ текстом или голосовым.'
+        expected_reply = (source['transcript_message_id'] or source['message_id']) if entry == 'command' else source['message_id']
+        assert prompt['reply_to'] == expected_reply
         assert prompt['keyboard'] == {'inline_keyboard': [[{
             'text': 'Отмена', 'callback_data': f'aicancel:{conversation}'}]]}
         assert bot.bottom_state(1) == bottom and reply_keyboard(bot) == keyboard
@@ -50,7 +52,6 @@ def test_ai_instruction_is_consumed_before_processing_and_saved_answer_can_be_re
         instruction = bot.store.one('SELECT * FROM notes WHERE owner=1 AND message_id=1002')
         request = bot.ai_state.request(1, instruction['id'])
         assert request['conversation_id'] == conversation
-        expected_reply = (source['transcript_message_id'] or source['message_id']) if entry == 'command' else source['message_id']
         assert request['reply_to'] == expected_reply
         # A rapid next message is a note even before voice transcription or the AI response.
         bot.init_ai(bot.assistant)

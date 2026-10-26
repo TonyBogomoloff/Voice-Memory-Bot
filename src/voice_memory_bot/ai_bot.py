@@ -272,11 +272,17 @@ class AIBotMixin:
             if (self.bottom_state(owner) or {}).get("screen", "").startswith("ai_note:"):
                 await self.show_home(owner, thread)
             self.store.set_action(owner, f"ai_note:{conversation}")
-            response = await self._show(owner, prompt, thread,
-                keys([key("Отмена", f"aicancel:{conversation}")]))
-            self.ai_state.link(owner, response["message_id"], conversation)
             source = self.store.note(owner, identity) if action == "aiask" else None
-            target = message_id or (source["transcript_message_id"] or source["message_id"] if source else None)
+            # An Options callback points at the menu, not the selected record.
+            target = (state.extra.get("reply_to") if options else message_id)
+            target = target or (source["transcript_message_id"] or source["message_id"] if source else None)
+            cancel_keys = keys([key("Отмена", f"aicancel:{conversation}")])
+            if source:
+                response, target = await self.send_note_prompt(owner, thread, source, prompt, cancel_keys,
+                                                               reply_to=target)
+            else:
+                response = await self.telegram.text(owner, prompt, thread, cancel_keys, reply_to=target)
+            self.ai_state.link(owner, response["message_id"], conversation)
             with self.store.transaction():
                 self.store.db.execute("INSERT OR REPLACE INTO ai_instruction_prompts VALUES (?,?,?,?)",
                                       (conversation, owner, response["message_id"], target))
@@ -285,6 +291,10 @@ class AIBotMixin:
                     self.store.db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",
                         (f"ai_command:{owner}:{conversation}", json.dumps({
                             "command_id": command_id, "menu_id": (menu or {}).get("message_id")})))
+            if options:
+                # Keep cancellation context, but retire the controls only after delivery.
+                for old_id in {state.extra.get("inline_prompt_id"), (menu or {}).get("message_id")}:
+                    await self.remove_menu_message(owner, old_id)
         elif action == "aicancel":
             prompt = self.store.one("SELECT * FROM ai_instruction_prompts WHERE owner=? AND conversation_id=?",
                                     (owner, identity))

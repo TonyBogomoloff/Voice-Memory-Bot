@@ -176,11 +176,7 @@ class BottomMenuMixin:
             if inline_only:
                 inline_rows = [[{**item, "callback_data": actions[item["text"]]}
                                 for item in row if item["text"] in actions] for row in keyboard]
-                if state.screen.kind in {"notedelete", "replymove"}:
-                    response = await self.send_record_prompt(owner, thread, state, {"inline_keyboard": inline_rows})
-                else:
-                    response = await self.view_send(self.telegram.text, owner, state.text, thread,
-                        {"inline_keyboard": inline_rows}, reply_to=state.extra.get("reply_to"))
+                response = await self.send_record_prompt(owner, thread, state, {"inline_keyboard": inline_rows})
                 state.extra["inline_prompt_id"] = response["message_id"]
                 with self.store.transaction():
                     self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
