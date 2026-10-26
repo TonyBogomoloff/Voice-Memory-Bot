@@ -5,7 +5,8 @@ from pathlib import Path
 
 HELP_COVER = Path(__file__).resolve().parents[2] / "assets" / "help-cover.jpg"
 
-HELP_INTRO = "ℹ️ Помощь\n\nЧто хочешь сделать? Выбери тему — покажу, как это работает."
+# The cover contains the introduction; an empty caption clears the previous topic on Back.
+HELP_INTRO = ""
 
 # Order is shared by the two-column index and the topic lookup.
 HELP_TOPICS = {

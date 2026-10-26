@@ -1,0 +1,6 @@
+Tool: built-in image_gen
+References: media/onboarding-video/public/bot-avatar-v2.jpg (style), assets/emoji/blue_audio_v1/help.png (icon).
+
+Create a polished compact landscape Telegram bot Help cover, approximately 3:1 aspect ratio (1536x512 or similar). The first reference is STYLE ONLY: deep midnight navy background, vivid electric blue/cyan edge lights, restrained tactile pixel-art character. Do NOT include a recorder or cassette. The second reference is the exact concept for the main icon: a lowercase information letter i inside a circular ring, NOT a question mark. Compose an attractive luminous blue circular information badge on the left, with subtle dimensional pixel-art bevels matching the avatar. To its right set two perfectly legible Russian lines, exact spelling: large headline «Помощь по функциям» and smaller subheading «Выбери тему ниже». Do not draw quotation marks. White/light ice-blue clean sans-serif text, crisp and highly readable at a 360-pixel chat width. Generous margins, balanced airy layout, subtle blue light halo behind icon, dark blue background edge to edge, no outer white space, no extra words, no buttons, no additional symbols. This is the complete final cover artwork to replace the previous Help card. Save the generated image so it can be used as a repository asset.
+
+Delivery: JPEG 1080x360, ffmpeg scale=1080:360, q:v=2.
