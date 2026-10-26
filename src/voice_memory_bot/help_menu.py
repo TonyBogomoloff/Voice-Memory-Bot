@@ -1,6 +1,8 @@
 """Short, task-oriented help pages for the existing bottom menu."""
 from __future__ import annotations
 
+from pathlib import Path
+
 HELP_INTRO = "ℹ️ Помощь\n\nЧто хочешь сделать? Выбери тему внизу — расскажу коротко."
 
 # Order is shared by the two-column index and the topic lookup.
@@ -68,3 +70,10 @@ def help_page(topic=None):
                for key, (title, _) in HELP_TOPICS.items()]
     rows = [buttons[index:index + 2] for index in range(0, len(buttons), 2)]
     return text, rows, "help", "home"
+
+
+def help_video_path(topic):
+    """Resolve only bundled, known demos; callback input never becomes a path."""
+    if topic not in HELP_TOPICS:
+        return None
+    return Path(__file__).resolve().parents[2] / "output" / "remotion" / "help" / f"help-{topic}-v1-ru.mp4"

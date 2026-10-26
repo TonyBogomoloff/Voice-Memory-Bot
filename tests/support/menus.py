@@ -2,7 +2,7 @@
 
 def reply_keyboard(bot):
     return next(payload["keyboard"] for method, payload in reversed(bot.telegram.sent)
-                if method == "sendMessage" and "keyboard" in (payload.get("keyboard") or {}))
+                if method in {"sendMessage", "sendVideo"} and "keyboard" in (payload.get("keyboard") or {}))
 
 
 def labels(bot):

@@ -1,8 +1,8 @@
 """Inspect and fully decode the rendered promo; save a portable evidence receipt."""
+import argparse
 import hashlib
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 
@@ -12,8 +12,13 @@ def sha256(path):
 
 
 def main():
-    video = Path(sys.argv[1]).resolve()
-    receipt = Path(sys.argv[2]).resolve()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('video', type=Path)
+    parser.add_argument('receipt', type=Path)
+    parser.add_argument('--duration', type=int, choices=(10, 30), default=30)
+    args = parser.parse_args()
+    video, receipt = args.video.resolve(), args.receipt.resolve()
+    duration = args.duration
     result = subprocess.run([
         'ffprobe', '-v', 'error', '-count_frames', '-show_streams', '-show_format',
         '-of', 'json', str(video),
@@ -26,8 +31,8 @@ def main():
     assert (stream['width'], stream['height']) == (720, 1280), 'wrong_size'
     assert stream['pix_fmt'] == 'yuv420p', 'wrong_pixel_format'
     assert stream['avg_frame_rate'] == '30/1', 'wrong_frame_rate'
-    assert int(stream['nb_read_frames']) == 900, 'wrong_frame_count'
-    assert abs(float(metadata['format']['duration']) - 30) < 0.01, 'wrong_duration'
+    assert int(stream['nb_read_frames']) == duration * 30, 'wrong_frame_count'
+    assert abs(float(metadata['format']['duration']) - duration) < 0.01, 'wrong_duration'
     assert stream['color_space'] == 'bt709', 'wrong_color_space'
     data = video.read_bytes()
     assert 0 <= data.find(b'moov') < data.find(b'mdat'), 'faststart_missing'
@@ -43,10 +48,10 @@ def main():
         'file': video.name,
         'sha256': sha256(video),
         'bytes': video.stat().st_size,
-        'duration_seconds': 30,
+        'duration_seconds': duration,
         'width': 720,
         'height': 1280,
-        'frames': 900,
+        'frames': duration * 30,
         'fps': 30,
         'codec': 'h264',
         'pixel_format': 'yuv420p',

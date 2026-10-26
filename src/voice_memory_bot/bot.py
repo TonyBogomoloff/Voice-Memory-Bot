@@ -432,7 +432,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
     async def show_help(self, owner, thread=None, topic=None, *, edit_id=None):
         text, rows, screen, back = help_page(topic)
         return await self.show_bottom(owner, text, thread, keyboard(*rows),
-                                      screen=screen, back=back, keep=True, edit_id=edit_id)
+                                      screen=screen, back=back, keep=True, edit_id=edit_id, help_topic=topic)
 
     async def command(self, owner, thread, command, argument):
         if command == "/restart":

@@ -173,6 +173,44 @@ class Telegram:
                 continue
             raise error
 
+    async def video(self, owner, path: Path, thread=None, caption=None, keyboard=None):
+        """Send a bundled Help demo with its explanation and persistent keyboard."""
+        original = {"chat_id": owner, "video": "attach://video", "supports_streaming": True,
+                    "show_caption_above_media": True, "duration": 10, "width": 720, "height": 1280}
+        if caption:
+            original["caption"] = caption[:1024]
+        if keyboard is not None:
+            original["reply_markup"] = keyboard
+        if thread:
+            original["message_thread_id"] = thread
+        if silent_delivery.get():
+            original["disable_notification"] = True
+        payload, aliases = themed_payload("sendVideo", original)
+        if aliases and self.on_keyboard:
+            self.on_keyboard(owner, aliases)
+        for attempt in range(2):
+            data = {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool)) else str(v)
+                    for k, v in payload.items()}
+            try:
+                with path.open("rb") as handle:
+                    response = await self.client.post(self._base + "sendVideo", data=data,
+                        files={"video": (path.name, handle, "video/mp4")}, timeout=httpx.Timeout(120, connect=10))
+                body = response.json()
+            except (httpx.HTTPError, ValueError):
+                raise ProviderError("telegram_transport_unknown") from None
+            if isinstance(body, dict) and body.get("ok"):
+                self.remember_result(body["result"], owner, thread)
+                return body["result"]
+            code = body.get("error_code", response.status_code) if isinstance(body, dict) else response.status_code
+            error = TelegramError(code, "sendVideo", body.get("description", "") if isinstance(body, dict) else "")
+            if isinstance(body, dict):
+                error.retry_after = body.get("parameters", {}).get("retry_after", 5)
+            # Only an explicit emoji rejection is safe to resend; a timeout may have delivered it.
+            if attempt == 0 and error.reason == "custom_emoji_unavailable" and payload != original:
+                payload = original
+                continue
+            raise error
+
     async def download(self, file_id, destination: Path, max_bytes):
         info = await self.call("getFile", file_id=file_id)
         path = info.get("file_path", "")

@@ -7,7 +7,8 @@
     "studio": "remotion studio src/index.tsx",
     "check": "tsc --noEmit",
     "render": "remotion render src/index.tsx VoiceMemoryIntro out/voice-memory-bot-v2-ru.mp4 --codec=h264 --crf=19 --pixel-format=yuv420p --concurrency=1",
-    "poster": "remotion still src/index.tsx VoiceMemoryIntro out/poster.png --frame=55"
+    "poster": "remotion still src/index.tsx VoiceMemoryIntro out/poster.png --frame=55",
+    "render:help": "python3 render_help.py"
   },
   "dependencies": {
     "@remotion/cli": "4.0.538",

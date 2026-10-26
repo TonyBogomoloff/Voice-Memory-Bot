@@ -4,6 +4,7 @@ import logging
 import time
 
 from .delivery import deletion_error
+from .help_menu import help_video_path
 from .providers import ProviderError, silent_delivery
 from .states import MenuState, Target
 from .store import new_id
@@ -55,7 +56,8 @@ class BottomMenuMixin:
             self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?", (owner, message_id))
 
     async def show_bottom(self, owner, text, thread=None, keys=None, *, screen="home", back="root",
-                          keep=False, page=0, edit_id=None, mirror=False, reply_to=None, command_id=None):
+                          keep=False, page=0, edit_id=None, mirror=False, reply_to=None, command_id=None,
+                          help_topic=None):
         if screen.split(":")[0] not in {"foldermenu", "rename", "dropfolder"}:
             self.leave_folder_options(owner)
         rows = (keys or {}).get("inline_keyboard", [])
@@ -66,6 +68,8 @@ class BottomMenuMixin:
                 for row in rows]
         rows = [row for row in rows if row]
         state = MenuState(Target.parse(screen), Target.parse(back), text, rows, page, keep)
+        if state.screen.kind == "help" and help_video_path(help_topic) is not None:
+            state.extra["help_topic"] = help_topic
         if state.screen.kind in {"replymove", "notedelete", "recordoptions"}:
             previous = self.store.one("SELECT message_id,state FROM bottom_menus WHERE owner=?", (owner,))
             if previous:
@@ -181,8 +185,15 @@ class BottomMenuMixin:
                 with self.store.transaction():
                     self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
             else:
-                response = await self.view_send(self.telegram.text, owner,
-                    "Действия" if state.extra.get("mirror") else text, thread, keys)
+                video = help_video_path(state.extra.get("help_topic")) if state.screen.kind == "help" else None
+                if video is not None and video.is_file():
+                    response = await self.view_send(self.telegram.video, owner, video, thread,
+                                                    caption=text, keyboard=keys)
+                else:
+                    if video is not None:
+                        log.warning("help video missing topic=%s", state.extra["help_topic"])
+                    response = await self.view_send(self.telegram.text, owner,
+                        "Действия" if state.extra.get("mirror") else text, thread, keys)
         finally:
             silent_delivery.reset(token)
         with self.store.transaction():
