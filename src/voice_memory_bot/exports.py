@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .documents import history_markdown
+from .obsidian_export import build as build_obsidian
 from .originals import is_audio
 from .pdf import history_pdf
 from .store import safe_component
@@ -85,13 +86,15 @@ class ExportBuilder:
         self.originals = originals
 
     def build(self, notes, folders, output: Path, include_audio: bool, part_bytes: int,
-               *, text_format="pdf", audio_only=False, raw_only=False, settings=None):
+               *, text_format="pdf", audio_only=False, raw_only=False, settings=None, obsidian=False):
         """One complete history document per folder, plus optional unmodified audio.
 
         Split ZIPs at file boundaries, never split or truncate a topic's document.
         Audio checksums describe the bytes actually copied into the archive.
         """
         snapshot = ExportSnapshot.capture(notes, folders, settings)
+        if obsidian:
+            return build_obsidian(snapshot, self.originals, output, include_audio, part_bytes)
         notes, folders, settings = snapshot.notes, snapshot.folders, snapshot.settings
         if text_format not in {"pdf", "markdown"} or (audio_only or raw_only) and not include_audio:
             raise ValueError("invalid_export_format")

@@ -594,6 +594,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         text += "\n✅ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
         rows = [[button("✏️ Переименовать", f"rename:{identity}"),
                  button("📦 Экспорт", f"zip:{identity}:all")],
+                [button("💎 Для Obsidian", f"zip:{identity}:obsidian")],
                 [button("🗑 Удалить папку", f"dropfolder:{identity}")]]
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"foldermenu:{identity}",
                                back="root", edit_id=edit_id)
@@ -748,7 +749,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             self.store.set_export_format(owner, identity)
             return await self.export_settings(owner, thread, scope, message_id)
         if action == "zip":
-            if len(pieces) != 3 or pieces[2] not in {"all", "text", "voice", "audio", "raw"}:
+            if len(pieces) != 3 or pieces[2] not in {"all", "text", "voice", "audio", "raw", "obsidian"}:
                 raise ValueError("Выбери вид экспорта в меню /export")
             folder_id = None if identity == "all" else identity
             if folder_id:
@@ -1014,6 +1015,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                         f"Тексты: {text_format}, вся история папки в одном файле. Папки проектов сохранятся.\n"
                         "Всё будет в одном ZIP. Если он больше лимита Telegram — в нескольких частях.",
                         thread, keyboard(
+                            [button("💎 Obsidian: заметки + файлы", f"zip:{identity}:obsidian")],
                             [button("Исходники: медиа, тексты и файлы", f"zip:{identity}:raw")],
                             [button(f"Всё: {text_format} + файлы", f"zip:{identity}:all")],
                             [button(f"Только тексты · {text_format}", f"zip:{identity}:text"),
@@ -1029,7 +1031,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             return await self.show(owner, "Предыдущий экспорт ещё готовится. Дождись его завершения.", thread)
         async with self.export_locks[owner]:
             try:
-                if content not in {"all", "text", "voice", "raw"}:
+                if content not in {"all", "text", "voice", "raw", "obsidian"}:
                     raise ValueError("invalid_export_format")
                 # Snapshot all metadata and the preference before yielding to other handlers.
                 snapshot = self.store.export_snapshot(owner, identity)
@@ -1045,7 +1047,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                     build = asyncio.create_task(asyncio.to_thread(
                         self.archive.export, notes, folders, Path(directory), content != "text",
                         self.config.limits.export_part_bytes, text_format=text_format, audio_only=content == "voice",
-                        raw_only=content == "raw", settings=preferences))
+                        raw_only=content == "raw", settings=preferences, obsidian=content == "obsidian"))
                     try:
                         paths = await asyncio.shield(build)
                     except asyncio.CancelledError:
@@ -1056,7 +1058,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                         await self.show(owner, f"Архив большой: отправляю {len(paths)} ZIP-частей.\n"
                                         "Распакуй их в одну папку — файлы распределены между частями.", thread)
                     for i, path in enumerate(paths):
-                        label = ("Исходники" if content == "raw" else "Аудио" if content == "voice"
+                        label = ("Obsidian" if content == "obsidian" else "Исходники" if content == "raw" else "Аудио" if content == "voice"
                                  else "PDF" if text_format == "pdf" else "Markdown")
                         if content == "all":
                             label += " + файлы"

@@ -21,7 +21,7 @@ def test_options_bind_actions_to_folder_and_survive_restart(bot, tmp_path):
     async def run():
         folder = bot.store.current_folder(1)
         await receive(bot, '⚙️ Options')
-        assert {'✏️ Переименовать', '🗑 Удалить папку', '📦 Экспорт',
+        assert {'✏️ Переименовать', '🗑 Удалить папку', '📦 Экспорт', '💎 Для Obsidian',
                 '⬅️ Назад'} == set(labels(bot))
         assert bot.store.current_folder(1) == folder
         restarted = make_bot(tmp_path, bot.store)
