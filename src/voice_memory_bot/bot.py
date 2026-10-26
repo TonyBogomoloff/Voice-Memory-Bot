@@ -84,6 +84,7 @@ HELP = """🎙 Voice Memory Bot
 ИИ умеет искать, создавать, менять и переносить заметки, а также удалять их с подтверждением.
 
 /start — главная
+/restart — открыть главную заново
 /help — помощь
 /ai — поговорить с ИИ"""
 
@@ -125,6 +126,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             {"command": "move", "description": "Перенести"},
             {"command": "delete", "description": "Удалить"},
             {"command": "options", "description": "Опции"},
+            {"command": "restart", "description": "Перезапустить меню"},
         ])
         # Finish physical deletion interrupted by a previous shutdown.
         for note in self.store.all("SELECT * FROM notes WHERE deleted=1"):
@@ -453,6 +455,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         return note
 
     async def command(self, owner, thread, command, argument):
+        if command == "/restart":
+            command = "/start"
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
         if command == "/delete_all":

@@ -22,7 +22,7 @@ def test_commands_do_not_import_unknown_threads_as_folders(bot, command, extra_f
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("command", ["/start", "/menu", "/folders"])
+@pytest.mark.parametrize("command", ["/start", "/restart", "/menu", "/folders"])
 def test_navigation_commands_cancel_pending_folder_input(bot, command):
 
     async def run():
@@ -62,5 +62,29 @@ def test_start_registers_menu_commands(bot):
             {"command": "move", "description": "Перенести"},
             {"command": "delete", "description": "Удалить"},
             {"command": "options", "description": "Опции"},
+            {"command": "restart", "description": "Перезапустить меню"},
         ]
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("command", ["/restart", "/RESTART@your_audio_notes_bot payload"])
+def test_restart_alias_restores_same_menu_as_start(bot, empty, command):
+    from support.menus import reply_keyboard
+
+    async def run():
+        if empty:
+            bot.store.delete_folder(1, bot.store.current_folder(1))
+        else:
+            await receive(bot, "Сохранённая запись", 100)
+        notes = bot.store.notes(1)
+        folder = bot.store.current_folder(1)
+        await receive(bot, "/start", 200)
+        expected_state, expected_keyboard = bot.bottom_state(1), reply_keyboard(bot)
+        await receive(bot, "/new", 300)
+        await receive(bot, command, 400)
+        assert bot.bottom_state(1) == expected_state
+        assert reply_keyboard(bot) == expected_keyboard
+        assert bot.store.current_folder(1) == folder
+        assert bot.store.notes(1) == notes
     asyncio.run(run())
