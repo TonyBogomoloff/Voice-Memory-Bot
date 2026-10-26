@@ -19,8 +19,8 @@ class ObsidianMenuMixin:
                      'Пакет плагина: ' + self.config.obsidian_url + '/plugin/voice-memory.zip')
             if code:
                 text += '\n\nКод на 10 минут, для одного устройства:\n' + code
-            for device in ObsidianAccess(self.store).devices(owner):
-                rows.append([button('Отключить · ' + device['name'], f"obsidianrevoke:{device['id']}:{scope}")])
+            for index, device in enumerate(ObsidianAccess(self.store).devices(owner), 1):
+                rows.append([button(f"Отключить · {index}. {device['name']}", f"obsidianrevoke:{device['id']}:{scope}")])
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f'obsidian:{scope}',
                                back='settings:all' if scope == 'all' else f'foldermenu:{scope}', edit_id=edit_id)
 

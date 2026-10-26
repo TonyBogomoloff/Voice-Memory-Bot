@@ -127,6 +127,12 @@ def test_telegram_pairing_menu_navigation_and_disabled_mode(store, tmp_path):
         assert state['screen'] == 'obsidian:all'
         assert '10 минут' in state['text']
         assert state['back'] == 'settings:all'
+        access = ObsidianAccess(store)
+        for _ in range(2):
+            access.pair(access.issue(1), 'iPhone', {1})
+        await bot.obsidian_menu(1, None)
+        actions = bot.bottom_state(1)['actions']
+        assert len([name for name in actions if name.startswith('Отключить')]) == 2
         bot.config = replace(bot.config, obsidian_url='')
         await bot.obsidian_menu(1, None)
         assert not any('Подключить' in name for name in bot.bottom_state(1)['actions'])
