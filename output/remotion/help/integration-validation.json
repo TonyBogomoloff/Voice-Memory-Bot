@@ -1,0 +1,21 @@
+{
+  "help_render_commit": "f3fb220bcb9b13f9771d7e9fe64f4187d995f640",
+  "merged_promo_commit": "b7f580a9aeb0af5775dfa61d721841511db1505c",
+  "comparison": "all_8_control_frames_pixel_identical",
+  "frame": 240,
+  "topics": [
+    "save",
+    "folders",
+    "ai",
+    "images",
+    "search",
+    "actions",
+    "export",
+    "settings"
+  ],
+  "source_hashes": {
+    "media/onboarding-video/src/phone.tsx": "5fd6e6c32f525f82d66cb1691890509cb29e8ad497c83b2ef73f6d64454da6e4",
+    "media/onboarding-video/src/help-video.tsx": "85180ff53800cd6beb7c0cec2a9141ed0220e6d1c0234cb49ecb954bacd2f604",
+    "media/onboarding-video/src/help-index.tsx": "7a7307e69c4572e1a25cf79a299248c5b47ef5a783174dda3d78aa2188f90774"
+  }
+}
