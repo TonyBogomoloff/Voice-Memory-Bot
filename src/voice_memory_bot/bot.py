@@ -34,6 +34,9 @@ from .update_queue import update_owner
 
 log = logging.getLogger(__name__)
 
+START_VIDEO = Path(__file__).resolve().parents[2] / "output/remotion/voice-memory-bot-onboarding-v3-ru.mp4"
+START_CAPTION = "Твой голосовой блокнот, который всегда с тобой.\nСохраняй идеи, пока они свежие 💙"
+
 
 def button(text, data):
     return {"text": text, "callback_data": data, **(
@@ -100,7 +103,6 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             {"command": "move", "description": "Перенести"},
             {"command": "delete", "description": "Удалить"},
             {"command": "options", "description": "Опции"},
-            {"command": "restart", "description": "Перезапустить меню"},
             {"command": "help", "description": "Помощь по функциям"},
         ])
         # Finish physical deletion interrupted by a previous shutdown.
@@ -458,20 +460,29 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
         return response
 
+    async def show_start(self, owner, thread=None):
+        try:
+            await self.telegram.video(owner, START_VIDEO, thread, caption=START_CAPTION, duration=30)
+        except (ProviderError, OSError) as exc:
+            # Keep onboarding usable without retrying an upload whose response may be lost.
+            log.warning("start video unavailable type=%s", type(exc).__name__)
+            await self.telegram.text(owner, START_CAPTION, thread)
+        return await self.show_home(owner, thread)
+
     async def command(self, owner, thread, command, argument):
-        if command == "/restart":
-            command = "/start"
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
         if command == "/delete_all":
             return await self.delete_all_menu(owner, thread)
         if command == "/ai":
             return await self.open_ai(owner, thread)
-        if not self.store.folders(owner) and command in {"/start", "/menu", "/folders", "/notes", "/newchat", "/cancel"}:
+        if command == "/start":
+            return await self.show_start(owner, thread)
+        if not self.store.folders(owner) and command in {"/restart", "/menu", "/folders", "/notes", "/newchat", "/cancel"}:
             return await self.ask_first_folder(owner, thread)
         if command == "/newchat":
             return await self.new_ai_conversation(owner, thread, self.store.current_folder(owner, thread))
-        if command == "/start":
+        if command == "/restart":
             return await self.show_home(owner, thread)
         if command == "/menu":
             return await self.show_main_menu(owner, thread)

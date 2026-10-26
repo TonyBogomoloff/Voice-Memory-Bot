@@ -62,7 +62,6 @@ def test_start_registers_menu_commands(bot):
             {"command": "move", "description": "Перенести"},
             {"command": "delete", "description": "Удалить"},
             {"command": "options", "description": "Опции"},
-            {"command": "restart", "description": "Перезапустить меню"},
             {"command": "help", "description": "Помощь по функциям"},
         ]
     asyncio.run(run())
@@ -83,7 +82,9 @@ def test_restart_alias_restores_same_menu_as_start(bot, empty, command):
         await receive(bot, "/start", 200)
         expected_state, expected_keyboard = bot.bottom_state(1), reply_keyboard(bot)
         await receive(bot, "/new", 300)
+        bot.telegram.sent.clear()
         await receive(bot, command, 400)
+        assert not any(method == "sendVideo" for method, _ in bot.telegram.sent)
         assert bot.bottom_state(1) == expected_state
         assert reply_keyboard(bot) == expected_keyboard
         assert bot.store.current_folder(1) == folder

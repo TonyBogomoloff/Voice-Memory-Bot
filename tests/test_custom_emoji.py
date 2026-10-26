@@ -98,7 +98,7 @@ def test_real_transport_keyboard_taps_survive_restart_and_never_become_notes(bot
     async def run():
         sent = []
         def handler(request):
-            payload = json.loads(request.content)
+            payload = json.loads(request.content) if request.headers["content-type"] == "application/json" else {}
             sent.append((request.url.path.rsplit('/', 1)[-1], payload))
             return httpx.Response(200, json={'ok': True, 'result': {'message_id': 1000 + len(sent)}})
         telegram = Telegram('123:test', httpx.AsyncClient(transport=httpx.MockTransport(handler)))
