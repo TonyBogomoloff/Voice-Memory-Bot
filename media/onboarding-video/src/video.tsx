@@ -1,7 +1,7 @@
 import React, {CSSProperties, ReactNode} from 'react';
 import {AbsoluteFill, Img, Sequence, spring, staticFile, useCurrentFrame} from 'remotion';
 import {loadFont} from '@remotion/fonts';
-import {Bubble, ExportKeys, Icon, Phone, Reply, Tap, UI, Waveform, ramp} from './phone';
+import {Bubble, ExportKeys, Icon, Phone, PhotoBubble, Reply, Tap, UI, Waveform, ramp} from './phone';
 import {FPS, SCENES} from './timing';
 import copy from './demo-copy.json';
 
@@ -23,13 +23,13 @@ const Background: React.FC = () => {
   </AbsoluteFill>;
 };
 
-const Brand: React.FC = () => <div style={{position: 'absolute', top: 42, left: 44, right: 44, display: 'flex', alignItems: 'center', gap: 12}}><Img src={staticFile('bot-avatar.png')} style={{width: 43, height: 43, borderRadius: 14, border: `1px solid ${C.line}`}}/><div style={{fontSize: 17, letterSpacing: 1.8, fontWeight: 600}}>VOICE MEMORY BOT</div><div style={{marginLeft: 'auto', color: C.dim, fontSize: 14, letterSpacing: 1.2}}>В TELEGRAM</div></div>;
+const Brand: React.FC = () => <div style={{position: 'absolute', top: 42, left: 44, right: 44, display: 'flex', alignItems: 'center', gap: 12}}><Img src={staticFile('bot-avatar-v2.jpg')} style={{width: 43, height: 43, borderRadius: 14, border: `1px solid ${C.line}`}}/><div style={{fontSize: 17, letterSpacing: 1.8, fontWeight: 600}}>VOICE MEMORY BOT</div><div style={{marginLeft: 'auto', color: C.dim, fontSize: 14, letterSpacing: 1.2}}>В TELEGRAM</div></div>;
 const Tag: React.FC<{children: ReactNode; color?: string}> = ({children, color = C.blue}) => <div style={{display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 13px', borderRadius: 11, background: `${color}10`, border: `1px solid ${color}38`, color, fontSize: 16, fontWeight: 600, letterSpacing: 1.3}}>{children}</div>;
 const Title: React.FC<{number: string; label: string; icon: string; color: string; children: ReactNode; fontSize?: number}> = ({number, label, icon, color, children, fontSize = 55}) => {const f = useCurrentFrame();return <div style={{position: 'absolute', left: 44, right: 44, top: 123, ...appear(f)}}><div style={{display: 'flex', gap: 14, alignItems: 'center', marginBottom: 18}}><Tag color={color}><Icon name={icon} size={21} color={color}/>{number} / 04 · {label}</Tag><div style={{height: 1, flex: 1, background: C.line}}/></div><div style={{fontSize, fontWeight: 700, lineHeight: 1.04, letterSpacing: -1.8}}>{children}</div></div>;};
 const Footer: React.FC<{frame: number; delay: number; color: string; children: ReactNode}> = ({frame, delay, color, children}) => <div style={{position: 'absolute', top: 1142, left: 44, right: 44, display: 'flex', gap: 13, alignItems: 'center', ...appear(frame, delay)}}><div style={{width: 38, height: 38, borderRadius: '50%', background: `${color}13`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}><Icon name="check" size={23} color={color}/></div><div style={{fontSize: 25, lineHeight: 1.3, fontWeight: 600}}>{children}</div></div>;
 const Aside: React.FC<{frame: number; delay: number; color: string; side?: 'left' | 'right'; top: number; label: string; children: ReactNode}> = ({frame, delay, color, side = 'left', top, label, children}) => <div style={{position: 'absolute', top, left: side === 'left' ? 32 : 560, width: 128, textAlign: side === 'left' ? 'right' : 'left', ...appear(frame, delay)}}><div style={{fontSize: 16, lineHeight: 1.25, color: C.dim, marginBottom: 9}}>{label}</div><div style={{fontSize: 25, lineHeight: 1.15, color, fontWeight: 600, letterSpacing: -0.6}}>{children}</div><div style={{height: 1, width: 28, background: `${color}85`, marginTop: 14, marginLeft: side === 'left' ? 'auto' : 0}}/></div>;
 
-const Hero: React.FC<{frame: number; top: number; size: number}> = ({frame, top, size}) => <div style={{position: 'absolute', left: (720 - size) / 2, top, width: size, height: size, opacity: ramp(frame, 1, 10), transform: `translateY(${(1 - pop(frame, 2)) * 35 + Math.sin(frame / 25) * 5}px) rotate(${Math.sin(frame / 40) * 2}deg)`}}><Img src={staticFile('recorder-cutout-v1.png')} style={{width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 20px 18px #0006)'}}/></div>;
+const Hero: React.FC<{frame: number; top: number; size: number}> = ({frame, top, size}) => <div style={{position: 'absolute', left: (720 - size) / 2, top, width: size, height: size, opacity: ramp(frame, 1, 10), transform: `translateY(${(1 - pop(frame, 2)) * 35 + Math.sin(frame / 25) * 5}px) rotate(${Math.sin(frame / 40) * 2}deg)`}}><Img src={staticFile('blue-recorder-cutout-v2.png')} style={{width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 20px 18px #0006)'}}/></div>;
 const FeatureChip: React.FC<{frame: number; delay: number; icon: string; label: string; color: string; left: number; top: number; angle?: number}> = ({frame, delay, icon, label, color, left, top, angle = 0}) => <div style={{position: 'absolute', left, top, display: 'flex', gap: 10, alignItems: 'center', padding: '14px 18px', border: `1.5px solid ${color}70`, borderRadius: 20, background: '#1b2e39', boxShadow: '0 7px 0 #0a151b', fontSize: 24, fontWeight: 600, opacity: ramp(frame, delay, delay + 9), transform: `translateY(${(1 - pop(frame, delay)) * 30}px) rotate(${angle}deg)`}}><Icon name={icon} size={27} color={color}/>{label}</div>;
 
 const Intro: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill style={end(f, 90)}>
@@ -45,12 +45,13 @@ const Intro: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill 
 const Voice: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill style={end(f, 180)}>
   <Title number="01" label="ГОЛОС В ТЕКСТ" icon="mic" color={C.blue}>Говори сейчас.<br/><span style={{color: C.blue}}>Читай когда удобно.</span></Title>
   <Phone style={appear(f, 3)} recording={f < 18}>
-    <Bubble top={50} width={270} right style={appear(f, 18)}><Waveform frame={f}/></Bubble>
-    {f < 49 && <Bubble top={150} width={294} fontSize={20} style={{opacity: ramp(f, 27, 34) * (1 - ramp(f, 43, 49))}}>Конвертирую в текст…</Bubble>}
-    <Bubble top={150} fontSize={24} style={appear(f, 49)}>{copy.voice}</Bubble>
+    <PhotoBubble top={45} width={300} height={176} right/>
+    <Bubble top={236} width={270} right style={appear(f, 18)}><Waveform frame={f}/></Bubble>
+    {f < 49 && <Bubble top={329} width={294} fontSize={20} style={{opacity: ramp(f, 27, 34) * (1 - ramp(f, 43, 49))}}>Конвертирую в текст…</Bubble>}
+    <Bubble top={329} fontSize={24} style={appear(f, 49)}>{copy.voice}</Bubble>
   </Phone>
-  <Aside frame={f} delay={58} top={605} label="Уже текстом" color={C.blue}>Не нужно<br/>слушать</Aside>
-  <Aside frame={f} delay={75} top={805} side="right" label="В архиве" color={C.mint}>Оригинал<br/>сохранён</Aside>
+  <Aside frame={f} delay={58} top={758} label="Уже текстом" color={C.blue}>Не нужно<br/>слушать</Aside>
+  <Aside frame={f} delay={75} top={635} side="right" label="В архиве" color={C.mint}>Оригинал<br/>сохранён</Aside>
   <Footer frame={f} delay={55} color={C.blue}>Голосовые и кружки<br/><span style={{color: C.blue}}>превращаются в текст.</span></Footer>
 </AbsoluteFill>;};
 
@@ -58,7 +59,7 @@ const Folders: React.FC = () => {const f = useCurrentFrame();const switched = f 
   <Title number="02" label="СВОИ ПАПКИ" icon="folder" color={C.mint}>У каждой идеи<br/><span style={{color: C.mint}}>своё место.</span></Title>
   <Phone active={switched ? 'Поездка' : 'Идеи'} style={appear(f, 3)}>
     <div style={{opacity: 1 - p, transform: `translateX(${-p * 35}px)`}}><Bubble top={54} width={300} fontSize={24}>{copy.idea}</Bubble></div>
-    <div style={{opacity: p, transform: `translateX(${(1 - p) * 35}px)`}}><Bubble top={54} fontSize={24}>{copy.voice}</Bubble></div>
+    <div style={{opacity: p, transform: `translateX(${(1 - p) * 35}px)`}}><PhotoBubble top={54}/><Bubble top={301} fontSize={24}>{copy.voice}</Bubble></div>
   </Phone>
   <Tap frame={f} from={26} x={272} y={978}/>
   <Aside frame={f} delay={49} top={640} color={C.mint} label="Поездка">Всё<br/>на месте</Aside>
