@@ -33,42 +33,42 @@ const Hero: React.FC<{frame: number; top: number; size: number}> = ({frame, top,
 const FeatureChip: React.FC<{frame: number; delay: number; icon: string; label: string; color: string; left: number; top: number; angle?: number}> = ({frame, delay, icon, label, color, left, top, angle = 0}) => <div style={{position: 'absolute', left, top, display: 'flex', gap: 10, alignItems: 'center', padding: '14px 18px', border: `1.5px solid ${color}70`, borderRadius: 20, background: '#1b2e39', boxShadow: '0 7px 0 #0a151b', fontSize: 24, fontWeight: 600, opacity: ramp(frame, delay, delay + 9), transform: `translateY(${(1 - pop(frame, delay)) * 30}px) rotate(${angle}deg)`}}><Icon name={icon} size={27} color={color}/>{label}</div>;
 
 const Intro: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill style={end(f, 90)}>
-  <div style={{position: 'absolute', left: 44, right: 44, top: 150}}><Tag>ТВОЯ ПАМЯТЬ. ПРЯМО В ЧАТЕ.</Tag><h1 style={{margin: '28px 0 0', fontSize: 74, lineHeight: 1.02, letterSpacing: -2.8, fontWeight: 700}}>Хорошие мысли<br/><span style={{color: C.blue}}>не теряются.</span></h1></div>
+  <div style={{position: 'absolute', left: 44, right: 44, top: 150}}><Tag>МЕСТО ДЛЯ ТВОИХ ИДЕЙ</Tag><h1 style={{margin: '28px 0 0', fontSize: 74, lineHeight: 1.02, letterSpacing: -2.8, fontWeight: 700}}>Пришла идея?<br/><span style={{color: C.blue}}>Сохрани её.</span></h1></div>
   <Hero frame={f} top={385} size={620}/>
   <FeatureChip frame={f} delay={8} icon="mic" label="Голос" color={C.blue} left={44} top={516} angle={-7}/>
   <FeatureChip frame={f} delay={14} icon="folder" label="Папки" color={C.mint} left={490} top={641} angle={7}/>
   <FeatureChip frame={f} delay={20} icon="spark" label="ИИ" color={C.violet} left={66} top={815} angle={-5}/>
   <FeatureChip frame={f} delay={26} icon="export" label="Экспорт" color={C.gold} left={460} top={901} angle={4}/>
-  <div style={{position: 'absolute', left: 44, right: 44, top: 1060, ...appear(f, 20)}}><div style={{fontSize: 30, fontWeight: 600}}>Говори. Сохраняй. Возвращайся.</div><div style={{fontSize: 22, color: C.dim, marginTop: 12}}>Заметки, которые всегда под рукой.</div></div>
+  <div style={{position: 'absolute', left: 44, right: 44, top: 1060, ...appear(f, 20)}}><div style={{fontSize: 30, fontWeight: 600}}>Поймал идею — сохрани голосом.</div><div style={{fontSize: 22, color: C.dim, marginTop: 12}}>Тексты и фото — тоже здесь.</div></div>
 </AbsoluteFill>;};
 
 const Voice: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill style={end(f, 180)}>
-  <Title number="01" label="ГОЛОС В ТЕКСТ" icon="mic" color={C.blue}>Говори сейчас.<br/><span style={{color: C.blue}}>Читай когда удобно.</span></Title>
+  <Title number="01" label="СОХРАНИ ИДЕЮ" icon="mic" color={C.blue}>Мысль пришла?<br/><span style={{color: C.blue}}>Просто надиктуй.</span></Title>
   <Phone style={appear(f, 3)} recording={f < 18}>
     <PhotoBubble top={45} width={300} height={176} right/>
     <Bubble top={236} width={270} right style={appear(f, 18)}><Waveform frame={f}/></Bubble>
     {f < 49 && <Bubble top={329} width={294} fontSize={20} style={{opacity: ramp(f, 27, 34) * (1 - ramp(f, 43, 49))}}>Конвертирую в текст…</Bubble>}
     <Bubble top={329} fontSize={24} style={appear(f, 49)}>{copy.voice}</Bubble>
   </Phone>
-  <Aside frame={f} delay={58} top={758} label="Уже текстом" color={C.blue}>Не нужно<br/>слушать</Aside>
+  <Aside frame={f} delay={58} top={758} label="На ходу" color={C.blue}>Поймай<br/>мысль</Aside>
   <Aside frame={f} delay={75} top={635} side="right" label="В архиве" color={C.mint}>Оригинал<br/>сохранён</Aside>
-  <Footer frame={f} delay={55} color={C.blue}>Голосовые и кружки<br/><span style={{color: C.blue}}>превращаются в текст.</span></Footer>
+  <Footer frame={f} delay={55} color={C.blue}>Мысль становится текстом.<br/><span style={{color: C.blue}}>Голосовое остаётся рядом.</span></Footer>
 </AbsoluteFill>;};
 
 const Folders: React.FC = () => {const f = useCurrentFrame();const switched = f >= 39;const p = ramp(f, 30, 45);return <AbsoluteFill style={end(f, 150)}>
   <Title number="02" label="СВОИ ПАПКИ" icon="folder" color={C.mint}>У каждой идеи<br/><span style={{color: C.mint}}>своё место.</span></Title>
-  <Phone active={switched ? 'Поездка' : 'Идеи'} style={appear(f, 3)}>
+  <Phone active={switched ? 'Идеи' : 'Работа'} style={appear(f, 3)}>
     <div style={{opacity: 1 - p, transform: `translateX(${-p * 35}px)`}}><Bubble top={54} width={300} fontSize={24}>{copy.idea}</Bubble></div>
     <div style={{opacity: p, transform: `translateX(${(1 - p) * 35}px)`}}><PhotoBubble top={54}/><Bubble top={301} fontSize={24}>{copy.voice}</Bubble></div>
   </Phone>
   <Tap frame={f} from={26} x={272} y={978}/>
-  <Aside frame={f} delay={49} top={640} color={C.mint} label="Поездка">Всё<br/>на месте</Aside>
+  <Aside frame={f} delay={49} top={640} color={C.mint} label="Идеи">Всё<br/>на месте</Aside>
   <Aside frame={f} delay={64} top={952} side="right" color={C.blue} label="Один тап">Другая<br/>папка</Aside>
-  <Footer frame={f} delay={43} color={C.mint}>Голосовые, тексты и фото —<br/><span style={{color: C.mint}}>по твоим проектам.</span></Footer>
+  <Footer frame={f} delay={43} color={C.mint}>Идеи, наброски и фото —<br/><span style={{color: C.mint}}>по твоим темам.</span></Footer>
 </AbsoluteFill>;};
 
-const AI: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill style={end(f, 210)}>
-  <Title number="03" label="ПОМОЩЬ ИИ" icon="spark" color={C.violet}>Была мысль.<br/><span style={{color: C.violet}}>Стал готовый план.</span></Title>
+const AI: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill style={end(f, 270)}>
+  <Title number="03" label="РАЗВИТЬ ИДЕЮ" icon="spark" color={C.violet}>Развивай идею.<br/><span style={{color: C.violet}}>Вместе с ИИ.</span></Title>
   <Phone style={appear(f, 3)}>
     <Bubble top={46} width={310} fontSize={20}>{copy.voice}</Bubble>
     <Bubble top={167} width={304} right fontSize={22} style={appear(f, 22)}><Reply>{copy.voice}</Reply>{copy.ai_prompt}</Bubble>
@@ -77,29 +77,29 @@ const AI: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill sty
   </Phone>
   <Aside frame={f} delay={31} top={590} color={C.violet} label="Ответь на запись">И добавь<br/>просьбу</Aside>
   <Aside frame={f} delay={81} top={817} side="right" color={C.mint} label="Результат">Тоже<br/>в архиве</Aside>
-  <Footer frame={f} delay={78} color={C.violet}>ИИ помогает с твоими заметками.<br/><span style={{color: C.violet}}>Ответ сохраняется рядом.</span></Footer>
+  <Footer frame={f} delay={78} color={C.violet}>Попроси ИИ развить мысль.<br/><span style={{color: C.violet}}>Ответ сохранится рядом.</span></Footer>
 </AbsoluteFill>;};
 
 const ZipFile: React.FC = () => <div style={{display: 'flex', alignItems: 'center', gap: 12}}><div style={{width: 44, height: 53, borderRadius: 9, background: '#5085ad', display: 'flex', alignItems: 'center', justifyContent: 'center'}}><Icon name="file" size={29}/></div><div style={{minWidth: 0}}><div style={{fontSize: 17, fontWeight: 500}}>voice-memory-all-001.zip</div><div style={{fontSize: 14, color: UI.dim, marginTop: 5}}>ZIP · PDF и оригиналы</div></div></div>;
-const Export: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill style={end(f, 180)}>
-  <Title number="04" label="ЭКСПОРТ" icon="export" color={C.gold}>Твои записи.<br/><span style={{color: C.gold}}>Всегда с тобой.</span></Title>
-  <Phone style={appear(f, 3)} keyboard={<ExportKeys selected={f >= 28 && f < 61}/>}>
-    <Bubble top={49} width={318} fontSize={22}>Экспорт папки «Поездка»<div style={{fontSize: 18, marginTop: 12, lineHeight: 1.35}}>Тексты: PDF, вся история папки в одном файле. Папки проектов сохранятся.</div></Bubble>
-    {f < 61 && <Bubble top={216} width={185} fontSize={20} style={{opacity: ramp(f, 32, 38) * (1 - ramp(f, 55, 61))}}>Готовлю ZIP…</Bubble>}
-    <Bubble top={216} width={322} fontSize={18} style={appear(f, 61)}><ZipFile/><div style={{marginTop: 12}}>PDF + файлы · ZIP</div></Bubble>
+const Export: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill style={end(f, 120)}>
+  <Title number="04" label="ЭКСПОРТ" icon="export" color={C.gold}>Собранные идеи.<br/><span style={{color: C.gold}}>Всегда с тобой.</span></Title>
+  <Phone style={appear(f, 3)} keyboard={<ExportKeys selected={f >= 20 && f < 45}/>}>
+    <Bubble top={49} width={318} fontSize={22}>Экспорт папки «Идеи»<div style={{fontSize: 18, marginTop: 12, lineHeight: 1.35}}>Тексты: PDF, вся история папки в одном файле. Папки проектов сохранятся.</div></Bubble>
+    {f < 45 && <Bubble top={216} width={185} fontSize={20} style={{opacity: ramp(f, 23, 28) * (1 - ramp(f, 39, 45))}}>Готовлю ZIP…</Bubble>}
+    <Bubble top={216} width={322} fontSize={18} style={appear(f, 45)}><ZipFile/><div style={{marginTop: 12}}>PDF + файлы · ZIP</div></Bubble>
   </Phone>
-  <Tap frame={f} from={23} x={360} y={978}/>
-  <Aside frame={f} delay={74} top={654} color={C.gold} label="В одном ZIP">Тексты<br/>и файлы</Aside>
-  <Aside frame={f} delay={92} top={824} side="right" color={C.blue} label="Формат текста">PDF или<br/>Markdown</Aside>
-  <Footer frame={f} delay={71} color={C.gold}>Тексты — PDF или Markdown.<br/><span style={{color: C.gold}}>Оригиналы — рядом, в ZIP.</span></Footer>
+  <Tap frame={f} from={15} x={360} y={978}/>
+  <Aside frame={f} delay={58} top={654} color={C.gold} label="В одном ZIP">Тексты<br/>и файлы</Aside>
+  <Aside frame={f} delay={66} top={824} side="right" color={C.blue} label="Формат текста">PDF или<br/>Markdown</Aside>
+  <Footer frame={f} delay={56} color={C.gold}>Забери свои идеи в PDF.<br/><span style={{color: C.gold}}>Голосовые и фото — рядом.</span></Footer>
 </AbsoluteFill>;};
 
 const Outro: React.FC = () => {const f = useCurrentFrame();return <AbsoluteFill>
-  <div style={{position: 'absolute', left: 44, right: 44, top: 153, ...appear(f)}}><Tag color={C.mint}>ЗАПОМНИТЬ СТАЛО ПРОЩЕ</Tag><div style={{fontSize: 69, fontWeight: 700, lineHeight: 1.03, letterSpacing: -2.5, marginTop: 27}}>Свободная голова.<br/><span style={{color: C.blue}}>Всё под рукой.</span></div></div>
+  <div style={{position: 'absolute', left: 44, right: 44, top: 153, ...appear(f)}}><Tag color={C.mint}>ТВОЁ МЕСТО ДЛЯ ИДЕЙ</Tag><div style={{fontSize: 69, fontWeight: 700, lineHeight: 1.03, letterSpacing: -2.5, marginTop: 27}}>Идеи приходят.<br/><span style={{color: C.blue}}>Теперь остаются.</span></div></div>
   <Hero frame={f} top={365} size={555}/>
   <div style={{position: 'absolute', left: 44, right: 44, top: 951, display: 'flex', gap: 8, ...appear(f, 7)}}>{[['mic', 'Голос', C.blue], ['folder', 'Папки', C.mint], ['spark', 'ИИ', C.violet], ['export', 'Экспорт', C.gold]].map(([icon, label, color]) => <div key={label} style={{flex: 1, padding: '14px 5px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, background: '#21343c', border: `1px solid ${color}33`, borderRadius: 15, fontSize: 19}}><Icon name={icon} size={22} color={color}/>{label}</div>)}</div>
-  <div style={{position: 'absolute', left: 44, right: 44, top: 1063, padding: '23px 20px', background: C.blue, color: '#102434', borderRadius: 21, boxShadow: '0 6px 0 #2d6889', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, fontSize: 31, fontWeight: 700, ...appear(f, 11)}}>Начни с одной мысли<Icon name="arrow" size={30} color="#102434"/></div>
-  <div style={{position: 'absolute', left: 0, right: 0, top: 1180, textAlign: 'center', color: C.dim, fontSize: 21, ...appear(f, 18)}}>Просто отправь голосовое в Telegram.</div>
+  <div style={{position: 'absolute', left: 44, right: 44, top: 1063, padding: '23px 20px', background: C.blue, color: '#102434', borderRadius: 21, boxShadow: '0 6px 0 #2d6889', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, fontSize: 31, fontWeight: 700, ...appear(f, 11)}}>Сохрани первую идею<Icon name="arrow" size={30} color="#102434"/></div>
+  <div style={{position: 'absolute', left: 0, right: 0, top: 1180, textAlign: 'center', color: C.dim, fontSize: 21, ...appear(f, 18)}}>Голосом, текстом или фото — в Telegram.</div>
 </AbsoluteFill>;};
 
 export const VoiceMemoryIntro: React.FC = () => {
