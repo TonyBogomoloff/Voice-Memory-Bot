@@ -16,9 +16,11 @@ def main():
     parser.add_argument('video', type=Path)
     parser.add_argument('receipt', type=Path)
     parser.add_argument('--duration', type=int, choices=(10, 30), default=30)
+    parser.add_argument('--shape', choices=('portrait', 'square'), default='portrait')
     args = parser.parse_args()
     video, receipt = args.video.resolve(), args.receipt.resolve()
     duration = args.duration
+    width, height = (1080, 1080) if args.shape == 'square' else (720, 1280)
     result = subprocess.run([
         'ffprobe', '-v', 'error', '-count_frames', '-show_streams', '-show_format',
         '-of', 'json', str(video),
@@ -28,7 +30,7 @@ def main():
     assert len(streams) == 1 and streams[0]['codec_type'] == 'video', 'silent_video_expected'
     stream = streams[0]
     assert stream['codec_name'] == 'h264', 'wrong_codec'
-    assert (stream['width'], stream['height']) == (720, 1280), 'wrong_size'
+    assert (stream['width'], stream['height']) == (width, height), 'wrong_size'
     assert stream['pix_fmt'] == 'yuv420p', 'wrong_pixel_format'
     assert stream['avg_frame_rate'] == '30/1', 'wrong_frame_rate'
     assert int(stream['nb_read_frames']) == duration * 30, 'wrong_frame_count'
@@ -49,8 +51,8 @@ def main():
         'sha256': sha256(video),
         'bytes': video.stat().st_size,
         'duration_seconds': duration,
-        'width': 720,
-        'height': 1280,
+        'width': width,
+        'height': height,
         'frames': duration * 30,
         'fps': 30,
         'codec': 'h264',

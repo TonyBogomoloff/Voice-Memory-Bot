@@ -32,10 +32,12 @@ from .scheduling import dispatch_by_owner, run_for_owners
 from .states import InputKind
 from .store import Store, clean_name, new_id
 from .update_queue import update_owner
+from .video_cache import CACHE_NAME, VideoFileCache
 
 log = logging.getLogger(__name__)
 
-START_VIDEO = Path(__file__).resolve().parents[2] / "output/remotion/voice-memory-bot-onboarding-v3-ru.mp4"
+START_VIDEO = Path(__file__).resolve().parents[2] / "output/remotion/voice-memory-bot-onboarding-v4-square-ru.mp4"
+START_COVER = START_VIDEO.with_name("cover-v4-square.jpg")
 START_CAPTION = "Твой голосовой блокнот, который всегда с тобой.\nСохраняй идеи, пока они свежие 💙"
 
 
@@ -72,6 +74,7 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
                  assistant=None):
         self.config, self.store = config, store
         self.telegram, self.groq, self.router = telegram, groq, router
+        self.telegram.video_cache = VideoFileCache(config.data_dir / CACHE_NAME, config.bot_token.split(":", 1)[0])
         self.archive = Archive(config.data_dir / "notes")
         self.media = MediaProcessor(store, self.archive, telegram, groq, config.limits)
         self.messages = MessageStore(store)
@@ -467,7 +470,8 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
 
     async def show_start(self, owner, thread=None):
         try:
-            await self.telegram.video(owner, START_VIDEO, thread, caption=START_CAPTION, duration=30)
+            await self.telegram.video(owner, START_VIDEO, thread, caption=START_CAPTION, duration=30,
+                                      width=1080, height=1080, cover=START_COVER)
         except (ProviderError, OSError) as exc:
             # Keep onboarding usable without retrying an upload whose response may be lost.
             log.warning("start video unavailable type=%s", type(exc).__name__)

@@ -48,9 +48,10 @@ class FakeTelegram:
             caption=caption, reply_markup=keyboard, reply_to=reply_to)
         return {**result, "photo": [{"file_id": "generated-photo", "width": 1024, "height": 1024}]}
 
-    async def video(self, owner, path, thread=None, caption=None, keyboard=None, *, duration=10):
+    async def video(self, owner, path, thread=None, caption=None, keyboard=None, *, duration=10, width=720, height=1280, cover=None):
         return await self.call("sendVideo", chat_id=owner, path=str(path), caption=caption,
-                               thread=thread, keyboard=keyboard, duration=duration)
+                               thread=thread, keyboard=keyboard, duration=duration, width=width, height=height,
+                               cover=str(cover) if cover else None)
 
     async def download(self, file_id, destination, max_bytes):
         destination.parent.mkdir(parents=True, exist_ok=True)
