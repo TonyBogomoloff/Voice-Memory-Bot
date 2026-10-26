@@ -10,6 +10,7 @@ from support.menus import labels
 @pytest.mark.parametrize('command', ['/delete', '/delete@your_audio_notes_bot'])
 def test_reply_delete_only_owned_record_after_confirmation(bot, target, command):
     async def run():
+        bot.telegram.message_sequence = 1000
         await receive(bot, 'Сохранённая заметка', 100)
         note = bot.store.notes(1)[0]
         bot.messages.record(note, 200, None, 'transcript')
@@ -32,8 +33,11 @@ def test_reply_delete_only_owned_record_after_confirmation(bot, target, command)
             assert sent[-1]['reply_to'] == (target or 200)
             inline = sent[-1]['keyboard']['inline_keyboard']
             assert [[b['text'] for b in row] for row in inline] == [['Удалить', 'Отмена']]
-            assert [[b['text'] for b in row] for row in sent[-2]['keyboard']['keyboard']] == [['Удалить', 'Отмена']]
+            assert len(sent) == 1
+            assert 'keyboard' not in sent[0]['keyboard']
             state = bot.bottom_state(1)
+            assert not any(m == 'deleteMessage' and p['message_id'] == state['inline_prompt_id']
+                           for m, p in bot.telegram.sent)
             await bot.callback(1, None, state['inline_prompt_id'], inline[0][0]['callback_data'])
             assert not bot.store.notes(1)
             assert not directory.exists()

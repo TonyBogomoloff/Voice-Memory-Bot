@@ -283,7 +283,7 @@ def test_minimal_menu_toggle_help_and_back(bot):
     ("/move", "В какую папку ты хочешь переместить запись?"),
     ("dropfolder", "Удалить папку «Входящие»?"),
 ])
-def test_mirrored_menu_keeps_short_carrier_and_inline_question(bot, command, prompt):
+def test_record_commands_send_only_inline_question(bot, command, prompt):
     async def run():
         bot.telegram.message_sequence = 1000
         await bot.show_home(1)
@@ -310,13 +310,16 @@ def test_mirrored_menu_keeps_short_carrier_and_inline_question(bot, command, pro
         removed = {p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"}
         visible = [(mid, text) for mid, text in sent if mid not in removed]
         carrier = bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"]
-        assert len(visible) == 2 and visible[0] == (carrier, "Действия")
-        assert visible[1][0] == state["inline_prompt_id"]
-        assert visible[1][1].split("\n", 1)[0] == prompt
-        assert not any(text in {"Удаление записи", "Удаление папки", "Перенос записи"} for _, text in sent)
+        if command == "dropfolder":
+            assert len(visible) == 2 and visible[0] == (carrier, "Действия")
+        else:
+            assert len(sent) == 1
+            assert len(visible) == 1
+            assert "keyboard" not in last_message(bot)["keyboard"]
+        assert visible[-1][0] == state["inline_prompt_id"]
+        assert visible[-1][1].split("\n", 1)[0] == prompt
         inline = last_message(bot)["keyboard"]["inline_keyboard"]
-        assert [[b["text"] for b in row] for row in inline] == [
-            [b["text"] for b in row] for row in reply_keyboard(bot)["keyboard"]]
+        assert {b["text"] for row in inline for b in row} == set(state["actions"])
         assert 100 not in removed and carrier not in removed
         if command != "dropfolder":
             assert original not in removed

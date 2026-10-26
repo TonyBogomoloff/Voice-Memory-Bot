@@ -167,6 +167,7 @@ class BottomMenuMixin:
             except ProviderError as exc:
                 if str(exc) != "telegram_400":
                     raise
+        inline_only = state.screen.kind in {"notedelete", "replymove", "recordoptions"}
         token = silent_delivery.set(True)
         try:
             # Replacing the markup keeps the button panel open. A remove_keyboard
@@ -174,8 +175,17 @@ class BottomMenuMixin:
             text = state.text if state.keep else state.text.split("\n", 1)[0]
             # Keep a short carrier: deleting it also removes the reply keyboard
             # in Telegram clients. The next menu replaces it.
-            response = await self.view_send(self.telegram.text, owner,
-                "Действия" if state.extra.get("mirror") else display_text or text, thread, keys)
+            if inline_only:
+                inline_rows = [[{**item, "callback_data": actions[item["text"]]}
+                                for item in row if item["text"] in actions] for row in keyboard]
+                response = await self.view_send(self.telegram.text, owner, state.text, thread,
+                    {"inline_keyboard": inline_rows}, reply_to=state.extra.get("reply_to"))
+                state.extra["inline_prompt_id"] = response["message_id"]
+                with self.store.transaction():
+                    self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
+            else:
+                response = await self.view_send(self.telegram.text, owner,
+                    "Действия" if state.extra.get("mirror") else display_text or text, thread, keys)
         finally:
             silent_delivery.reset(token)
         with self.store.transaction():
@@ -195,7 +205,7 @@ class BottomMenuMixin:
             old_prompt = old_state.extra.get("inline_prompt_id")
             if old_prompt:
                 await self.remove_menu_message(owner, old_prompt)
-        if state.extra.get("mirror"):
+        if state.extra.get("mirror") and not inline_only:
             inline_rows = [[{**item, "callback_data": actions[item["text"]]}
                             for item in row if item["text"] in actions] for row in keyboard]
             response = await self.view_send(self.telegram.text, owner, state.text, thread,

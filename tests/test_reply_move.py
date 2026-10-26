@@ -28,19 +28,17 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         note = await prepare(bot)
         other = bot.store.create_folder(1, 'Другая')
         session = await open_move(bot, target=200, command='/move@your_audio_notes_bot')
-        menu = [p for m, p in bot.telegram.sent if m == 'sendMessage' and 'keyboard' in (p.get('keyboard') or {})][-1]
-        labels = [b['text'] for row in menu['keyboard']['keyboard'] for b in row]
+        menu = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]
+        inline = menu['keyboard']['inline_keyboard']
+        labels = [b['text'] for row in inline for b in row]
         assert {'Другая', '＋ Новая папка', 'Отмена'} <= set(labels)
-        assert 'inline_keyboard' not in menu['keyboard']
-        assert all('style' not in b for row in menu['keyboard']['keyboard'] for b in row)
-        inline = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]['keyboard']['inline_keyboard']
-        assert [[b['text'] for b in row] for row in inline] == [[b['text'] for b in row] for row in menu['keyboard']['keyboard']]
+        assert 'keyboard' not in menu['keyboard']
         prompt = session['prompt_id']
         bot.telegram.sent.clear()
         if new_folder:
             await receive(bot, '＋ Новая папка', 450)
-            menu = [p for m, p in bot.telegram.sent if m == 'sendMessage' and 'keyboard' in (p.get('keyboard') or {})][-1]
-            assert menu['keyboard']['keyboard'] == [[{'text': 'Отмена'}]]
+            menu = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]
+            assert [[b['text'] for b in row] for row in menu['keyboard']['inline_keyboard']] == [['Отмена']]
             await receive(bot, 'Созданная для переноса', 500)
             other = next(f for f in bot.store.folders(1) if f['name'] == 'Созданная для переноса')
         else:
@@ -53,7 +51,7 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         assert bot.store.one('SELECT * FROM reply_moves') is None
         assert bot.store.action(1) is None
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
-        assert len(sent) == (3 if new_folder else 1)
+        assert len(sent) == (2 if new_folder else 1)
         assert sent[-1]['text'] == f"Перенесено в «{other['name']}»."
         assert other['name'] in sent[-1]['text']
         assert sent[-1]['keyboard'] == bot.folder_keyboard(1)
@@ -97,8 +95,8 @@ def test_move_target_owner_isolation_and_pagination(bot):
             await bot.callback(1, None, session['prompt_id'], f'rmove:{session["token"]}:{foreign["id"]}')
         assert bot.store.note(1, note['id'])['folder_id'] == note['folder_id']
         await bot.callback(1, None, session['prompt_id'], f'rpage:{session["token"]}:1')
-        markup = [p for m, p in bot.telegram.sent if m == 'sendMessage' and 'keyboard' in (p.get('keyboard') or {})][-1]['keyboard']
-        assert any(b['text'] == 'Отмена' for row in markup['keyboard'] for b in row)
+        markup = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]['keyboard']
+        assert any(b['text'] == 'Отмена' for row in markup['inline_keyboard'] for b in row)
     asyncio.run(run())
 
 

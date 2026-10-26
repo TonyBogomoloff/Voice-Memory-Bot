@@ -3,7 +3,6 @@ import asyncio
 import pytest
 from support.commands import bot as bot
 from support.commands import receive
-from support.menus import reply_keyboard
 
 
 @pytest.mark.parametrize('inline', [False, True])
@@ -26,8 +25,8 @@ def test_options_pin_target_and_dispatch(bot, reply, label, action, inline):
         assert state['actions'][label] == f"{action}:{expected['id']}"
         prompt = next(p for m, p in reversed(bot.telegram.sent) if m == 'sendMessage')
         inline_keys = prompt['keyboard']['inline_keyboard']
-        assert [[b['text'] for b in row] for row in inline_keys] == [
-            [b['text'] for b in row] for row in reply_keyboard(bot)['keyboard']]
+        assert {b['text'] for row in inline_keys for b in row} == set(state['actions'])
+        assert 'keyboard' not in prompt['keyboard']
         assert prompt['reply_to'] == reply
         # Receiving another record cannot redirect an already displayed action.
         bot.store.add_note(1, expected['folder_id'], {'message_id': 400}, 'text', transcript='Новая')
@@ -70,7 +69,7 @@ def test_compact_options_cancel_restores_folder_keyboard(bot):
     async def run():
         await receive(bot, 'Запись', 100)
         await receive(bot, '/options', 200)
-        keys = reply_keyboard(bot)['keyboard']
+        keys = next(p for m, p in reversed(bot.telegram.sent) if m == 'sendMessage')['keyboard']['inline_keyboard']
         assert [[b['text'] for b in row] for row in keys] == [
             ['Изменить с ИИ', 'Перенести'], ['Удалить', 'Отмена']]
         await receive(bot, 'Отмена', 300)
