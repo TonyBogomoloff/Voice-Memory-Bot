@@ -20,7 +20,7 @@ from .delivery import DeliveryService
 from .folder_menu import MENU_COMMANDS, OPTION_ACTIONS, FolderMenuMixin
 from .folder_naming import FolderNamingMixin
 from .folder_view import FolderViewMixin
-from .help_menu import help_page, help_video_path
+from .help_menu import HELP_COVER, help_page, help_video_path
 from .media import MediaProcessor
 from .message_store import MessageStore
 from .note_service import NoteService
@@ -445,21 +445,18 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 "text": "Создай первую папку кнопкой «＋» внизу."}, raw_keys=self.folder_keyboard(owner))
         text, rows = help_page(topic)
         keys, video = keyboard(*rows), help_video_path(topic)
+        carrier = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,))
+        if carrier and edit_id == carrier["message_id"]:
+            edit_id = None
+        if video is not None and not video.is_file():
+            log.warning("help video missing topic=%s", topic)
+            video = None
         token = silent_delivery.set(True)
         try:
-            if video is not None and video.is_file():
-                response = await self.view_send(self.telegram.video, owner, video, thread, caption=text, keyboard=keys)
-            else:
-                if video is not None:
-                    log.warning("help video missing topic=%s", topic)
-                response = await self.view_send(self.telegram.text, owner, text, thread, keys)
+            response = await self.view_send(self.telegram.help_media, owner, video or HELP_COVER, thread,
+                                            caption=text, keyboard=keys, edit_id=edit_id)
         finally:
             silent_delivery.reset(token)
-        # Text and video pages have different Telegram message types. Replace the
-        # clicked Help page only after delivery, keeping the folder keyboard carrier.
-        carrier = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,))
-        if edit_id and edit_id != response["message_id"] and (not carrier or edit_id != carrier["message_id"]):
-            await self.remove_menu_message(owner, edit_id)
         self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
         return response
 

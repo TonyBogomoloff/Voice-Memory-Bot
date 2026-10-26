@@ -53,6 +53,14 @@ class FakeTelegram:
                                thread=thread, keyboard=keyboard, duration=duration, width=width, height=height,
                                cover=str(cover) if cover else None)
 
+    async def help_media(self, owner, path, thread=None, caption=None, keyboard=None, *, edit_id=None):
+        method = "editMessageMedia" if edit_id else ("sendVideo" if path.suffix == ".mp4" else "sendPhoto")
+        if self.fail_delivery and edit_id:
+            self.sent.append((method, {"message_id": edit_id}))
+            raise ProviderError("telegram_transport_unknown")
+        return await self.call(method, chat_id=owner, path=str(path), caption=caption,
+                               thread=thread, keyboard=keyboard, message_id=edit_id)
+
     async def download(self, file_id, destination, max_bytes):
         destination.parent.mkdir(parents=True, exist_ok=True)
         with wave.open(str(destination), "wb") as audio:

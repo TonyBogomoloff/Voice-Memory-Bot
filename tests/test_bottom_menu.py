@@ -270,7 +270,7 @@ def test_minimal_menu_toggle_help_and_back(bot):
         await receive(bot, "ℹ️ Помощь", 3003)
         assert bot.bottom_state(1)["screen"] == "root"
         assert reply_keyboard(bot) == bot.folder_keyboard(1)
-        assert any(m == "sendMessage" and p.get("keyboard", {}).get("inline_keyboard")
+        assert any(m == "sendPhoto" and p.get("keyboard", {}).get("inline_keyboard")
                    for m, p in bot.telegram.sent if p.get("keyboard"))
         assert bot.store.notes(1) == []
     asyncio.run(run())

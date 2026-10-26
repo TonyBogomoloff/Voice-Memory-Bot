@@ -14,7 +14,7 @@ from voice_memory_bot.states import MenuState
 
 
 def last_message(bot):
-    return next(p for m, p in reversed(bot.telegram.sent) if m in {"sendMessage", "sendVideo"})
+    return next(p for m, p in reversed(bot.telegram.sent) if m in {"sendMessage", "sendVideo", "sendPhoto", "editMessageMedia"})
 
 
 async def tap(bot, message, data):
@@ -24,7 +24,7 @@ async def tap(bot, message, data):
 
 def assert_index(bot):
     payload = last_message(bot)
-    assert payload["text"] == HELP_INTRO
+    assert payload["caption"] == HELP_INTRO
     rows = payload["keyboard"]["inline_keyboard"]
     assert [len(row) for row in rows] == [2, 2, 2, 2]
     assert [b["callback_data"] for row in rows for b in row] == [f"help:{key}" for key in HELP_TOPICS]
@@ -58,7 +58,8 @@ def test_inline_help_and_back_keep_folder_keyboard_and_notes(bot, topic):
         assert_index(bot)
         assert bot.bottom_state(1)["screen"] == "root" and reply_keyboard(bot) == keys
         deleted = [p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"]
-        assert index["message_id"] in deleted and demo["message_id"] in deleted and carrier not in deleted
+        assert index["message_id"] == demo["message_id"]
+        assert index["message_id"] not in deleted and carrier not in deleted
         assert bot.store.current_folder(1) == folder and bot.store.notes(1) == notes
         assert bot.store.all("SELECT * FROM ai_requests") == []
         await receive(bot, "/options", 105)
@@ -133,11 +134,11 @@ def test_help_video_failure_keeps_index_and_folder_carrier_without_retry(bot):
         bot.telegram.fail_delivery = True
         with pytest.raises(ProviderError, match="telegram_transport_unknown"):
             await bot.callback(1, None, index["message_id"], "help:save")
-        assert [method for method, _ in bot.telegram.sent] == ["sendVideo"]
+        assert [method for method, _ in bot.telegram.sent] == ["editMessageMedia"]
         assert bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"] == carrier
         bot.telegram.fail_delivery = False
         await bot.callback(1, None, index["message_id"], "help:folders")
-        assert [m for m, _ in bot.telegram.sent] == ["sendVideo", "sendVideo", "deleteMessage"]
+        assert [m for m, _ in bot.telegram.sent] == ["editMessageMedia", "editMessageMedia"]
         assert bot.telegram.sent[-1][1]["message_id"] == index["message_id"]
     asyncio.run(run())
 
@@ -145,7 +146,7 @@ def test_help_video_failure_keeps_index_and_folder_carrier_without_retry(bot):
 def test_missing_help_video_keeps_explanation_and_inline_back(bot, monkeypatch, tmp_path):
     monkeypatch.setattr("voice_memory_bot.bot.help_video_path", lambda topic: tmp_path / "missing.mp4")
     asyncio.run(bot.show_help(1, topic="save"))
-    assert last_message(bot)["text"] == "\n\n".join(HELP_TOPICS["save"])
+    assert last_message(bot)["caption"] == "\n\n".join(HELP_TOPICS["save"])
     assert last_message(bot)["keyboard"] == {"inline_keyboard": [[{"text": BACK, "callback_data": "help"}]]}
     assert bot.bottom_state(1)["screen"] == "root"
     assert not any(method == "sendVideo" for method, _ in bot.telegram.sent)

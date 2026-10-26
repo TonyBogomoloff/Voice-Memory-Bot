@@ -240,6 +240,69 @@ class Telegram:
                 continue
             raise error
 
+    async def help_media(self, owner, path: Path, thread=None, caption=None, keyboard=None, *, edit_id=None):
+        """Swap a cached Help cover/demo in place, including legacy text menus."""
+        kind = "video" if path.suffix == ".mp4" else "photo"
+        method = "editMessageMedia" if edit_id else ("sendVideo" if kind == "video" else "sendPhoto")
+        cache = self.video_cache
+        digest = cache.digest(path) if cache else None
+        file_id = cache.get(digest) if cache else None
+        media = {"type": kind, "media": file_id or "attach://asset",
+                 "caption": (caption or "")[:1024], "show_caption_above_media": True}
+        if kind == "video":
+            media.update(duration=10, width=720, height=1280, supports_streaming=True)
+        original = {"chat_id": owner, "reply_markup": keyboard}
+        if edit_id:
+            original.update(message_id=edit_id, media=media)
+        else:
+            original.update({k: v for k, v in media.items() if k not in {"type", "media"}})
+            original[kind] = media["media"]
+            if thread:
+                original["message_thread_id"] = thread
+            if silent_delivery.get():
+                original["disable_notification"] = True
+        if file_id:
+            try:
+                return await self.call(method, **original)
+            except TelegramError as exc:
+                if exc.reason == "not_modified" and edit_id:
+                    return {"message_id": edit_id}
+                if str(exc) != "telegram_400" or exc.reason != "file_id_invalid":
+                    raise
+                cache.discard(digest, file_id)
+                if edit_id:
+                    original["media"]["media"] = "attach://asset"
+                else:
+                    original[kind] = "attach://asset"
+        payload, _ = themed_payload(method, original)
+        for attempt in range(2):
+            data = {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool)) else str(v)
+                    for k, v in payload.items() if v is not None}
+            try:
+                with path.open("rb") as handle:
+                    response = await self.client.post(self._base + method, data=data,
+                        files={"asset": (path.name, handle)}, timeout=httpx.Timeout(120, connect=10))
+                body = response.json()
+            except (httpx.HTTPError, ValueError):
+                raise ProviderError("telegram_transport_unknown") from None
+            if isinstance(body, dict) and body.get("ok"):
+                result = body["result"]
+                self.remember_result(result, owner, thread)
+                if cache:
+                    stored = result.get("video", {}) if kind == "video" else (result.get("photo") or [{}])[-1]
+                    cache.put(digest, stored.get("file_id"))
+                return result
+            code = body.get("error_code", response.status_code) if isinstance(body, dict) else response.status_code
+            error = TelegramError(code, method, body.get("description", "") if isinstance(body, dict) else "")
+            if isinstance(body, dict):
+                error.retry_after = body.get("parameters", {}).get("retry_after", 5)
+            if error.reason == "not_modified" and edit_id:
+                return {"message_id": edit_id}
+            if attempt == 0 and error.reason == "custom_emoji_unavailable" and payload != original:
+                payload = original
+                continue
+            raise error
+
     async def download(self, file_id, destination: Path, max_bytes):
         info = await self.call("getFile", file_id=file_id)
         path = info.get("file_path", "")

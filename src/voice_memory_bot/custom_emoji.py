@@ -165,7 +165,7 @@ def themed_text(text, existing=()):
 def themed_payload(method, payload):
     if method not in {'sendMessage', 'editMessageText', 'editMessageReplyMarkup', 'sendPhoto',
                       'sendVideo', 'sendAudio', 'sendVoice', 'sendDocument', 'editMessageCaption',
-                      'copyMessage', 'sendAnimation', 'sendMediaGroup'}:
+                      'copyMessage', 'sendAnimation', 'sendMediaGroup', 'editMessageMedia'}:
         return payload, {}
     result = deepcopy(payload)
     aliases = {}
@@ -177,7 +177,8 @@ def themed_payload(method, payload):
                 entities = themed_text(result[field], result.get(entity_field) or ())
                 if entities:
                     result[entity_field] = entities
-    for media in result.get('media', []):
+    items = result.get('media', [])
+    for media in ([items] if isinstance(items, dict) else items):
         if media.get('caption') and not media.get('parse_mode'):
             entities = themed_text(media['caption'], media.get('caption_entities') or ())
             if entities:
