@@ -50,7 +50,7 @@ async def prepare(telegram, videos, owner, *, check_only=False, forget_message=N
             telegram.on_message = remember
             token = silent_delivery.set(True)
             try:
-                options = {'width': 1080, 'height': 1080, 'cover': START_COVER} if path == START_VIDEO else {}
+                options = {'width': 1080, 'height': 1080, 'cover': START_COVER} if path == START_VIDEO else {'width': 1080, 'height': 1080}
                 if name == 'help-cover':
                     await telegram.help_media(owner, path, caption='Подготовка помощи')
                 else:

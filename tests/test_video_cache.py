@@ -75,6 +75,7 @@ def test_preparation_survives_restart_and_first_help_request_has_no_upload(bot, 
                 demo = await restarted.callback(1, None, index['message_id'], f'help:{topic}')
                 request = reused[-1]
                 payload = request['media']
+                assert (payload['width'], payload['height'], payload['duration']) == (1080, 1080, 10)
                 assert demo['message_id'] == index['message_id']
                 assert payload['caption'] == '\n\n'.join(HELP_TOPICS[topic])
                 assert payload['show_caption_above_media'] and payload['supports_streaming']
@@ -272,6 +273,7 @@ def test_help_edits_never_create_or_delete_messages(tmp_path, failure):
                 payload = json.loads(request.content)
                 assert payload['message_id'] == 42
                 assert payload['media']['media'] == 'cached-video'
+                assert payload['media']['width'] == payload['media']['height'] == 1080
                 assert payload['media']['caption_entities']
                 assert payload['reply_markup']['inline_keyboard'][0][0]['icon_custom_emoji_id'] == IDS['back']
                 if failure == 'timeout':

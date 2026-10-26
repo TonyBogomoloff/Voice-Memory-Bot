@@ -80,4 +80,4 @@ def help_video_path(topic):
     """Resolve only bundled, known demos; callback input never becomes a path."""
     if topic not in HELP_TOPICS:
         return None
-    return Path(__file__).resolve().parents[2] / "output" / "remotion" / "help" / f"help-{topic}-v1-ru.mp4"
+    return Path(__file__).resolve().parents[2] / "output" / "remotion" / "help" / f"help-{topic}-v2-square-ru.mp4"

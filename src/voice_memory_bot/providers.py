@@ -250,7 +250,7 @@ class Telegram:
         media = {"type": kind, "media": file_id or "attach://asset",
                  "caption": (caption or "")[:1024], "show_caption_above_media": True}
         if kind == "video":
-            media.update(duration=10, width=720, height=1280, supports_streaming=True)
+            media.update(duration=10, width=1080, height=1080, supports_streaming=True)
         original = {"chat_id": owner, "reply_markup": keyboard}
         if edit_id:
             original.update(message_id=edit_id, media=media)
