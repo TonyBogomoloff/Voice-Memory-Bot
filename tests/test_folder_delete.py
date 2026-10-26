@@ -48,7 +48,7 @@ def test_delete_folder_confirmation_is_owner_scoped_cancelable_expiring_and_bloc
         from support.menus import reply_keyboard
         assert reply_keyboard(bot)['keyboard'] == [[
             {'text': 'Удалить', 'style': 'danger'}, {'text': 'Отмена'}]]
-        prompt = bot.telegram.sent[-1][1]
+        prompt = next(p for m, p in reversed(bot.telegram.sent) if m == "sendMessage")
         assert 'останутся в архиве без папки' in prompt['text']
         assert prompt['keyboard']['inline_keyboard'] == [[
             {'text': 'Удалить', 'callback_data': f'confirmdrop:{token}', 'style': 'danger'},

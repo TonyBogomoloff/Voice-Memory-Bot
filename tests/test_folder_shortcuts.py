@@ -183,3 +183,39 @@ def test_pages_reach_every_folder_and_arrows_never_become_notes(bot):
         assert bot.store.notes(1) == []
         assert bot.store.all("SELECT * FROM ai_requests") == []
     asyncio.run(run())
+
+
+def test_folder_page_turns_remove_only_temporary_keyboard_messages(bot):
+    async def run():
+        bot.telegram.message_sequence = 1000
+        for name in ("1", "2", "3", "4", "5", "6"):
+            bot.store.create_folder(1, name)
+        await receive(bot, "Запись", 100)
+        await bot.show_home(1)
+        original = bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"]
+        folder = bot.store.current_folder(1)
+        notes = bot.store.notes(1)
+        sent = []
+        original_text = bot.telegram.text
+
+        async def record(*args, **kwargs):
+            result = await original_text(*args, **kwargs)
+            sent.append(result["message_id"])
+            return result
+
+        bot.telegram.text = record
+        for command, page in [("➡️", 1), ("⬅️", 0), ("➡️", 1)]:
+            bot.telegram.sent.clear()
+            sent.clear()
+            await receive(bot, command, 400)
+            removed = {p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"}
+            assert sent and set(sent) <= removed
+            assert original not in removed and 100 not in removed and 400 in removed
+            assert bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"] == original
+            assert bot.folder_pages[1] == page
+            assert bot.store.current_folder(1) == folder and bot.store.notes(1) == notes
+        target = next(f for f in bot.store.folders(1) if "📁 " + f["name"] in labels(bot))
+        await receive(bot, "📁 " + target["name"], 500)
+        assert bot.store.current_folder(1) == target["id"]
+        assert bot.store.notes(1) == notes
+    asyncio.run(run())

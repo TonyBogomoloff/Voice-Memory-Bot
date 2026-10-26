@@ -30,7 +30,7 @@ def deleted(bot):
 
 
 @pytest.mark.parametrize("command,inline", [("/move", False), ("/move", True),
-    ("/delete", False), ("/delete", True), ("/options", False), ("/ai", True)])
+    ("/delete", False), ("/delete", True), ("/options", False), ("/options", True), ("/ai", True)])
 @pytest.mark.parametrize("restart", [False, True])
 def test_cancel_removes_only_dialog_and_command_preserving_keyboard_and_record(bot, tmp_path, command, restart, inline):
     async def run():
@@ -58,7 +58,7 @@ def test_cancel_removes_only_dialog_and_command_preserving_keyboard_and_record(b
             current.telegram.message_sequence = bot.telegram.message_sequence
             sent = track_messages(current)
             before_cancel = 0
-        if command == "/ai" or (inline and command != "/options"):
+        if command == "/ai" or inline:
             await current.callback(1, None, prompt, callback)
         else:
             await receive(current, "Отмена", 500)
@@ -81,7 +81,7 @@ def test_cancel_removes_only_dialog_and_command_preserving_keyboard_and_record(b
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("label", ["Перенести запись", "Удалить запись", "Изменить с ИИ"])
+@pytest.mark.parametrize("label", ["Перенести", "Удалить", "Изменить с ИИ"])
 @pytest.mark.parametrize("inline", [False, True])
 def test_options_child_cancel_removes_original_options_command(bot, label, inline):
     async def run():

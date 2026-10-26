@@ -22,9 +22,9 @@ def test_note_actions_preserve_bottom_menu(tmp_path, store, screen, action):
         bot.telegram.sent.clear()
         if action in {"delete", "cancel"}:
             await bot.callback(1, 200, note["transcript_message_id"], f"delete:{note['id']}")
-            prompt_id = bot.telegram.message_sequence
-            assert bot.telegram.sent[-1][1]["keyboard"]["inline_keyboard"]
             state = bot.bottom_state(1)
+            prompt_id = state["inline_prompt_id"]
+            assert next(p for m, p in reversed(bot.telegram.sent) if m == "sendMessage")["keyboard"]["inline_keyboard"]
             assert state["screen"] == f"notedelete:{note['id']}"
             await bot.callback(1, 200, prompt_id,
                                state["actions"]["Удалить" if action == "delete" else "Отмена"])

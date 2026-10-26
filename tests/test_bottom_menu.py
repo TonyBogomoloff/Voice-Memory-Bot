@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from support.base import FakeGroq, FakeRouter, FakeTelegram
 from support.commands import bot as bot
 from support.commands import receive
@@ -273,4 +274,47 @@ def test_minimal_menu_toggle_help_and_back(bot):
         await receive(bot, BACK, 3005)
         assert bot.bottom_state(1)["screen"] == "root"
         assert bot.store.notes(1) == []
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("command,prompt", [
+    ("/options", "Что сделать с этой записью?"),
+    ("/delete", "Удалить запись?"),
+    ("/move", "В какую папку ты хочешь переместить запись?"),
+    ("dropfolder", "Удалить папку «Входящие»?"),
+])
+def test_mirrored_menu_leaves_only_inline_question(bot, command, prompt):
+    async def run():
+        bot.telegram.message_sequence = 1000
+        await bot.show_home(1)
+        original = bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"]
+        await receive(bot, "Исходная запись", 100)
+        note = bot.store.notes(1)[0]
+        sent = []
+        original_text = bot.telegram.text
+
+        async def record(*args, **kwargs):
+            result = await original_text(*args, **kwargs)
+            sent.append((result["message_id"], args[1]))
+            return result
+
+        bot.telegram.text = record
+        bot.telegram.sent.clear()
+        if command == "dropfolder":
+            await bot.callback(1, None, None, f"dropfolder:{note['folder_id']}")
+        else:
+            await bot.handle({"message": {"message_id": 400, "from": {"id": 1},
+                "chat": {"id": 1, "type": "private"}, "text": command,
+                "reply_to_message": {"message_id": 100}}})
+        state = bot.bottom_state(1)
+        removed = {p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"}
+        visible = [(mid, text) for mid, text in sent if mid not in removed]
+        assert len(visible) == 1 and visible[0][0] == state["inline_prompt_id"]
+        assert visible[0][1].split("\n", 1)[0] == prompt
+        assert not any(text in {"Удаление записи", "Удаление папки", "Перенос записи"} for _, text in sent)
+        inline = last_message(bot)["keyboard"]["inline_keyboard"]
+        assert [[b["text"] for b in row] for row in inline] == [
+            [b["text"] for b in row] for row in reply_keyboard(bot)["keyboard"]]
+        assert original not in removed and 100 not in removed
+        assert bot.store.note(1, note["id"]) == note
     asyncio.run(run())

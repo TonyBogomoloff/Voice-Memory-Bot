@@ -156,6 +156,9 @@ class BottomMenuMixin:
                             "input_field_placeholder": self.folder_input_placeholder(owner)}
         state.actions = actions
         previous = self.store.one("SELECT message_id,state FROM bottom_menus WHERE owner=?", (owner,))
+        if state.extra.get("mirror") and restore_id is None:
+            restore_id = ((state.extra.get("return_menu") or {}).get("message_id")
+                          or (previous or {}).get("message_id") or 0)
         # Persist before send: a lost Telegram response must not turn the displayed controls into notes.
         with self.store.transaction():
             self.store.db.execute("INSERT INTO bottom_menus(owner,state) VALUES (?,?) ON CONFLICT(owner) "
@@ -179,10 +182,10 @@ class BottomMenuMixin:
                                              {"remove_keyboard": True})
                 reset_id = reset["message_id"]
             text = state.text if state.keep else state.text.split("\n", 1)[0]
+            # Telegram needs a separate send to update the reply keyboard. Mirrored
+            # dialogs remove this silent carrier after the inline prompt is delivered.
             response = await self.view_send(self.telegram.text, owner,
-                ({"notedelete": "Удаление записи", "dropfolder": "Удаление папки"}.get(
-                    state.screen.kind, "Перенос записи"))
-                if state.extra.get("mirror") else display_text or text, thread, keys)
+                "…" if state.extra.get("mirror") else display_text or text, thread, keys)
             self.bottom_placeholders[owner] = placeholder
         finally:
             try:
@@ -192,9 +195,9 @@ class BottomMenuMixin:
         with self.store.transaction():
             self.store.db.execute("UPDATE bottom_menus SET message_id=? WHERE owner=?",
                                   (response["message_id"], owner))
-        # Telegram Web drops the keyboard (and can show START) when its carrier is
-        # deleted. Keep one short heading; retire the previous carrier only after
-        # the new keyboard has been delivered and its receipt saved.
+        carrier_id = response["message_id"]
+        # Retain the original menu carrier for cancellation and clients that need
+        # a keyboard-bearing message in history. Only the new dialog carrier is temporary.
         retained_id = (state.extra.get("return_menu") or {}).get("message_id")
         if previous and previous["message_id"] not in {response["message_id"], retained_id, restore_id}:
             await self.remove_menu_message(owner, previous["message_id"])
@@ -207,15 +210,17 @@ class BottomMenuMixin:
             if old_prompt:
                 await self.remove_menu_message(owner, old_prompt)
         if state.extra.get("mirror"):
+            inline_rows = [[{**item, "callback_data": actions[item["text"]]}
+                            for item in row if item["text"] in actions] for row in keyboard]
             response = await self.view_send(self.telegram.text, owner, state.text, thread,
-                {"inline_keyboard": state.rows}, reply_to=state.extra.get("reply_to"))
+                {"inline_keyboard": [row for row in inline_rows if row]}, reply_to=state.extra.get("reply_to"))
             state.extra["inline_prompt_id"] = response["message_id"]
             with self.store.transaction():
                 self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
         if restore_id is not None:
             with self.store.transaction():
                 self.store.db.execute("UPDATE bottom_menus SET message_id=? WHERE owner=?", (restore_id, owner))
-            await self.remove_menu_message(owner, response["message_id"])
+            await self.remove_menu_message(owner, carrier_id)
         return response
 
     async def bottom_input(self, owner, thread, text, message_id):
