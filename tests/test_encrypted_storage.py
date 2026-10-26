@@ -171,4 +171,23 @@ def test_migration_failure_never_discards_original_or_replaces_live_database(tmp
         assert app.is_symlink()
         assert rows[-1][0] == 'newly received note'
         assert list(tmp_path.glob('app.pre-encryption-*'))
-        assert list(mount.glob('migration/*/application-before.tar.gz'))
+        assert list(mount.glob('migration/*/application-before.tar'))
+
+
+
+def test_candidate_preparation_cannot_write_while_storage_migration_holds_lock(tmp_path):
+    import fcntl
+
+    release = load_script('release')
+    app = tmp_path / 'app'
+    app.mkdir()
+    candidate = app / '.deploy-candidates/new'
+    with (app / '.deploy.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = subprocess.run([sys.executable, '-c', release.PREPARE_REMOTE,
+                                 str(candidate), str(app), 'a' * 40],
+                                input=b'', capture_output=True)
+    assert result.returncode != 0
+    assert b'release_or_storage_operation_in_progress' in result.stderr
+    assert not candidate.exists()
+    assert not (app / '.private-tmp').exists()

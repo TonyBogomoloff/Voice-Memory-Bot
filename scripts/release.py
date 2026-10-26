@@ -13,6 +13,39 @@ APP = '/home/tony/Desktop/_code/voice_memory_bot'
 SSH = ['ssh', '-F', str(Path.home() / '.ssh/config'), '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 'my-server']
 
 
+PREPARE_REMOTE = """
+import fcntl,hashlib,json,os,pathlib,subprocess,sys,tarfile
+candidate, app = map(pathlib.Path, sys.argv[1:3])
+base = sys.argv[3]
+os.umask(0o077)
+with (app / '.deploy.lock').open('a') as lock:
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise RuntimeError('release_or_storage_operation_in_progress') from None
+    if json.loads((app / 'release.json').read_text())['commit'] != base:
+        raise RuntimeError('concurrent_source_change')
+    # Never overwrite a candidate that may already have been validated.
+    candidate.mkdir(parents=True, exist_ok=False)
+    with tarfile.open(fileobj=sys.stdin.buffer, mode='r|') as archive:
+        archive.extractall(candidate, filter='data')
+    os.chdir(candidate)
+    os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+    os.environ['PYTHONPATH'] = str(candidate / 'src')
+    private_tmp = app / '.private-tmp'
+    private_tmp.mkdir(exist_ok=True, mode=0o700)
+    os.environ['TMPDIR'] = str(private_tmp)
+    python = str(app / '.venv/bin/python')
+    subprocess.run([python,'-m','pytest','-q','-p','no:cacheprovider'],check=True)
+    subprocess.run([python,'-m','ruff','check','--no-cache','src','tests','scripts'],check=True)
+    subprocess.run([python,'scripts/check_migration.py','--database',str(app / 'data/archive.sqlite3')],check=True)
+    manifest = (candidate / 'release.json').read_bytes()
+    receipt = {'commit':json.loads(manifest)['commit'], 'manifest_sha256':hashlib.sha256(manifest).hexdigest(),
+               'full_suite':True, 'ruff':True, 'migration_rehearsal':True}
+    (candidate / 'validation.json').write_text(json.dumps(receipt,indent=2))
+"""
+
+
 def remote(args, **kwargs):
     return subprocess.run([*SSH, shlex.join(args)], check=True, **kwargs)
 
@@ -47,31 +80,9 @@ def prepare(sha, base):
         member.size, member.mode = len(manifest), 0o600
         archive.addfile(member, io.BytesIO(manifest))
     candidate = APP + '/.deploy-candidates/' + sha
-    # A SHA gets one candidate directory. Never overwrite a previously checked candidate.
-    code = ("import os,pathlib,sys,tarfile; os.umask(0o077); p=pathlib.Path(sys.argv[1]);"
-            "p.mkdir(parents=True,exist_ok=False);"
-            "tarfile.open(fileobj=sys.stdin.buffer,mode='r|').extractall(p,filter='data')")
-    remote(['python3', '-c', code, candidate], input=package.getvalue())
-    code = """
-import hashlib,json,os,pathlib,subprocess,sys
-candidate, app = map(pathlib.Path, sys.argv[1:3])
-os.umask(0o077)
-os.chdir(candidate)
-os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
-os.environ['PYTHONPATH'] = str(candidate / 'src')
-private_tmp = app / '.private-tmp'
-private_tmp.mkdir(exist_ok=True, mode=0o700)
-os.environ['TMPDIR'] = str(private_tmp)
-python = str(app / '.venv/bin/python')
-subprocess.run([python,'-m','pytest','-q','-p','no:cacheprovider'],check=True)
-subprocess.run([python,'-m','ruff','check','--no-cache','src','tests','scripts'],check=True)
-subprocess.run([python,'scripts/check_migration.py','--database',str(app / 'data/archive.sqlite3')],check=True)
-manifest = (candidate / 'release.json').read_bytes()
-receipt = {'commit':json.loads(manifest)['commit'], 'manifest_sha256':hashlib.sha256(manifest).hexdigest(),
-           'full_suite':True, 'ruff':True, 'migration_rehearsal':True}
-(candidate / 'validation.json').write_text(json.dumps(receipt,indent=2))
-"""
-    remote([APP + '/.venv/bin/python', '-c', code, candidate, APP])
+    # Preparation shares the deployment/migration lock, including extraction and tests.
+    remote([APP + '/.venv/bin/python', '-c', PREPARE_REMOTE, candidate, APP, base], input=package.getvalue())
+
 
 
 def deploy(sha, base):

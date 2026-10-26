@@ -29,14 +29,16 @@ from encrypted_storage import (
 
 
 def backup_verified(source, path, manifest):
-    with tarfile.open(path, 'w:gz') as archive:
+    with tarfile.open(path, 'w') as archive:
         archive.add(source, arcname='application', recursive=True)
     checked = set()
-    with tarfile.open(path, 'r:gz') as archive:
+    with tarfile.open(path, 'r') as archive:
         for entry in archive:
             if entry.name == 'application':
                 continue
             name = str(Path(entry.name).relative_to('application'))
+            if name not in manifest:
+                raise RuntimeError('source_changed_during_backup')
             expected = manifest[name]
             if entry.isfile() or entry.islnk():
                 with archive.extractfile(entry) as handle:
@@ -99,7 +101,7 @@ def migrate(settings, sha, config=CONFIG):
             manifest = copy_verified(app, target)
             write_private(records / 'files.json', json.dumps(manifest, sort_keys=True))
             write_private(records / 'database-before.json', json.dumps(before, sort_keys=True))
-            backup_verified(app, records / 'application-before.tar.gz', manifest)
+            backup_verified(app, records / 'application-before.tar', manifest)
             # A concurrent candidate preparation may not honor .deploy.lock: detect it too.
             if tree_manifest(app) != manifest:
                 raise RuntimeError('source_changed_during_migration')
@@ -155,7 +157,7 @@ def migrate(settings, sha, config=CONFIG):
                         v.get('size', 0) for v in manifest.values()), 'configs_preserved': True,
                     'before_counts': before['counts'], 'after_counts': after['counts'],
                     'sqlite_integrity': 'ok', 'plaintext_duplicate_removed': not legacy.exists(),
-                    'encrypted_rollback': str(records / 'application-before.tar.gz'),
+                    'encrypted_rollback': str(records / 'application-before.tar'),
                     'service': service.strip().splitlines(), 'new_warnings_errors': 0}
                 write_private(records / 'receipt.json', json.dumps(receipt, indent=2) + '\n')
                 write_private(app / 'encryption-receipt.json', json.dumps(receipt, indent=2) + '\n')
