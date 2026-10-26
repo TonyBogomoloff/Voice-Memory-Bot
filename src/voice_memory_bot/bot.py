@@ -574,8 +574,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         text += "\nРежим: " + ("диалог с ИИ" if folder["mode"] == "chat" else "заметки")
         text += "\n✅ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
         rows = [[button("✏️ Переименовать", f"rename:{identity}"),
-                 button("🗑 Удалить папку", f"dropfolder:{identity}")],
-                [button("📦 Экспорт", f"zip:{identity}:all")]]
+                 button("📦 Экспорт", f"zip:{identity}:all")],
+                [button("🗑 Удалить папку", f"dropfolder:{identity}")]]
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"foldermenu:{identity}",
                                back="root", edit_id=edit_id)
 

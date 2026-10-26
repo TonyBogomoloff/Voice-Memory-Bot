@@ -248,7 +248,7 @@ def test_home_add_folder_and_options_back(bot):
         assert set(labels(bot)) == {"✏️ Переименовать", "🗑 Удалить папку", "📦 Экспорт", BACK}
         assert bot.bottom_state(1)["actions"]["📦 Экспорт"] == f"zip:{folder}:all"
         assert [[button["text"] for button in row] for row in reply_keyboard(bot)["keyboard"]] == [
-            ["✏️ Переименовать", "🗑 Удалить папку"], [BACK, "📦 Экспорт"]]
+            ["✏️ Переименовать", "📦 Экспорт"], [BACK, "🗑 Удалить папку"]]
         await receive(bot, BACK, 2006)
         assert bot.bottom_state(1)["screen"] == "root"
         assert bot.options_folder(1) is None
