@@ -24,6 +24,7 @@ from .help_menu import help_page, help_video_path
 from .media import MediaProcessor
 from .message_store import MessageStore
 from .note_service import NoteService
+from .obsidian_menu import ObsidianMenuMixin
 from .providers import CodexRouter, Groq, ProviderError, Telegram, silent_delivery
 from .reply_move import ReplyMoveMixin
 from .routing import fallback_title
@@ -66,7 +67,7 @@ HOME = keyboard([button("📂 Все папки", "folders"), button("＋ Нов
                 [button("⚙️ Настройки", "settings:all"), button("ℹ️ Помощь", "help")],
                 [button("🗑 Удалить всё", "deleteall")])
 
-class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
+class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
     def __init__(self, config: Config, store: Store, telegram: Telegram, groq: Groq, router: CodexRouter,
                  assistant=None):
         self.config, self.store = config, store
@@ -111,6 +112,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         await self.resume_deletions()
         await self.configure_menu()
         log.info("started bot_id=%s folder_mode=custom telegram_topics=%s", me["id"], me.get("has_topics_enabled", False))
+        from .obsidian_api import start_api
+        api = await start_api(self)
         try:
             async with asyncio.TaskGroup() as group:
                 group.create_task(self.poll())
@@ -119,6 +122,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 group.create_task(self.ai_worker())
                 group.create_task(self.folder_view_worker())
         finally:
+            if api:
+                await api.cleanup()
             for task in self.export_tasks:
                 task.cancel()
             await asyncio.gather(*self.export_tasks, return_exceptions=True)
@@ -594,7 +599,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         text += "\n✅ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
         rows = [[button("✏️ Переименовать", f"rename:{identity}"),
                  button("📦 Экспорт", f"zip:{identity}:all")],
-                [button("💎 Для Obsidian", f"zip:{identity}:obsidian")],
+                [button("💎 Для Obsidian", f"obsidian:{identity}")],
                 [button("🗑 Удалить папку", f"dropfolder:{identity}")]]
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"foldermenu:{identity}",
                                back="root", edit_id=edit_id)
@@ -691,6 +696,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             return
         if data.split(":", 1)[0] not in {"aioptions", "aicollapse", "aiend", "aicancel"}:
             self.store.set_action(owner, None)
+        if await self.obsidian_callback(owner, thread, message_id, data):
+            return
         if await self.folder_menu_callback(owner, thread, message_id, data):
             return
         if await self.cleanup_callback(owner, thread, message_id, data):
@@ -971,6 +978,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         rows = [[button("Кнопки у сообщений: " + ("вкл" if enabled else "выкл"),
                         f"messagebuttons:{0 if enabled else 1}")],
                 [button(f"📦 Экспорт · {label}", "exportsettings:all")],
+                [button("💎 Obsidian", "obsidian:all")],
                 [button(f"📝 Записей на странице · {self.store.folder_page_size(owner)}", "pagesettings")]]
         if hasattr(self, "ai_settings"):
             rows.append([button("🤖 Настройки ИИ", "aisettings")])

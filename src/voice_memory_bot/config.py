@@ -42,6 +42,8 @@ class Config:
     folder_name_model: str = ""
     telegram_api_base: str = "https://api.telegram.org"
     telegram_file_root: Path | None = None
+    obsidian_url: str = ""
+    obsidian_port: int = 8788
 
     @classmethod
     def load(cls, path: Path, secrets_path: Path | None = None) -> Config:
@@ -88,9 +90,18 @@ class Config:
                 raise ValueError("Локальный Bot API: файл до 1900 MB, часть экспорта 21–1950 MB")
         elif limits.max_file_bytes > 20_000_000 or not 21_000_000 <= limits.export_part_bytes <= 45_000_000:
             raise ValueError("Для облачного Bot API: файл до 20 MB, часть экспорта 21–45 MB")
+        obsidian_url = os.environ.get("VOICE_MEMORY_OBSIDIAN_URL", raw.get("obsidian_url", "")).rstrip("/")
+        endpoint = urlsplit(obsidian_url)
+        if obsidian_url and (endpoint.scheme != "https" or not endpoint.hostname or endpoint.username
+                             or endpoint.password or endpoint.path or endpoint.query or endpoint.fragment):
+            raise ValueError("obsidian_url: нужен HTTPS-адрес без пути и пароля")
+        obsidian_port = int(os.environ.get("VOICE_MEMORY_OBSIDIAN_PORT", raw.get("obsidian_port", 8788)))
+        if not 1024 <= obsidian_port <= 65535:
+            raise ValueError("obsidian_port: допустимо 1024–65535")
         directory = Path(raw.get("data_dir", "data"))
         if not directory.is_absolute():
             directory = path.resolve().parent / directory
         return cls(token, frozenset(ids), key, directory.resolve(),
                    raw.get("groq_model", "whisper-large-v3-turbo"), llm, limits, tuple(models),
-                   name_model, api_base, Path(file_root).resolve() if local_api else None)
+                   name_model, api_base, Path(file_root).resolve() if local_api else None,
+                   obsidian_url, obsidian_port)

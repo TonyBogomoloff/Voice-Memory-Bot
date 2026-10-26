@@ -279,7 +279,22 @@ def ai_instruction_prompts(store):
     )""")
 
 
-MIGRATIONS = (baseline, folder_page_settings, ai_instruction_prompts)
+def obsidian_devices(store):
+    execute_script(store.db, """
+        CREATE TABLE IF NOT EXISTS obsidian_pairing (
+            code_hash TEXT PRIMARY KEY, owner INTEGER NOT NULL REFERENCES users(id),
+            folder_id TEXT, expires_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS obsidian_devices (
+            id TEXT PRIMARY KEY, owner INTEGER NOT NULL REFERENCES users(id),
+            folder_id TEXT, token_hash TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+            created_at REAL NOT NULL, last_used REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS obsidian_device_owner ON obsidian_devices(owner);
+    """)
+
+
+MIGRATIONS = (baseline, folder_page_settings, ai_instruction_prompts, obsidian_devices)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
