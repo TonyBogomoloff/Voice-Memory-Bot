@@ -120,7 +120,7 @@ def test_real_transport_keyboard_taps_survive_restart_and_never_become_notes(bot
         # A delayed tap from the old keyboard must not become a note in the current folder.
         await receive(bot, 'Работа', 104)
         assert bot.store.notes(1) == []
-        await receive(bot, 'Настройки', 105)
+        await receive(bot, 'Папка', 105)
         assert bot.bottom_state(1)['screen'] == f"foldermenu:{work['id']}"
         await receive(bot, '\u2060', 106)
         assert bot.bottom_state(1)['screen'] == 'root'
@@ -163,9 +163,9 @@ def test_icon_only_navigation_keeps_distinct_routes():
     assert aliases[left['text']] == '⬅️ Назад'
     assert aliases[right['text']] == 'Страница ▶️'
     settings, menu = markup['keyboard'][1]
-    assert settings['text'] == 'Настройки'
+    assert settings['text'] == 'Папка'
     assert settings['icon_custom_emoji_id'] == IDS['settings']
-    assert aliases['Настройки'] == '📁 Папка'
+    assert aliases['Папка'] == '📁 Папка'
     assert menu['icon_custom_emoji_id'] == IDS['menu_list']
 
 

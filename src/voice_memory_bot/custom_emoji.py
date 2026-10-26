@@ -102,7 +102,7 @@ def button_label(text, name):
     if name in ARROW_LABELS:
         return ARROW_LABELS[name]
     if text == '📁 Папка':
-        return 'Настройки'
+        return 'Папка'
     # Only the UI's leading marker is removed. A user's emoji in a title is kept.
     match = PATTERN.match(text)
     if match:
