@@ -181,3 +181,32 @@ def test_move_replies_to_selected_record_through_pages_and_new_folder(bot, targe
         assert other["folder_id"] == note["folder_id"]
         assert not any(text == "Действия" for _, text, _ in replies)
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('reply_to_record', [False, True])
+def test_new_move_folder_reuses_deleted_folder_keyboard_label(bot, reply_to_record):
+    async def run():
+        note = await prepare(bot)
+        old = bot.store.create_folder(1, 'Холодос')
+        bot.emoji_keyboards.remember(1, {'Холодос': '📁 Холодос'})
+        bot.store.delete_folder(1, old['id'])
+        await open_move(bot)
+        await receive(bot, '＋ Новая папка', 450)
+        bot.emoji_keyboards.remember(1, {'Отмена': 'Отмена'})
+        assert bot.emoji_keyboards.resolve(1, 'Холодос') == ('📁 Холодос', False)
+        message = {'message_id': 500, 'from': {'id': 1},
+                   'chat': {'id': 1, 'type': 'private'}, 'text': 'Холодос'}
+        if reply_to_record:
+            message['reply_to_message'] = {'message_id': 100}
+        await bot.handle({'message': message})
+        moved = bot.store.note(1, note['id'])
+        folder = bot.store.folder(1, moved['folder_id'])
+        assert folder['name'] == 'Холодос' and folder['id'] != old['id']
+        assert moved['transcript'] == note['transcript']
+        assert len(bot.store.notes(1)) == 1
+        assert bot.store.action(1) is None
+        assert bot.store.one('SELECT * FROM reply_moves WHERE owner=1') is None
+        messages = [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage']
+        assert messages[-1] == 'Перенесено в «Холодос».'
+        assert not any('кнопка устарела' in text for text in messages)
+    asyncio.run(run())

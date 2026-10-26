@@ -305,12 +305,12 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
             naming_action = self.store.action(owner) or ""
             raw_text = message.get("text", "").strip()
             state = self.bottom_state(owner) or {}
-            if (raw_text and (naming_action == "create" or naming_action.startswith("rename:"))
+            if (raw_text and (naming_action == "create" or naming_action.startswith(("rename:", "replymove:")))
                     and not raw_text.startswith("/")
                     and not self.is_folder_button(raw_text)
                     and navigation not in {"Отмена", "✖️ Отмена", "⬅️ Назад", "🏠 Главная", "⌂ Меню"}
                     and navigation not in state.get("actions", {})
-                    and not self.reply_input(owner, message)):
+                    and (naming_action.startswith("replymove:") or not self.reply_input(owner, message))):
                 # A typed name may match a remembered keyboard label, including an old folder name.
                 return await self.input_action(owner, thread, raw_text)
             if alias_active is False:
