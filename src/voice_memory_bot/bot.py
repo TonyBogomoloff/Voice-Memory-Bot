@@ -335,7 +335,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 if not note:
                     return await self._show(owner, "Не нашёл запись. Пришли сообщение или ответь на сохранённую запись.", thread)
                 return await self.ai_callback(owner, thread,
-                    (message.get("reply_to_message") or {}).get("message_id"), f"aiask:{note['id']}")
+                    (message.get("reply_to_message") or {}).get("message_id"), f"aiask:{note['id']}",
+                    command_id=message["message_id"] if keep_reply_command else 0)
             if text == "➖":
                 return await self.refresh_folder_keyboard(owner, thread, force=True,
                     notice="Для удаления выбери «Ответить» на запись и команду /delete в меню.")
@@ -740,8 +741,10 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             return
         note = self.store.note(owner, identity)
         if action == "recordmove":
+            state = self.menu_state(owner)
+            command_id = state.extra.get("command_id", 0) if state and state.screen.wire == f"recordoptions:{identity}" else 0
             return await self.move_reply(owner, thread, {
-                "message_id": 0, "reply_to_message": {"message_id": note["message_id"]}})
+                "message_id": command_id, "reply_to_message": {"message_id": note["message_id"]}})
         if action == "options":
             return await self.edit_note_buttons(owner, message_id, self.note_controls(note, thread))
         if action == "collapse":
@@ -792,7 +795,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                 selected = self.reply_note(owner, {"reply_to_message": {"message_id": message_id}})
                 if selected and selected["id"] == identity:
                     target = message_id
-            return await self.confirm_note_deletion(owner, thread, note, target)
+            command_id = state.extra.get("command_id", 0) if state and state.screen.wire == f"recordoptions:{identity}" else 0
+            return await self.confirm_note_deletion(owner, thread, note, target, command_id=command_id)
         if action == "canceldelete":
             return await self.remove_menu_message(owner, message_id)
         if action == "confirmarchive":
@@ -812,16 +816,18 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
              button("Перенести запись", f"recordmove:{identity}")],
             [button("Удалить запись", f"delete:{identity}")]),
             screen=f"recordoptions:{identity}", back="root", keep=True,
-            reply_to=(message.get("reply_to_message") or {}).get("message_id"))
+            reply_to=(message.get("reply_to_message") or {}).get("message_id"),
+            command_id=message["message_id"] if "reply_to_message" in message else 0)
 
     async def delete_reply(self, owner, thread, message):
         note = self.reply_note(owner, message)
         if not note:
             return await self._show(owner, "Не нашёл запись в базе. Ответь на исходное сообщение или расшифровку.", thread)
         target = (message.get("reply_to_message") or {}).get("message_id")
-        return await self.confirm_note_deletion(owner, thread, note, target)
+        return await self.confirm_note_deletion(owner, thread, note, target,
+            command_id=message["message_id"] if "reply_to_message" in message else 0)
 
-    async def confirm_note_deletion(self, owner, thread, note, target=None):
+    async def confirm_note_deletion(self, owner, thread, note, target=None, *, command_id=0):
         if note["state"] == "processing" or self.note_locks[note["id"]].locked():
             raise ValueError("Дождись завершения обработки, затем удали запись")
         if not target:
@@ -833,18 +839,19 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         token = new_id()
         return await self.show_bottom(owner, "Удалить запись?", thread, keyboard([
             button("Удалить", f"notedel:{token}"), button("Отмена", f"notecancel:{token}")]),
-            screen=f"notedelete:{note['id']}", keep=True, mirror=True, reply_to=target)
+            screen=f"notedelete:{note['id']}", keep=True, mirror=True, reply_to=target, command_id=command_id)
 
     async def note_delete_callback(self, owner, thread, message_id, data):
         if data.split(":", 1)[0] not in {"notedel", "notecancel"}:
             return False
         state = self.menu_state(owner)
         if (not state or state.screen.kind != "notedelete" or data not in state.actions.values()
-                or state.epoch != self.bottom_epoch or time.time() >= state.expires
                 or (message_id is not None and message_id != state.extra.get("inline_prompt_id"))):
             return True
         if data.startswith("notecancel:"):
-            await self.show_home(owner, thread)
+            await self.cancel_record_menu(owner, thread)
+            return True
+        if state.epoch != self.bottom_epoch or time.time() >= state.expires:
             return True
         # Both keyboards share one target and a single-use confirmation.
         note = self.notes.delete(owner, state.screen.argument)

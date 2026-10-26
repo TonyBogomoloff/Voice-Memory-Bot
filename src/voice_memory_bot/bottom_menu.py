@@ -56,7 +56,7 @@ class BottomMenuMixin:
             self.store.db.execute("DELETE FROM telegram_messages WHERE owner=? AND message_id=?", (owner, message_id))
 
     async def show_bottom(self, owner, text, thread=None, keys=None, *, screen="home", back="root",
-                          keep=False, page=0, edit_id=None, mirror=False, reply_to=None):
+                          keep=False, page=0, edit_id=None, mirror=False, reply_to=None, command_id=None):
         if screen.split(":")[0] not in {"foldermenu", "rename", "dropfolder"}:
             self.leave_folder_options(owner)
         rows = (keys or {}).get("inline_keyboard", [])
@@ -67,6 +67,15 @@ class BottomMenuMixin:
                 for row in rows]
         rows = [row for row in rows if row]
         state = MenuState(Target.parse(screen), Target.parse(back), text, rows, page, keep)
+        if state.screen.kind in {"replymove", "notedelete", "recordoptions"}:
+            previous = self.store.one("SELECT message_id,state FROM bottom_menus WHERE owner=?", (owner,))
+            if previous:
+                parent = MenuState.from_json(previous["state"])
+                saved = parent.extra.get("return_menu")
+                if saved or parent.screen.kind not in {"replymove", "notedelete", "recordoptions"}:
+                    state.extra["return_menu"] = saved or previous
+            if command_id:
+                state.extra["command_id"] = command_id
         if mirror or reply_to:
             state.extra.update(mirror=mirror, reply_to=reply_to)
         if state.screen.kind == "notedelete" or any(b.get("callback_data", "").startswith("confirm") for row in rows for b in row):
@@ -74,7 +83,25 @@ class BottomMenuMixin:
         self.remember_screen(owner, thread, text, {"bottom_menu": True})
         return await self.send_bottom(owner, thread, state, edit_id=edit_id)
 
-    async def send_bottom(self, owner, thread, state, *, edit_id=None, raw_keys=None):
+    async def cancel_record_menu(self, owner, thread=None, *, command_id=None):
+        state = self.menu_state(owner)
+        if not state:
+            return
+        command_id = command_id or state.extra.get("command_id")
+        previous = state.extra.get("return_menu")
+        restored = MenuState.from_json(previous["state"]) if previous else MenuState.from_mapping({
+            "screen": "root", "text": "Папки внизу"})
+        self.store.set_action(owner, None)
+        # Restore the keyboard through a disposable message, retaining its original
+        # carrier so Telegram Web still has a keyboard after the dialog is removed.
+        await self.send_bottom(owner, thread, restored,
+            raw_keys=self.folder_keyboard(owner) if restored.screen.kind == "root" else None,
+            restore_id=(previous or {}).get("message_id") or 0, display_text="Отменено.")
+        self.remember_screen(owner, thread, restored.text, {"bottom_menu": True})
+        await self.remove_menu_message(owner, command_id)
+
+    async def send_bottom(self, owner, thread, state, *, edit_id=None, raw_keys=None,
+                          restore_id=None, display_text=None):
         if not isinstance(state, MenuState):
             state = MenuState.from_mapping(state)
         if state.screen.kind == "ai_note":
@@ -153,7 +180,7 @@ class BottomMenuMixin:
             response = await self.view_send(self.telegram.text, owner,
                 ({"notedelete": "Удаление записи", "dropfolder": "Удаление папки"}.get(
                     state.screen.kind, "Перенос записи"))
-                if state.extra.get("mirror") else text, thread, keys)
+                if state.extra.get("mirror") else display_text or text, thread, keys)
             self.bottom_placeholders[owner] = placeholder
         finally:
             try:
@@ -166,10 +193,15 @@ class BottomMenuMixin:
         # Telegram Web drops the keyboard (and can show START) when its carrier is
         # deleted. Keep one short heading; retire the previous carrier only after
         # the new keyboard has been delivered and its receipt saved.
-        if previous and previous["message_id"] != response["message_id"]:
+        retained_id = (state.extra.get("return_menu") or {}).get("message_id")
+        if previous and previous["message_id"] not in {response["message_id"], retained_id, restore_id}:
             await self.remove_menu_message(owner, previous["message_id"])
         if previous:
-            old_prompt = MenuState.from_json(previous["state"]).extra.get("inline_prompt_id")
+            old_state = MenuState.from_json(previous["state"])
+            old_return_id = (old_state.extra.get("return_menu") or {}).get("message_id")
+            if old_return_id not in {retained_id, restore_id}:
+                await self.remove_menu_message(owner, old_return_id)
+            old_prompt = old_state.extra.get("inline_prompt_id")
             if old_prompt:
                 await self.remove_menu_message(owner, old_prompt)
         if state.extra.get("mirror"):
@@ -178,6 +210,10 @@ class BottomMenuMixin:
             state.extra["inline_prompt_id"] = response["message_id"]
             with self.store.transaction():
                 self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
+        if restore_id is not None:
+            with self.store.transaction():
+                self.store.db.execute("UPDATE bottom_menus SET message_id=? WHERE owner=?", (restore_id, owner))
+            await self.remove_menu_message(owner, response["message_id"])
         return response
 
     async def bottom_input(self, owner, thread, text, message_id):
@@ -206,6 +242,17 @@ class BottomMenuMixin:
             self.store.set_action(owner, None)
             return True
         if action == "cancel_record_options":
+            if state.screen.kind == "recordoptions":
+                pending = self.store.action(owner) or ""
+                if pending.startswith("ai_note:"):
+                    conversation = pending.split(":", 1)[1]
+                    prompt = self.store.one("SELECT message_id FROM ai_instruction_prompts "
+                                            "WHERE owner=? AND conversation_id=?", (owner, conversation))
+                    if prompt:
+                        await self.ai_callback(owner, thread, prompt["message_id"], f"aicancel:{conversation}")
+                if (self.bottom_state(owner) or {}).get("screen") == state.screen.wire:
+                    await self.cancel_record_menu(owner, thread)
+                return True
             self.store.set_action(owner, None)
             if state.screen.wire == "create" and not self.store.folders(owner):
                 await self.show_main_menu(owner, thread)

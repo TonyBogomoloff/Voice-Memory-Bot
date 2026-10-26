@@ -50,8 +50,8 @@ class ReplyMoveMixin:
         if not note:
             return await self._show(owner, "В этой папке нет подходящей записи. Пришли сообщение или ответь на сохранённую запись.", thread)
         token = new_id()
-        # Reply commands stay in chat, including after cancellation and restart.
-        cleanup_command_id = 0 if "reply_to_message" in message else message["message_id"]
+        # Keep successful commands, but retain their exact IDs for cancellation.
+        cleanup_command_id = message["message_id"]
         with self.store.transaction():
             self.store.db.execute("INSERT INTO reply_moves(token,owner,note_id,command_id) VALUES (?,?,?,?)",
                                   (token, owner, note["id"], cleanup_command_id))
@@ -77,7 +77,7 @@ class ReplyMoveMixin:
             rows.append(nav)
         rows.extend([[button("＋ Новая папка", f"rnew:{token}")], [button("Отмена", f"rcancel:{token}")]])
         result = await self.show_bottom(owner, "В какую папку ты хочешь переместить запись?", thread,
-                                  keyboard(*rows), screen=f"replymove:{token}", keep=True, mirror=True)
+                                  keyboard(*rows), screen=f"replymove:{token}", keep=True, mirror=True, command_id=session["command_id"])
         with self.store.transaction():
             self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                   (result["message_id"], owner, token))
@@ -108,15 +108,17 @@ class ReplyMoveMixin:
                 message_id is None and state.get("screen") == f"replymove:{token}")):
             return True
         if action == "rcancel":
+            if state.get("screen") == f"replymove:{token}":
+                await self.cancel_record_menu(owner, thread, command_id=session["command_id"])
             await self.finish_reply_move(owner, token, cancelled=True)
-            await self.show_home(owner, thread)
         elif action == "rpage":
             await self.reply_move_menu(owner, thread, token, int(parts[2]))
         elif action == "rnew":
             self.store.note(owner, session["note_id"])
             self.store.set_action(owner, f"replymove:{token}")
             result = await self.show_bottom(owner, "Как назвать новую папку?", thread,
-                keyboard([button("Отмена", f"rcancel:{token}")]), screen=f"replymove:{token}", keep=True, mirror=True)
+                keyboard([button("Отмена", f"rcancel:{token}")]), screen=f"replymove:{token}", keep=True, mirror=True,
+                command_id=session["command_id"])
             with self.store.transaction():
                 self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                       (result["message_id"], owner, token))

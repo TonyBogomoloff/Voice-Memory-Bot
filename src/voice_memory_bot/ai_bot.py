@@ -105,6 +105,7 @@ class AIBotMixin:
                 if consume_action:
                     # Consume at acceptance, before ASR or AI can leave another message waiting.
                     self.store.set_action(owner, None)
+                    self.store.db.execute("DELETE FROM meta WHERE key=?", (f"ai_command:{owner}:{pending}",))
 
     async def route_ai(self, note, detect=True):
         owner, identity = note["owner"], note["id"]
@@ -204,7 +205,7 @@ class AIBotMixin:
                                thread, keys(*rows), screen=f"ailist:{folder_id}:{page}",
                                back=f"foldermenu:{folder_id}", edit_id=edit_id)
 
-    async def ai_callback(self, owner, thread, message_id, data):
+    async def ai_callback(self, owner, thread, message_id, data, *, command_id=None):
         parts = data.split(":")
         action, identity = parts[0], parts[1] if len(parts) > 1 else None
         if action == "aiplace" and len(parts) == 4:
@@ -254,6 +255,10 @@ class AIBotMixin:
             await self.edit_note_buttons(owner, message_id, keys(*rows) if action == "aioptions"
                                          else keys(*self.ai_note_actions.buttons(owner, identity)))
         elif action in {"aiask", "aicontinue"}:
+            state = self.menu_state(owner)
+            options = state and state.screen.wire == f"recordoptions:{identity}" and command_id is None
+            if options:
+                command_id = state.extra.get("command_id", 0)
             if action == "aiask":
                 conversation = self.ai_state.start_note_conversation(owner, identity)
                 prompt = "Отправь инструкцию для ИИ текстом или голосовым."
@@ -275,12 +280,31 @@ class AIBotMixin:
             with self.store.transaction():
                 self.store.db.execute("INSERT OR REPLACE INTO ai_instruction_prompts VALUES (?,?,?,?)",
                                       (conversation, owner, response["message_id"], target))
+                if command_id or options:
+                    menu = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,)) if options else None
+                    self.store.db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",
+                        (f"ai_command:{owner}:{conversation}", json.dumps({
+                            "command_id": command_id, "menu_id": (menu or {}).get("message_id")})))
         elif action == "aicancel":
+            prompt = self.store.one("SELECT * FROM ai_instruction_prompts WHERE owner=? AND conversation_id=?",
+                                    (owner, identity))
+            receipt_key = f"ai_command:{owner}:{identity}"
+            receipt = self.store.one("SELECT value FROM meta WHERE key=?", (receipt_key,))
+            context = json.loads(receipt["value"]) if receipt else {}
             if self.store.action(owner) == f"ai_note:{identity}":
                 self.store.set_action(owner, None)
-                if (self.bottom_state(owner) or {}).get("screen") == f"ai_note:{identity}":
-                    await self.show_home(owner, thread)
-            await self.remove_menu_message(owner, message_id)
+                menu = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,))
+                if context.get("menu_id") and menu and menu["message_id"] == context["menu_id"]:
+                    await self.cancel_record_menu(owner, thread)
+                elif (self.bottom_state(owner) or {}).get("screen") == f"ai_note:{identity}":
+                    await self.cancel_record_menu(owner, thread)
+            await self.remove_menu_message(owner, context.get("command_id"))
+            if prompt:
+                await self.remove_menu_message(owner, prompt["message_id"])
+            if not prompt or message_id != prompt["message_id"]:
+                await self.remove_menu_message(owner, message_id)
+            with self.store.transaction():
+                self.store.db.execute("DELETE FROM meta WHERE key=?", (receipt_key,))
         elif action == "aiend":
             if self.store.action(owner) == f"ai_note:{identity}":
                 self.store.set_action(owner, None)

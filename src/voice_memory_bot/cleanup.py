@@ -94,6 +94,7 @@ class CleanupStore:
                 self.db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
             if self.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='folder_views'"):
                 self.db.execute("DELETE FROM folder_views WHERE owner=?", (owner,))
+            self.db.execute("DELETE FROM meta WHERE key LIKE ?", (f"ai_command:{owner}:%",))
             self.db.execute("UPDATE users SET active_folder=NULL,action=NULL WHERE id=?", (owner,))
             self.db.executemany("DELETE FROM updates WHERE id=?", updates)
 

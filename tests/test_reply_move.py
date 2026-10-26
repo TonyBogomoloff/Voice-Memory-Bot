@@ -62,7 +62,7 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
 
 
 @pytest.mark.parametrize('new_folder', [False, True])
-def test_cancel_preserves_reply_command_even_after_restart(bot, tmp_path, new_folder):
+def test_cancel_removes_reply_command_even_after_restart(bot, tmp_path, new_folder):
     async def run():
         note = await prepare(bot)
         session = await open_move(bot)
@@ -73,7 +73,9 @@ def test_cancel_preserves_reply_command_even_after_restart(bot, tmp_path, new_fo
         await restarted.callback(1, None, session['prompt_id'], f'rcancel:{session["token"]}')
         deleted = {p['message_id'] for m, p in restarted.telegram.sent if m == 'deleteMessage'}
         assert session['prompt_id'] in deleted
-        assert 400 not in deleted
+        assert 400 in deleted
+        assert not ({100, 200} & deleted)
+        assert restarted.bottom_state(1)["screen"] == "root"
         assert bot.store.note(1, note['id'])['folder_id'] == note['folder_id']
         assert bot.store.action(1) is None
         await restarted.callback(1, None, session['prompt_id'], f'rnew:{session["token"]}')
