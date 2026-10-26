@@ -23,7 +23,6 @@ class BottomMenuMixin:
     def init_bottom_menu(self):
         self.bottom_epoch = new_id()
         self.command_cleanups = {}
-        self.bottom_placeholders = {}
 
     def menu_state(self, owner):
         row = self.store.one("SELECT state FROM bottom_menus WHERE owner=?", (owner,))
@@ -152,7 +151,7 @@ class BottomMenuMixin:
             keyboard[-1].insert(0, {"text": BACK})
         elif state.screen.kind not in {"root", "replymove", "notedelete", "dropfolder"}:
             keyboard.append([{"text": BACK}, {"text": ROOT}])
-        keys = raw_keys or {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True,
+        keys = raw_keys or {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True, "one_time_keyboard": False,
                             "input_field_placeholder": self.folder_input_placeholder(owner)}
         state.actions = actions
         previous = self.store.one("SELECT message_id,state FROM bottom_menus WHERE owner=?", (owner,))
@@ -169,26 +168,16 @@ class BottomMenuMixin:
                 if str(exc) != "telegram_400":
                     raise
         token = silent_delivery.set(True)
-        reset_id = None
-        placeholder = keys["input_field_placeholder"]
         try:
-            if previous and self.bottom_placeholders.get(owner) != placeholder:
-                # Android setButtons() leaves the old hint while its bot keyboard is open.
-                # Close it first so the following keyboard also refreshes the input hint.
-                reset = await self.view_send(self.telegram.text, owner, "Обновляю папку…", thread,
-                                             {"remove_keyboard": True})
-                reset_id = reset["message_id"]
+            # Replacing the markup keeps the button panel open. A remove_keyboard
+            # round trip switches Android to the regular typing keyboard.
             text = state.text if state.keep else state.text.split("\n", 1)[0]
             # Keep a short carrier: deleting it also removes the reply keyboard
             # in Telegram clients. The next menu replaces it.
             response = await self.view_send(self.telegram.text, owner,
                 "Действия" if state.extra.get("mirror") else display_text or text, thread, keys)
-            self.bottom_placeholders[owner] = placeholder
         finally:
-            try:
-                await self.remove_menu_message(owner, reset_id)
-            finally:
-                silent_delivery.reset(token)
+            silent_delivery.reset(token)
         with self.store.transaction():
             self.store.db.execute("UPDATE bottom_menus SET message_id=? WHERE owner=?",
                                   (response["message_id"], owner))

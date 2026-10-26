@@ -108,7 +108,7 @@ class FolderMenuMixin:
             if page < len(pages) - 1:
                 rows[1].append({"text": "➡️"})
         return {"keyboard": rows + [[{"text": "＋"}, {"text": "📁 Папка"}, {"text": "☰ Меню"}]],
-                "resize_keyboard": True, "is_persistent": True,
+                "resize_keyboard": True, "is_persistent": True, "one_time_keyboard": False,
                 "input_field_placeholder": self.folder_input_placeholder(owner)}
 
     async def turn_folder_page(self, owner, thread, text):
