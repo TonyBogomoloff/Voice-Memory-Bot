@@ -97,9 +97,15 @@ def test_work_arriving_during_shutdown_resumes_without_replacing_files(release, 
     assert not (r.guard.app / 'added.py').exists()
 
 
-def test_failed_start_restores_code_but_keeps_new_database_and_originals(release, monkeypatch):
+@pytest.mark.parametrize('schema_upgrade', [False, True])
+def test_failed_start_restores_code_but_keeps_new_database_and_originals(release, monkeypatch, schema_upgrade):
     r = release
     starts = 0
+    if schema_upgrade:
+        with sqlite3.connect(r.guard.db) as db:
+            db.execute('DROP TABLE obsidian_pairing')
+            db.execute('DROP TABLE obsidian_devices')
+            db.execute('PRAGMA user_version=3')
 
     def run(args, **kwargs):
         nonlocal starts
@@ -107,6 +113,7 @@ def test_failed_start_restores_code_but_keeps_new_database_and_originals(release
         if args[:3] == ['systemctl', '--user', 'start']:
             starts += 1
             if starts == 1:
+                Store(r.guard.db, Limits()).close()
                 with sqlite3.connect(r.guard.db) as db:
                     db.execute("UPDATE notes SET transcript='saved after new startup'")
                 (r.original.parent / 'new.bin').write_bytes(b'new user media')
@@ -121,6 +128,9 @@ def test_failed_start_restores_code_but_keeps_new_database_and_originals(release
     assert json.loads((r.guard.app / 'release.json').read_text()) == r.old
     with sqlite3.connect(r.guard.db) as db:
         assert db.execute('SELECT transcript FROM notes').fetchone()[0] == 'saved after new startup'
+        if schema_upgrade:
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 3
+            assert db.execute("SELECT name FROM sqlite_master WHERE name='obsidian_devices'").fetchone()
     assert (r.original.parent / 'new.bin').read_bytes() == b'new user media'
     assert r.original.read_bytes() == b'original bytes'
     assert (r.guard.app / 'config.json').read_text() == 'private configuration'

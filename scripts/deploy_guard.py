@@ -61,6 +61,26 @@ def atomic(path, data):
             part.unlink(missing_ok=True)
 
 
+def restore_additive_schema_marker(database, backup):
+    """Version 4 only adds connector tables; allow v3 code to reopen the live DB.
+
+    Preserve all rows, including writes since startup. Never restore the backup DB.
+    Refuse to downgrade when any pre-existing schema object has changed.
+    """
+    with closing(sqlite3.connect(backup.as_uri() + '?mode=ro', uri=True)) as old, closing(
+            sqlite3.connect(database)) as current:
+        previous = old.execute('PRAGMA user_version').fetchone()[0]
+        version = current.execute('PRAGMA user_version').fetchone()[0]
+        if (previous, version) != (3, 4):
+            return
+        query = ("SELECT type,name,tbl_name,sql FROM sqlite_master "
+                 "WHERE tbl_name NOT IN ('obsidian_pairing','obsidian_devices') ORDER BY name")
+        if old.execute(query).fetchall() != current.execute(query).fetchall():
+            raise RuntimeError('rollback_schema_not_additive')
+        current.execute('PRAGMA user_version=3')
+        current.commit()
+
+
 
 class ReleaseGuard:
     def __init__(self, app, sha, service='voice-memory-bot.service'):
@@ -246,6 +266,7 @@ class ReleaseGuard:
                         archive.extractall(self.app, filter='data')
                     for name in set(new['files']) - set(old['files']):
                         (self.app / name).unlink(missing_ok=True)
+                    restore_additive_schema_marker(self.db, backup / 'archive.sqlite3')
                 run(['systemctl', '--user', 'start', self.service])
                 print('code_rolled_back_database_preserved' if changed else 'no_files_changed_service_resumed', flush=True)
                 raise

@@ -32,7 +32,7 @@
 
 ## Разработка и проверка
 
-Из корня Python-проекта установи `.[dev]` в `.venv`. В этой папке выполни `pnpm install --frozen-lockfile`, `pnpm check`, `pnpm test`, `pnpm build` (Node.js 24). Исходники не используют Node/Electron API во время работы плагина. Сборка лежит в `dist/`; эти четыре файла входят в серверный релиз и раздаются через HTTPS. `build.mjs test` создаёт только синтетические заметки и проверяет настоящий Python ZIP через TypeScript-импортёр.
+Из корня Python-проекта установи `.[dev]` в `.venv`. В этой папке выполни `pnpm install --frozen-lockfile`, `pnpm check`, `pnpm test`, `pnpm build` (Node.js 24). Исходники не используют Node/Electron API во время работы плагина. Сборка лежит в `dist/`; эти четыре файла входят в серверный релиз и раздаются через HTTPS. `build.mjs test` создаёт только синтетические заметки и проверяет настоящий Python ZIP и HTTP API через TypeScript-клиент и импортёр. Перед коммитом выполни `python scripts/check_obsidian_package.py` из корня. Собранные assets коммитятся вместе с исходниками; публикация по tag, совпадающему с `manifest.json`, выполняется workflow `obsidian-release.yml`.
 
 Объявленная совместимость с мобильным API и автоматические проверки не заменяют ручную проверку на физических Android/iPhone.
 

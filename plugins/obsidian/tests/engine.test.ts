@@ -2,30 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile, readdir } from 'node:fs/promises';
 import { zipSync, strToU8 } from 'fflate';
-import { checked, decode, Importer, Note, noteId, sha256, Source, State, utf8, validateRecord, VaultIO } from '../src/engine';
+import { checked, decode, Importer, Note, noteId, sha256, Source, State, utf8, validateRecord } from '../src/engine';
 import { loadZips } from '../src/zip';
+import { MemoryVault } from './vault';
 
-class MemoryVault implements VaultIO {
-  files = new Map<string, Uint8Array>();
-  race = false;
-  async exists(p: string) { return this.files.has(p); }
-  async readText(p: string) { return decode(this.files.get(p)!); }
-  async readBytes(p: string) { return this.files.get(p)!; }
-  async createText(p: string, t: string) { await this.createBytes(p, utf8.encode(t)); }
-  async createBytes(p: string, b: Uint8Array) { assert(!this.files.has(p), 'never overwrite'); this.files.set(p, new Uint8Array(b)); }
-  async replaceText(p: string, expected: string, text: string) {
-    if (this.race) { this.files.set(p, utf8.encode(expected + '\nEDIT WHILE DOWNLOADING')); this.race = false; }
-    if (await this.readText(p) !== expected) return false;
-    this.files.set(p, utf8.encode(text)); return true;
-  }
-  async findNotes(root: string) {
-    const result = new Map<string, string[]>();
-    for (const [path, bytes] of this.files) if (path.startsWith(root + '/') && path.endsWith('.md')) {
-      const id = noteId(decode(bytes)); if (id) result.set(id, [...result.get(id) ?? [], path]);
-    }
-    return result;
-  }
-}
 async function fixture() {
   const paths = (await readdir('.test/fixture/zip')).filter(p => p.endsWith('.zip')).sort();
   const inputs = await Promise.all(paths.map(async p => new Uint8Array(await readFile('.test/fixture/zip/' + p))));

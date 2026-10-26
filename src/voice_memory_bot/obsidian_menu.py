@@ -15,7 +15,8 @@ class ObsidianMenuMixin:
             text += ('\n\nУстанови плагин Voice Memory и введи код подключения. '
                      'Заметки загружаются при открытии Obsidian.\n'
                      'Адрес сервера: ' + self.config.obsidian_url + '\n'
-                     'Плагин: ' + self.config.obsidian_url + '/plugin/voice-memory.zip')
+                     'Установка на телефон: https://github.com/TonyBogomoloff/Voice-Memory-Bot/blob/main/plugins/obsidian/README.md\n'
+                     'Пакет плагина: ' + self.config.obsidian_url + '/plugin/voice-memory.zip')
             if code:
                 text += '\n\nКод на 10 минут, для одного устройства:\n' + code
             for device in ObsidianAccess(self.store).devices(owner):
