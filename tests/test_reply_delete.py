@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from support.base import make_bot, receive_voice
 from support.commands import bot as bot
 from support.commands import receive
 from support.menus import labels
@@ -116,4 +117,49 @@ def test_delete_old_confirmation_cannot_delete_after_new_prompt_or_restart(bot, 
         restarted = make_bot(tmp_path, bot.store)
         await restarted.callback(1, None, state['inline_prompt_id'], state['actions']['Удалить'])
         assert len(bot.store.notes(1)) == 1
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("previous_menu", ["present", "deleted", "absent"])
+@pytest.mark.parametrize("restart", [False, True])
+def test_cancel_latest_voice_keeps_folder_keyboard_and_placeholder(bot, tmp_path, previous_menu, restart):
+    async def run():
+        bot.telegram.message_sequence = 1000
+        folder = bot.store.current_folder(1)
+        bot.store.rename_folder(1, folder, "Голосовые")
+        if previous_menu != "absent":
+            await bot.show_home(1)
+            if previous_menu == "deleted":
+                old = bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")
+                await bot.remove_menu_message(1, old["message_id"])
+        await receive_voice(bot, 100, None)
+        note = bot.store.notes(1)[0]
+        bot.store.update_note(1, note["id"], state="ready", delivery="sent", transcript_delivery="sent")
+        original = bot.store.note(1, note["id"])
+        await receive(bot, "/delete", 200)
+        state = bot.bottom_state(1)
+        assert state["screen"] == f"notedelete:{note['id']}"
+        current = make_bot(tmp_path, bot.store) if restart else bot
+        current.telegram.message_sequence = bot.telegram.message_sequence
+        sent = []
+        send = current.telegram.text
+
+        async def capture(*args, **kwargs):
+            result = await send(*args, **kwargs)
+            sent.append((result["message_id"], args[3] if len(args) > 3 else kwargs.get("keyboard")))
+            return result
+
+        current.telegram.text = capture
+        await current.callback(1, None, state["inline_prompt_id"], state["actions"]["Отмена"])
+        carrier, markup = next((mid, keys) for mid, keys in reversed(sent) if keys and "keyboard" in keys)
+        removed = {p["message_id"] for m, p in current.telegram.sent if m == "deleteMessage"}
+        assert carrier not in removed
+        assert current.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"] == carrier
+        assert markup["is_persistent"] and not markup["one_time_keyboard"]
+        assert markup["input_field_placeholder"] == "📁 Голосовые"
+        assert "✅ Голосовые" in [b["text"] for row in markup["keyboard"] for b in row]
+        assert state["inline_prompt_id"] in removed
+        assert 100 not in removed
+        assert current.store.note(1, note["id"]) == original
+        assert current.store.current_folder(1) == folder
     asyncio.run(run())

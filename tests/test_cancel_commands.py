@@ -64,13 +64,19 @@ def test_cancel_removes_only_dialog_and_command_preserving_keyboard_and_record(b
             await receive(current, "Отмена", 500)
         removed = deleted(current)
         assert 400 in removed and 100 not in removed
-        assert original_menu["message_id"] not in removed
-        assert all(mid in removed for mid, _ in sent[before_cancel:])
-        assert not any(text.startswith("📁") for _, text in sent[before_cancel:])
+        current_menu = current.store.one("SELECT * FROM bottom_menus WHERE owner=1")
+        carrier = current_menu["message_id"]
+        assert carrier not in removed
+        if command == "/ai":
+            assert current_menu == original_menu
+        else:
+            assert carrier in {mid for mid, _ in sent[before_cancel:]}
+            assert original_menu["message_id"] in removed
+            assert current_menu["state"] == original_menu["state"]
+        assert all(mid in removed for mid, _ in sent[before_cancel:] if mid != carrier)
         assert current.store.note(1, note["id"]) == note
         assert current.store.folder(1, note["folder_id"]) == folder
         assert current.store.action(1) is None and current.ai_state.claim() is None
-        assert current.store.one("SELECT * FROM bottom_menus WHERE owner=1") == original_menu
         assert not current.store.all("SELECT * FROM reply_moves")
         if prompt:
             assert prompt in removed
@@ -104,8 +110,12 @@ def test_options_child_cancel_removes_original_options_command(bot, label, inlin
         else:
             await receive(bot, "Отмена", 500)
         assert 400 in deleted(bot)
-        assert all(mid in deleted(bot) for mid, _ in sent)
-        assert bot.store.one("SELECT * FROM bottom_menus WHERE owner=1") == original_menu
+        current_menu = bot.store.one("SELECT * FROM bottom_menus WHERE owner=1")
+        assert current_menu["state"] == original_menu["state"]
+        assert current_menu["message_id"] in {mid for mid, _ in sent}
+        assert current_menu["message_id"] not in deleted(bot)
+        assert original_menu["message_id"] in deleted(bot)
+        assert all(mid in deleted(bot) for mid, _ in sent if mid != current_menu["message_id"])
         assert bot.store.note(1, note["id"]) == note
         assert bot.store.action(1) is None and bot.ai_state.claim() is None
     asyncio.run(run())
@@ -159,6 +169,9 @@ def test_cancel_restores_folder_options_context(bot):
         await reply_command(bot, "/options")
         await receive(bot, "Отмена", 500)
         assert bot.options_folder(1) == folder
-        assert bot.store.one("SELECT * FROM bottom_menus WHERE owner=1") == menu
-        assert menu["message_id"] not in deleted(bot)
+        restored = bot.store.one("SELECT * FROM bottom_menus WHERE owner=1")
+        assert restored["state"] == menu["state"]
+        assert restored["message_id"] != menu["message_id"]
+        assert restored["message_id"] not in deleted(bot)
+        assert menu["message_id"] in deleted(bot)
     asyncio.run(run())

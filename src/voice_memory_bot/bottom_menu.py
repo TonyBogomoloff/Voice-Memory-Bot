@@ -93,16 +93,14 @@ class BottomMenuMixin:
         self.store.set_action(owner, None)
         if restored.screen.kind == "foldermenu":
             self.enter_folder_options(owner, restored.screen.argument)
-        # Restore the keyboard through a disposable message, retaining its original
-        # carrier so Telegram Web still has a keyboard after the dialog is removed.
+        # Keep the newly sent carrier: deleting it can clear both the keyboard
+        # and its placeholder even when an older menu message still exists.
         await self.send_bottom(owner, thread, restored,
-            raw_keys=self.folder_keyboard(owner) if restored.screen.kind == "root" else None,
-            restore_id=(previous or {}).get("message_id") or 0, display_text="Отменено.")
+            raw_keys=self.folder_keyboard(owner) if restored.screen.kind == "root" else None)
         self.remember_screen(owner, thread, restored.text, {"bottom_menu": True})
         await self.remove_menu_message(owner, command_id)
 
-    async def send_bottom(self, owner, thread, state, *, edit_id=None, raw_keys=None,
-                          restore_id=None, display_text=None):
+    async def send_bottom(self, owner, thread, state, *, edit_id=None, raw_keys=None):
         if not isinstance(state, MenuState):
             state = MenuState.from_mapping(state)
         if state.screen.kind == "ai_note":
@@ -185,22 +183,21 @@ class BottomMenuMixin:
                     self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
             else:
                 response = await self.view_send(self.telegram.text, owner,
-                    "Действия" if state.extra.get("mirror") else display_text or text, thread, keys)
+                    "Действия" if state.extra.get("mirror") else text, thread, keys)
         finally:
             silent_delivery.reset(token)
         with self.store.transaction():
             self.store.db.execute("UPDATE bottom_menus SET message_id=? WHERE owner=?",
                                   (response["message_id"], owner))
-        carrier_id = response["message_id"]
         # Retain the original menu for cancellation. Retire the previous dialog
         # carrier only after the replacement keyboard has been delivered.
         retained_id = (state.extra.get("return_menu") or {}).get("message_id")
-        if previous and previous["message_id"] not in {response["message_id"], retained_id, restore_id}:
+        if previous and previous["message_id"] not in {response["message_id"], retained_id}:
             await self.remove_menu_message(owner, previous["message_id"])
         if previous:
             old_state = MenuState.from_json(previous["state"])
             old_return_id = (old_state.extra.get("return_menu") or {}).get("message_id")
-            if old_return_id not in {retained_id, restore_id}:
+            if old_return_id != retained_id:
                 await self.remove_menu_message(owner, old_return_id)
             old_prompt = old_state.extra.get("inline_prompt_id")
             if old_prompt:
@@ -213,10 +210,6 @@ class BottomMenuMixin:
             state.extra["inline_prompt_id"] = response["message_id"]
             with self.store.transaction():
                 self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
-        if restore_id is not None:
-            with self.store.transaction():
-                self.store.db.execute("UPDATE bottom_menus SET message_id=? WHERE owner=?", (restore_id, owner))
-            await self.remove_menu_message(owner, carrier_id)
         return response
 
     async def bottom_input(self, owner, thread, text, message_id):
