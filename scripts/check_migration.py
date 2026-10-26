@@ -13,7 +13,7 @@ from voice_memory_bot.store import Store
 
 
 def rehearse(database):
-    with tempfile.TemporaryDirectory(prefix='voice-memory-migration-') as directory:
+    with tempfile.TemporaryDirectory(prefix='voice-memory-migration-', dir=database.resolve().parent) as directory:
         path = Path(directory) / 'archive.sqlite3'
         with closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True)) as live:
             with closing(sqlite3.connect(path)) as copy:

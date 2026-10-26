@@ -24,6 +24,7 @@ def digest(path):
 
 
 def safe_path(root, name):
+    root = Path(root).resolve()
     path = Path(name)
     protected = {'data', 'config.json', '.venv', '.git', '.deploy-candidates', '.deploy-backups',
                  '.deploy.lock', 'release.json', 'validation.json', '.env'}
@@ -106,6 +107,24 @@ class ReleaseGuard:
             }
 
 
+    def service_log(self, since, *, warnings=False):
+        private = self.app / '.logs/bot.log'
+        if private.exists():
+            threshold = datetime.fromisoformat(since).astimezone(UTC).strftime('%Y-%m-%d %H:%M:%S')
+            lines = []
+            for path in private.parent.glob('bot.log*'):
+                for line in path.read_text(errors='replace').splitlines():
+                    if line[:19] >= threshold and (not warnings or any(
+                            level in line for level in (' WARNING ', ' ERROR ', ' CRITICAL '))):
+                        lines.append(line)
+            return '\n'.join(sorted(lines))
+        args = ['journalctl', '--user', '-u', self.service, '--since', since,
+                '--no-pager', '--quiet', '-o', 'cat']
+        if warnings:
+            args += ['-p', 'warning']
+        return run(args, capture_output=True).stdout
+
+
     def deploy(self):
         with (self.app / '.deploy.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -174,7 +193,7 @@ class ReleaseGuard:
                 started_at = datetime.now(UTC).isoformat()
                 run(['systemctl', '--user', 'start', self.service])
                 for _ in range(60):
-                    output = run(['journalctl', '--user', '-u', self.service, '--since', started_at, '--no-pager', '--quiet', '-o', 'cat'], capture_output=True).stdout
+                    output = self.service_log(started_at)
                     if 'started bot_id=' in output and 'folder_mode=custom' in output:
                         break
                     time.sleep(.5)
@@ -190,7 +209,7 @@ class ReleaseGuard:
                 after = self.inventory()
                 if after['quick_check'] != 'ok' or after['foreign_keys'] or not set(before['note_ids']) <= set(after['note_ids']):
                     raise RuntimeError('archive_integrity_failed_after_startup')
-                log = run(['journalctl', '--user', '-u', self.service, '--since', started_at, '--no-pager', '--quiet', '-p', 'warning', '-o', 'cat'], capture_output=True).stdout
+                log = self.service_log(started_at, warnings=True)
                 if log.strip():
                     raise RuntimeError('new_warning_or_error_in_service_log')
                 receipt = {'commit': self.sha, 'previous_commit': old['commit'], 'installed_at': stamp,

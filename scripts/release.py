@@ -59,6 +59,9 @@ os.umask(0o077)
 os.chdir(candidate)
 os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 os.environ['PYTHONPATH'] = str(candidate / 'src')
+private_tmp = app / '.private-tmp'
+private_tmp.mkdir(exist_ok=True, mode=0o700)
+os.environ['TMPDIR'] = str(private_tmp)
 python = str(app / '.venv/bin/python')
 subprocess.run([python,'-m','pytest','-q','-p','no:cacheprovider'],check=True)
 subprocess.run([python,'-m','ruff','check','--no-cache','src','tests','scripts'],check=True)

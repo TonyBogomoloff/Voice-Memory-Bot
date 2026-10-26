@@ -5,8 +5,10 @@ import asyncio
 import fcntl
 import json
 import logging
+import logging.handlers
 import os
 import shutil
+import time
 from pathlib import Path
 
 from .bot import Bot
@@ -57,6 +59,21 @@ async def run(config):
             await groq.close()
 
 
+def configure_logging():
+    log_path = os.environ.get("VOICE_MEMORY_LOG_PATH")
+    handlers = None
+    if log_path:
+        path = Path(log_path)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        handlers = [logging.handlers.RotatingFileHandler(path, maxBytes=5_000_000,
+                                                        backupCount=4, encoding="utf-8")]
+    logging.Formatter.converter = time.gmtime
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s",
+                        handlers=handlers)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Voice Memory Bot")
     parser.add_argument("command", choices=["run", "check", "diagnose"])
@@ -68,10 +85,7 @@ def main():
     if args.command == "diagnose" and args.database is None:
         parser.error("diagnose требует --database")
     os.umask(0o077)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    # httpx INFO logs request URLs, including the Telegram bot token.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    configure_logging()
     try:
         if args.command == "diagnose":
             result = inspect_database(args.database)

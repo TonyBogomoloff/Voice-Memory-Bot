@@ -41,7 +41,7 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.updates = UpdateQueue(self)
         try:
-            for pragma in ("journal_mode=WAL", "foreign_keys=ON", "secure_delete=ON", "busy_timeout=5000"):
+            for pragma in ("journal_mode=WAL", "foreign_keys=ON", "secure_delete=ON", "busy_timeout=5000", "temp_store=MEMORY"):
                 self.db.execute("PRAGMA " + pragma)
             migrate(self)
         except BaseException:
