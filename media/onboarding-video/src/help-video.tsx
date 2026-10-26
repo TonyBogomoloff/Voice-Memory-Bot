@@ -1,12 +1,16 @@
 import React, {CSSProperties, ReactNode} from 'react';
 import {AbsoluteFill, Img, staticFile, useCurrentFrame} from 'remotion';
 import {loadFont} from '@remotion/fonts';
-import {Bubble, FolderKeys, Icon, Phone, PhotoBubble, Reply, Tap, UI, Waveform, ramp} from './phone';
+import {Bubble, FolderKeys as SharedFolderKeys, Icon, Phone as SharedPhone, PhotoBubble, Reply, Tap, UI, Waveform, ramp} from './phone';
 
 loadFont({family: 'Plex', url: staticFile('fonts/IBMPlexSans-Regular.ttf'), weight: '400'});
 loadFont({family: 'Plex', url: staticFile('fonts/IBMPlexSans-SemiBold.ttf'), weight: '600'});
 loadFont({family: 'Plex', url: staticFile('fonts/IBMPlexSans-Bold.ttf'), weight: '700'});
 const C = {blue: '#77baff', mint: '#75e4c6', violet: '#c1adff', gold: '#f1cf8c'};
+// Help examples keep their own fictional folders when the main promo changes.
+const FolderKeys: React.FC<{active: string}> = ({active}) => <SharedFolderKeys active={active} folders={[["Поездка", "Идеи"], ["Работа", "Личное"]]}/>;
+const Phone: React.FC<React.ComponentProps<typeof SharedPhone>> = ({active = 'Поездка', keyboard, ...props}) => <SharedPhone {...props} active={active} keyboard={keyboard ?? <FolderKeys active={active}/>}/>;
+
 export const HELP_DEMOS = {
   save: {label: 'СОХРАНИТЬ ЗАПИСЬ', title: ['Скажи мысль.', 'Сохрани текст.'], color: C.blue, icon: 'mic', steps: ['Выбери папку', 'Отправь голосовое', 'Читай расшифровку'], times: [0, 45, 125], note: 'Оригинал тоже останется в архиве.'},
   folders: {label: 'ПАПКИ И ПОРЯДОК', title: ['Новая тема?', 'Создай папку.'], color: C.mint, icon: 'folder', steps: ['Нажми «＋»', 'Напиши название', 'Отправляй записи сюда'], times: [0, 70, 170], note: 'Галочка показывает выбранную папку.'},

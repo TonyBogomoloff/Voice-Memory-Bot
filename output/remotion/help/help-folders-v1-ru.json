@@ -39,5 +39,6 @@
     "src/phone.tsx": "1724ce6d1a0b4ccbc8f023f72d1a43c5414ef0f06c599e185a351f3f9861c953",
     "src/timing.ts": "01bd3d2e1af5d33a5bea220bc6d896a78634b766e680eb5407d6668089a003f9",
     "src/video.tsx": "4f569b9b0ecef147e3fcc4d90befae8995ea28a59b7419678855193c2f039da8"
-  }
+  },
+  "render_source_commit": "f3fb220bcb9b13f9771d7e9fe64f4187d995f640"
 }
