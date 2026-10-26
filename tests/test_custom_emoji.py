@@ -29,14 +29,14 @@ def test_utf16_entities_preserve_existing_formatting_and_original_text():
 
 
 def test_reply_label_collisions_and_commands_keep_distinct_routes():
-    original = {'keyboard': [[{'text': '📁 Меню'}, {'text': '☰ Меню'}, {'text': '📁 /delete'},
+    original = {'keyboard': [[{'text': '📁 Настройки'}, {'text': '🎛️ Настройки'}, {'text': '📁 /delete'},
                              {'text': '✅ Работа'}, {'text': '＋'}]]}
     result, aliases = themed_markup(original)
-    assert aliases == {'Меню': '📁 Меню', 'Меню · 2': '☰ Меню', 'Папка · /delete': '📁 /delete',
+    assert aliases == {'Настройки': '📁 Настройки', 'Настройки · 2': '🎛️ Настройки', 'Папка · /delete': '📁 /delete',
                        'Работа': '✅ Работа', 'Создать': '＋'}
     assert result['keyboard'][0][3]['icon_custom_emoji_id'] == IDS['folder_active']
     assert all(b.get('icon_custom_emoji_id') for b in result['keyboard'][0])
-    assert original['keyboard'][0][0]['text'] == '📁 Меню'
+    assert original['keyboard'][0][0]['text'] == '📁 Настройки'
     again, _ = themed_markup(result)
     assert again == result
 
@@ -115,7 +115,7 @@ def test_real_transport_keyboard_taps_survive_restart_and_never_become_notes(bot
         assert bot.store.current_folder(1) == work['id']
         await receive(bot, 'Работа', 102)
         assert bot.store.notes(1) == []
-        await receive(bot, 'Меню', 103)
+        await receive(bot, 'Настройки', 103)
         assert bot.bottom_state(1)['screen'] == 'home'
         # A delayed tap from the old keyboard must not become a note in the current folder.
         await receive(bot, 'Работа', 104)
@@ -155,7 +155,7 @@ def test_document_caption_uses_entities_without_changing_export_bytes(tmp_path):
 def test_icon_only_navigation_keeps_distinct_routes():
     from voice_memory_bot.custom_emoji import IDS, themed_markup
     markup, aliases = themed_markup({'keyboard': [[{'text': '⬅️ Назад'}, {'text': 'Страница ▶️'}],
-                                                  [{'text': '📁 Папка'}, {'text': '☰ Меню'}]]})
+                                                  [{'text': '📁 Папка'}, {'text': '🎛️ Настройки'}]]})
     left, right = markup['keyboard'][0]
     assert left['text'].strip() and right['text'].strip()
     assert left['text'] != right['text']
@@ -164,9 +164,11 @@ def test_icon_only_navigation_keeps_distinct_routes():
     assert aliases[right['text']] == 'Страница ▶️'
     settings, menu = markup['keyboard'][1]
     assert settings['text'] == 'Папка'
-    assert settings['icon_custom_emoji_id'] == IDS['settings']
+    assert settings['icon_custom_emoji_id'] == IDS['folder_settings']
     assert aliases['Папка'] == '📁 Папка'
-    assert menu['icon_custom_emoji_id'] == IDS['menu_list']
+    assert menu['text'] == 'Настройки'
+    assert menu['icon_custom_emoji_id'] == IDS['settings']
+    assert aliases['Настройки'] == '🎛️ Настройки'
 
 
 @pytest.mark.parametrize('enabled', [False, True])

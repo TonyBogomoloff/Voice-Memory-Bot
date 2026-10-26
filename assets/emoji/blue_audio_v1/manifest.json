@@ -219,6 +219,11 @@
       "name": "toggle_off",
       "emoji": "🔘",
       "label": "Кнопки выкл"
+    },
+    {
+      "name": "folder_settings",
+      "emoji": "📁",
+      "label": "Опции папки"
     }
   ]
 }

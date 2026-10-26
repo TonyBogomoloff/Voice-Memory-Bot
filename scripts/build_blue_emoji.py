@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import math
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -34,6 +35,18 @@ def icon(body):
     return ('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24">'
             f'<g fill="none" stroke="{BLUE}" stroke-width="1.85" stroke-linecap="round" '
             f'stroke-linejoin="round">{body}</g></svg>')
+
+
+def folder_settings_icon():
+    # Leave the lower-right corner open for a legible eight-tooth gear.
+    outline = path('M10 20 H5 Q3 20 3 18 V5 Q3 3.5 4.5 3.5 H9 L11 6 H18.5 Q20 6 20 8 V10 M3 8 H17')
+    points = []
+    for tooth in range(8):
+        for offset, radius in ((-22.5, 4), (-12, 5.3), (12, 5.3), (22.5, 4)):
+            angle = math.radians(tooth * 45 + offset)
+            points.append(f'{17 + radius * math.cos(angle):.3f} {17 + radius * math.sin(angle):.3f}')
+    gear = 'M' + ' L'.join(points) + ' Z M19 17 A2 2 0 1 0 15 17 A2 2 0 1 0 19 17 Z'
+    return outline + path(gear, fill=LIGHT, stroke='none', **{'fill-rule': 'evenodd'})
 
 
 folder = path('M3 7 V5 Q3 3.5 4.5 3.5 H9 L11 6 H19.5 Q21 6 21 8 V18 Q21 20 19 20 H5 Q3 20 3 18 Z')
@@ -83,6 +96,7 @@ icons = [
     ('record', '🔴', 'Запись', circle(12,12,9)+circle(12,12,5,fill=LIGHT,stroke='none')),
     ('menu_list', '🎛️', 'Меню · список', circle(4,5,1.5,fill=LIGHT,stroke='none')+circle(4,12,1.5,fill=LIGHT,stroke='none')+circle(4,19,1.5,fill=LIGHT,stroke='none')+path('M9 5 H21 M9 12 H18 M9 19 H21',stroke=BLUE)),
     ('toggle_off', '🔘', 'Кнопки выкл', rect(2,6,20,12,6)+circle(9,12,3.5,fill=LIGHT,stroke='none')),
+    ('folder_settings', '📁', 'Опции папки', folder_settings_icon()),
 ]
 
 
@@ -140,10 +154,10 @@ def main():
     title_font=ImageFont.truetype(font_path,34)
     label_font=ImageFont.truetype(font_path,15)
     small_font=ImageFont.truetype(font_path,16)
-    sheet=Image.new('RGB',(1120,860),'#10151E')
+    sheet=Image.new('RGB',(1120, 120 + ((len(icons) + 7) // 8) * 140),'#10151E')
     draw=ImageDraw.Draw(sheet)
     draw.text((36,24),'AUDIO NOTES / BLUE TAPE',font=title_font,fill='#E6EDF7')
-    draw.text((38,72),'40 минималистичных ретро-аудио эмодзи · ярко-синий · прозрачный фон',font=small_font,fill='#92A4BC')
+    draw.text((38,72),f'{len(icons)} минималистичных ретро-аудио эмодзи · ярко-синий · прозрачный фон',font=small_font,fill='#92A4BC')
     for i,(name,emoji,label,_) in enumerate(icons):
         x=35+(i%8)*134
         y=120+(i//8)*140

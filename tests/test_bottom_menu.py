@@ -21,7 +21,7 @@ def test_keyboard_carrier_stays_until_next_keyboard_is_delivered(bot):
         assert not any(m == "deleteMessage" and p["message_id"] == first for m, p in bot.telegram.sent)
         assert "\n" not in last_message(bot)["text"]
         bot.telegram.sent.clear()
-        await receive(bot, "☰ Меню", 1002)
+        await receive(bot, "🎛️ Настройки", 1002)
         current = bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"]
         assert current != first
         sent = next(i for i, (m, _) in enumerate(bot.telegram.sent) if m == "sendMessage")
@@ -37,7 +37,7 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
         folder = bot.store.current_folder(1)
         await receive(bot, "/start", 1000)
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
-        await receive(bot, "☰ Меню", 1001)
+        await receive(bot, "🎛️ Настройки", 1001)
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
         assert [[b["text"] for b in row] for row in reply_keyboard(bot)["keyboard"]] == [
             ["Отправлять кнопки действий"], [BACK, "ℹ️ Помощь"]]
@@ -56,7 +56,7 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
         await receive(bot, BACK, 1009)
         assert bot.store.action(1) is None and bot.bottom_state(1)["screen"] == "aisettings"
         await receive(bot, ROOT, 1010)
-        assert "☰ Меню" in labels(bot) and bot.store.current_folder(1) == folder
+        assert "🎛️ Настройки" in labels(bot) and bot.store.current_folder(1) == folder
         assert bot.store.notes(1) == [] and bot.store.all("SELECT * FROM ai_requests") == []
         # Every navigation send uses a reply keyboard, no buttons attached to chat messages.
         assert all("inline_keyboard" not in (p.get("keyboard") or {})
@@ -92,7 +92,7 @@ def test_all_folders_are_reachable_and_stale_labels_never_archive(bot):
         assert "устарела" in last_message(bot)["text"]
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 " + bot.store.folder(1, selected)["name"]
         await receive(bot, ROOT, 1006)
-        await receive(bot, "☰ Меню", 1007)
+        await receive(bot, "🎛️ Настройки", 1007)
         await receive(bot, "📁 Папка", 1008)
         await receive(bot, "✏️ Переименовать", 1009)
         await receive(bot, BACK, 1010)
@@ -260,7 +260,7 @@ def test_home_add_folder_and_options_back(bot):
 
 def test_minimal_menu_toggle_help_and_back(bot):
     async def run():
-        await receive(bot, "☰ Меню", 3000)
+        await receive(bot, "🎛️ Настройки", 3000)
         assert not bot.store.message_buttons_enabled(1)
         await receive(bot, "Отправлять кнопки действий", 3001)
         assert bot.store.message_buttons_enabled(1)

@@ -9,7 +9,7 @@ MENU_COMMANDS = {
     "📁 Папки": "/folders", "📝 Записи": "/notes",
     "＋": "/new", "＋ Новая папка": "/new", "🔎 Поиск": "/search",
     "🤖 ИИ": "/ai", "⚙️ Настройки": "/settings",
-    "📂 Все папки": "/folders", "☰ Меню": "/menu",
+    "📂 Все папки": "/folders", "☰ Меню": "/menu", "🎛️ Настройки": "/menu",
     "⌂ Меню": "/menu", "✖️ Отмена": "/cancel",
     "⚙️ Options": "/options", "📁 Папка": "/options",
 }
@@ -107,7 +107,7 @@ class FolderMenuMixin:
                 rows[1].insert(0, {"text": "⬅️"})
             if page < len(pages) - 1:
                 rows[1].append({"text": "➡️"})
-        return {"keyboard": rows + [[{"text": "＋"}, {"text": "📁 Папка"}, {"text": "☰ Меню"}]],
+        return {"keyboard": rows + [[{"text": "＋"}, {"text": "📁 Папка"}, {"text": "🎛️ Настройки"}]],
                 "resize_keyboard": True, "is_persistent": True, "one_time_keyboard": False,
                 "input_field_placeholder": self.folder_input_placeholder(owner)}
 
@@ -228,7 +228,7 @@ class FolderMenuMixin:
         rows = [[button("Скрывать кнопки действий" if enabled else "Отправлять кнопки действий",
                         f"menumessagebuttons:{0 if enabled else 1}")],
                 [button("ℹ️ Помощь", "help")]]
-        await self.show_bottom(owner, notice or ("🎛️ Меню" + (f" · {folder['name']}" if folder else "")), thread, keyboard(*rows),
+        await self.show_bottom(owner, notice or ("⚙️ Настройки" + (f" · {folder['name']}" if folder else "")), thread, keyboard(*rows),
                                screen="home", back="root", edit_id=edit_id)
 
     async def folder_menu_callback(self, owner, thread, message_id, data):

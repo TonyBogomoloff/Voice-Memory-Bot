@@ -61,6 +61,8 @@ def utf16(text):
 def semantic_icon(item):
     text = item['text'].strip()
     if text == '📁 Папка':
+        return 'folder_settings'
+    if text in {'☰ Меню', '🎛️ Настройки'}:
         return 'settings'
     match = PATTERN.match(text)
     marker = GLYPHS[match.group().replace('\ufe0f', '')] if match else None
@@ -103,6 +105,8 @@ def button_label(text, name):
         return ARROW_LABELS[name]
     if text == '📁 Папка':
         return 'Папка'
+    if text == '☰ Меню':
+        return 'Настройки'
     # Only the UI's leading marker is removed. A user's emoji in a title is kept.
     match = PATTERN.match(text)
     if match:
