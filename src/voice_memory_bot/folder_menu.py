@@ -72,7 +72,7 @@ class FolderMenuMixin:
             return {"inline_keyboard": []}
         rows = [[
             {"text": "Переместить", "callback_data": f"pick:{note['id']}:0"},
-            {"text": "Удалить", "callback_data": f"delete:{note['id']}"},
+            {"text": "Удалить", "callback_data": f"delete:{note['id']}", "style": "danger"},
             {"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]
         answer = self.ai_state.result_request(note["owner"], note["id"])
         if answer:
@@ -249,9 +249,10 @@ class FolderMenuMixin:
             await self.show_bottom(owner, f"Удалить папку «{folder['name']}»?\n"
                             f"Все записи ({count}) и история ИИ останутся в архиве без папки.\n"
                             "Исходные файлы сохранятся; записи доступны через поиск и экспорт.", thread,
-                            keyboard([button("🗑 Да, удалить папку", f"confirmdrop:{token}")]),
+                            keyboard([button("Удалить", f"confirmdrop:{token}"),
+                                      button("Отмена", f"canceldrop:{token}")]),
                             screen=f"dropfolder:{identity}", back=f"foldermenu:{identity}",
-                            keep=True, edit_id=message_id)
+                            keep=True, edit_id=message_id, mirror=True)
         elif action in {"confirmdrop", "canceldrop"}:
             confirmation = self.folder_delete_confirmations.get(owner)
             if not confirmation or confirmation[0] != identity or confirmation[3] < time.monotonic():

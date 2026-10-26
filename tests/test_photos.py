@@ -24,7 +24,7 @@ def test_photo_controls_archive_and_move_delete_source_messages(tmp_path, store,
         assert photo["photo"] == "photo-original" and photo["caption"] == (caption or None)
         assert photo["reply_markup"]["inline_keyboard"] == [[{
             "text": "Переместить", "callback_data": f"pick:{note['id']}:0"},
-            {"text": "Удалить", "callback_data": f"delete:{note['id']}"},
+            {"text": "Удалить", "callback_data": f"delete:{note['id']}", "style": "danger"},
             {"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]
         assert bot.telegram.sent[1] == ("deleteMessage", {"chat_id": 1, "message_id": 10})
         note = store.note(1, note["id"])

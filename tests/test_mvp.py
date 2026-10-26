@@ -305,7 +305,7 @@ def test_voice_options_move_changes_archive_and_removes_source(tmp_path, store):
         keys = bot.telegram.sent[-1][1]["reply_markup"]["inline_keyboard"]
         assert keys == [
             [{"text": "Переместить", "callback_data": f"pick:{note['id']}:0"},
-            {"text": "Удалить", "callback_data": f"delete:{note['id']}"},
+            {"text": "Удалить", "callback_data": f"delete:{note['id']}", "style": "danger"},
             {"text": "ИИ", "callback_data": f"aiask:{note['id']}"}]]
         await bot.callback(1, 100, message_id, next(b["callback_data"] for row in keys for b in row
                                                      if b["callback_data"].startswith("pick:")))

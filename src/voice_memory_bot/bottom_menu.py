@@ -62,7 +62,7 @@ class BottomMenuMixin:
         rows = (keys or {}).get("inline_keyboard", [])
         # Navigation is always in the same last row, independent of the screen.
         rows = [[b for b in row if b.get("callback_data") != "home"
-                 and not b["text"].startswith("← ") and (screen.split(":")[0] in {"replymove", "notedelete"}
+                 and not b["text"].startswith("← ") and (screen.split(":")[0] in {"replymove", "notedelete", "dropfolder"}
                  or b["text"] not in {"Отмена", "✖️ Отмена"})]
                 for row in rows]
         rows = [row for row in rows if row]
@@ -121,7 +121,7 @@ class BottomMenuMixin:
             actions["Отмена"] = "cancel_record_options"
         elif state.screen.kind == "foldermenu":
             keyboard[-1].insert(0, {"text": BACK})
-        elif state.screen.kind not in {"root", "replymove", "notedelete"}:
+        elif state.screen.kind not in {"root", "replymove", "notedelete", "dropfolder"}:
             keyboard.append([{"text": BACK}, {"text": ROOT}])
         keys = raw_keys or {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True,
                             "input_field_placeholder": self.folder_input_placeholder(owner)}
@@ -151,7 +151,8 @@ class BottomMenuMixin:
                 reset_id = reset["message_id"]
             text = state.text if state.keep else state.text.split("\n", 1)[0]
             response = await self.view_send(self.telegram.text, owner,
-                ("Удаление записи" if state.screen.kind == "notedelete" else "Перенос записи")
+                ({"notedelete": "Удаление записи", "dropfolder": "Удаление папки"}.get(
+                    state.screen.kind, "Перенос записи"))
                 if state.extra.get("mirror") else text, thread, keys)
             self.bottom_placeholders[owner] = placeholder
         finally:

@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 
 def button(text, data):
     return {"text": text, "callback_data": data, **(
-        {"style": "danger"} if data == "deleteall" or data.startswith("confirmdeleteall:") else {})}
+        {"style": "danger"} if data == "deleteall" or data.startswith(("confirmdeleteall:", "delete:", "confirmdelete:", "notedel:", "dropfolder:", "confirmdrop:")) else {})}
 
 
 def keyboard(*rows):

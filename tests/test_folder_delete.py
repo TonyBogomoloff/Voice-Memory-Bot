@@ -45,6 +45,14 @@ def test_delete_folder_confirmation_is_owner_scoped_cancelable_expiring_and_bloc
         other = store.create_folder(2, "Личное")
         await bot.callback(1, None, 500, f"dropfolder:{folder['id']}")
         token = bot.folder_delete_confirmations[1][0]
+        from support.menus import reply_keyboard
+        assert reply_keyboard(bot)['keyboard'] == [[
+            {'text': 'Удалить', 'style': 'danger'}, {'text': 'Отмена'}]]
+        prompt = bot.telegram.sent[-1][1]
+        assert 'останутся в архиве без папки' in prompt['text']
+        assert prompt['keyboard']['inline_keyboard'] == [[
+            {'text': 'Удалить', 'callback_data': f'confirmdrop:{token}', 'style': 'danger'},
+            {'text': 'Отмена', 'callback_data': f'canceldrop:{token}'}]]
         assert store.folder(1, folder["id"])
         with pytest.raises(ValueError, match="устарело"):
             await bot.callback(2, None, 500, f"confirmdrop:{token}")

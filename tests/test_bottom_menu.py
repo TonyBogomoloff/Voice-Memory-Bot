@@ -119,7 +119,7 @@ def test_confirmations_cancel_expire_and_do_not_delete_after_restart(bot):
     async def run():
         folder = bot.store.current_folder(1)
         await bot.callback(1, None, None, f"dropfolder:{folder}")
-        assert "🗑 Да, удалить папку" in labels(bot)
+        assert "Удалить" in labels(bot)
         await receive(bot, BACK, 1001)
         await receive(bot, "🗑 Да, удалить папку", 1002)
         assert bot.store.folder(1, folder)["removed"] == 0
