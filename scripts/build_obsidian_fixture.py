@@ -1,0 +1,31 @@
+"""Build a synthetic, deterministic ZIP fixture; never open production data."""
+import hashlib
+import sys
+from pathlib import Path
+
+from voice_memory_bot.exports import ExportSnapshot
+from voice_memory_bot.obsidian_export import build
+from voice_memory_bot.originals import Originals
+
+
+def main():
+    output = Path(sys.argv[1])
+    originals = Originals(output / 'originals')
+    folder = {'id': 'fedcba9876543210', 'owner': 1, 'name': 'Тестовый проект'}
+    media = b'synthetic-original-audio' * 150
+    voice = {'id': '0123456789abcdef', 'owner': 1, 'folder_id': folder['id'],
+             'title': 'Голосовая идея', 'created_at': 1793016000, 'kind': 'voice', 'extension': 'ogg',
+             'file_id': 'SYNTHETIC_SECRET_NOT_FOR_EXPORT', 'audio_bytes': len(media),
+             'sha256': hashlib.sha256(media).hexdigest(), 'transcript': '  Исходная расшифровка\nбез потерь.  ',
+             'content': 'Исправленная **идея**', 'revision': 2}
+    text = {**voice, 'id': 'aaaaaaaaaaaaaaaa', 'title': 'Текст', 'kind': 'text', 'extension': 'txt',
+            'file_id': None, 'audio_bytes': 0, 'sha256': None, 'content': None,
+            'transcript': '[[Ссылка]]\n- [ ] Задача'}
+    path = originals.audio(voice)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(media)
+    build(ExportSnapshot.capture([voice, text], [folder]), originals, output / 'zip', True, 5200)
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,10 @@
+{
+  "id": "voice-memory",
+  "name": "Voice Memory",
+  "version": "0.1.0",
+  "minAppVersion": "1.11.4",
+  "description": "Receive Telegram notes and original attachments from Voice Memory without overwriting local edits.",
+  "author": "TonyBogomoloff",
+  "authorUrl": "https://github.com/TonyBogomoloff",
+  "isDesktopOnly": false
+}
