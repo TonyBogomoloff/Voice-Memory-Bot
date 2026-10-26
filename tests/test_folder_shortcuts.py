@@ -185,7 +185,7 @@ def test_pages_reach_every_folder_and_arrows_never_become_notes(bot):
     asyncio.run(run())
 
 
-def test_folder_page_turns_remove_only_temporary_keyboard_messages(bot):
+def test_folder_page_turns_replace_short_carrier_and_preserve_keyboard(bot):
     async def run():
         bot.telegram.message_sequence = 1000
         for name in ("1", "2", "3", "4", "5", "6"):
@@ -209,9 +209,12 @@ def test_folder_page_turns_remove_only_temporary_keyboard_messages(bot):
             sent.clear()
             await receive(bot, command, 400)
             removed = {p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"}
-            assert sent and set(sent) <= removed
-            assert original not in removed and 100 not in removed and 400 in removed
-            assert bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"] == original
+            carrier = bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"]
+            assert [mid for mid in sent if mid not in removed] == [carrier]
+            assert original in removed and 100 not in removed and 400 in removed
+            message = next(p for m, p in reversed(bot.telegram.sent) if m == "sendMessage")
+            assert message["text"] == f"Папки · {page + 1}/2"
+            original = carrier
             assert bot.folder_pages[1] == page
             assert bot.store.current_folder(1) == folder and bot.store.notes(1) == notes
         target = next(f for f in bot.store.folders(1) if "📁 " + f["name"] in labels(bot))

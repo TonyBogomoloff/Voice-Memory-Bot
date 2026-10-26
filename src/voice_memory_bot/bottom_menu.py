@@ -156,9 +156,6 @@ class BottomMenuMixin:
                             "input_field_placeholder": self.folder_input_placeholder(owner)}
         state.actions = actions
         previous = self.store.one("SELECT message_id,state FROM bottom_menus WHERE owner=?", (owner,))
-        if state.extra.get("mirror") and restore_id is None:
-            restore_id = ((state.extra.get("return_menu") or {}).get("message_id")
-                          or (previous or {}).get("message_id") or 0)
         # Persist before send: a lost Telegram response must not turn the displayed controls into notes.
         with self.store.transaction():
             self.store.db.execute("INSERT INTO bottom_menus(owner,state) VALUES (?,?) ON CONFLICT(owner) "
@@ -182,10 +179,10 @@ class BottomMenuMixin:
                                              {"remove_keyboard": True})
                 reset_id = reset["message_id"]
             text = state.text if state.keep else state.text.split("\n", 1)[0]
-            # Telegram needs a separate send to update the reply keyboard. Mirrored
-            # dialogs remove this silent carrier after the inline prompt is delivered.
+            # Keep a short carrier: deleting it also removes the reply keyboard
+            # in Telegram clients. The next menu replaces it.
             response = await self.view_send(self.telegram.text, owner,
-                "…" if state.extra.get("mirror") else display_text or text, thread, keys)
+                "Действия" if state.extra.get("mirror") else display_text or text, thread, keys)
             self.bottom_placeholders[owner] = placeholder
         finally:
             try:
@@ -196,8 +193,8 @@ class BottomMenuMixin:
             self.store.db.execute("UPDATE bottom_menus SET message_id=? WHERE owner=?",
                                   (response["message_id"], owner))
         carrier_id = response["message_id"]
-        # Retain the original menu carrier for cancellation and clients that need
-        # a keyboard-bearing message in history. Only the new dialog carrier is temporary.
+        # Retain the original menu for cancellation. Retire the previous dialog
+        # carrier only after the replacement keyboard has been delivered.
         retained_id = (state.extra.get("return_menu") or {}).get("message_id")
         if previous and previous["message_id"] not in {response["message_id"], retained_id, restore_id}:
             await self.remove_menu_message(owner, previous["message_id"])
