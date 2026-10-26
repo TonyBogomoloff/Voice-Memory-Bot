@@ -20,6 +20,7 @@ from .delivery import DeliveryService
 from .folder_menu import MENU_COMMANDS, OPTION_ACTIONS, FolderMenuMixin
 from .folder_naming import FolderNamingMixin
 from .folder_view import FolderViewMixin
+from .help_menu import help_page
 from .media import MediaProcessor
 from .message_store import MessageStore
 from .note_service import NoteService
@@ -62,33 +63,6 @@ HOME = keyboard([button("📂 Все папки", "folders"), button("＋ Нов
                 [button("⚙️ Настройки", "settings:all"), button("ℹ️ Помощь", "help")],
                 [button("🗑 Удалить всё", "deleteall")])
 
-HELP = """🎙 Voice Memory Bot
-
-/ai — изменить запись с ИИ.
-/move — перенести запись в другую папку.
-/delete — удалить запись из базы и чата после подтверждения.
-Без ответа на сообщение команды выбирают последнюю твою запись в открытой папке.
-
-Выбери папку внизу — новые голосовые, тексты и фото сохраняются туда.
-Активная папка отмечена ✅. Стрелки листают страницы папок.
-«＋» создаёт папку: напиши название или пришли голосовое.
-«📁 Папка» — переименовать, удалить или экспортировать выбранную папку.
-«Назад» из меню папки возвращает на главную.
-При удалении папки записи остаются в архиве; бот сначала попросит подтверждение.
-
-В «⚙️ Настройки» можно включить кнопки под сообщениями, открыть помощь.
-Кнопки «Переместить», «Удалить», «ИИ» по умолчанию выключены.
-Архив и расшифровка работают и без кнопок. Голосовые и видеокружки расшифровываются в текст.
-
-Команда /ai открывает папку для диалога. Отправь текст или голосовое.
-ИИ умеет искать, создавать, менять и переносить заметки, а также удалять их с подтверждением.
-
-/start — главная
-/restart — открыть главную заново
-/help — помощь
-/ai — поговорить с ИИ"""
-
-
 class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
     def __init__(self, config: Config, store: Store, telegram: Telegram, groq: Groq, router: CodexRouter,
                  assistant=None):
@@ -127,6 +101,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             {"command": "delete", "description": "Удалить"},
             {"command": "options", "description": "Опции"},
             {"command": "restart", "description": "Перезапустить меню"},
+            {"command": "help", "description": "Помощь по функциям"},
         ])
         # Finish physical deletion interrupted by a previous shutdown.
         for note in self.store.all("SELECT * FROM notes WHERE deleted=1"):
@@ -454,6 +429,11 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         log.info("source topic resolved note_id=%s source_thread=%s", note["id"], thread)
         return note
 
+    async def show_help(self, owner, thread=None, topic=None, *, edit_id=None):
+        text, rows, screen, back = help_page(topic)
+        return await self.show_bottom(owner, text, thread, keyboard(*rows),
+                                      screen=screen, back=back, keep=True, edit_id=edit_id)
+
     async def command(self, owner, thread, command, argument):
         if command == "/restart":
             command = "/start"
@@ -474,7 +454,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         if command == "/options":
             return await self.show_folder_options(owner, thread)
         if command in {"/help", "/privacy"}:
-            return await self.show_bottom(owner, HELP, thread, screen="help", back="home", keep=True)
+            return await self.show_help(owner, thread)
         if command == "/cancel":
             self.delete_confirmations.pop(owner, None)
             return await self.show_home(owner, thread)
@@ -687,8 +667,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             # Retired keyboards lead to custom folders, never reconnect Telegram topics.
             return await self.show_folders(owner, thread)
         if action == "help":
-            return await self.show_bottom(owner, HELP, thread, screen="help", back="home", keep=True,
-                                          edit_id=message_id)
+            return await self.show_help(owner, thread, identity, edit_id=message_id)
         if action in {"create", "search"}:
             return await self.command(owner, thread, "/new" if action == "create" else "/search", "")
         if action == "folders":

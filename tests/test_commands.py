@@ -22,7 +22,7 @@ def test_commands_do_not_import_unknown_threads_as_folders(bot, command, extra_f
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("command", ["/start", "/restart", "/menu", "/folders"])
+@pytest.mark.parametrize("command", ["/start", "/restart", "/menu", "/folders", "/help"])
 def test_navigation_commands_cancel_pending_folder_input(bot, command):
 
     async def run():
@@ -63,6 +63,7 @@ def test_start_registers_menu_commands(bot):
             {"command": "delete", "description": "Удалить"},
             {"command": "options", "description": "Опции"},
             {"command": "restart", "description": "Перезапустить меню"},
+            {"command": "help", "description": "Помощь по функциям"},
         ]
     asyncio.run(run())
 
