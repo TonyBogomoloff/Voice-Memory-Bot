@@ -213,7 +213,7 @@ def test_folder_page_turns_replace_short_carrier_and_preserve_keyboard(bot):
             assert [mid for mid in sent if mid not in removed] == [carrier]
             assert original in removed and 100 not in removed and 400 in removed
             message = next(p for m, p in reversed(bot.telegram.sent) if m == "sendMessage")
-            assert message["text"] == f"Папки · {page + 1}/2"
+            assert message["text"] == "📁 " + bot.store.folder(1, folder)["name"]
             original = carrier
             assert bot.folder_pages[1] == page
             assert bot.store.current_folder(1) == folder and bot.store.notes(1) == notes

@@ -118,8 +118,7 @@ class FolderMenuMixin:
         self.folder_pages[owner] = min(max(page + (1 if text == "➡️" else -1), 0), len(pages) - 1)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
-        await self.refresh_folder_keyboard(owner, thread, force=True,
-            title=f"Папки · {self.folder_pages[owner] + 1}/{len(pages)}")
+        await self.refresh_folder_keyboard(owner, thread, force=True)
         self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
 
     @staticmethod
