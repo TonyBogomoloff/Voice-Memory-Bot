@@ -39,7 +39,7 @@ with (app / '.deploy.lock').open('a') as lock:
     subprocess.run([python,'-m','pytest','-q','-p','no:cacheprovider'],check=True)
     subprocess.run([python,'-m','ruff','check','--no-cache','src','tests','scripts'],check=True)
     subprocess.run([python,'scripts/check_migration.py','--database',str(app / 'data/archive.sqlite3')],check=True)
-    subprocess.run([python,'scripts/prepare_video_cache.py','--app',str(app)],check=True)
+    subprocess.run([python,'scripts/prepare_video_cache.py','--app',str(app)] + (['--check'] if sys.argv[4] == 'cached-only' else []),check=True)
     manifest = (candidate / 'release.json').read_bytes()
     receipt = {'commit':json.loads(manifest)['commit'], 'manifest_sha256':hashlib.sha256(manifest).hexdigest(),
                'full_suite':True, 'ruff':True, 'migration_rehearsal':True, 'video_cache':True}
@@ -57,7 +57,7 @@ def full_sha(value):
     return value
 
 
-def prepare(sha, base):
+def prepare(sha, base, *, cached_videos_only=False):
     subprocess.run(['git', 'merge-base', '--is-ancestor', base, sha], cwd=REPO, check=True)
     code = "import json,pathlib,sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text())['commit'])"
     current = remote(['python3', '-c', code, APP + '/release.json'], capture_output=True).stdout.decode().strip()
@@ -82,7 +82,7 @@ def prepare(sha, base):
         archive.addfile(member, io.BytesIO(manifest))
     candidate = APP + '/.deploy-candidates/' + sha
     # Preparation shares the deployment/migration lock, including extraction and tests.
-    remote([APP + '/.venv/bin/python', '-c', PREPARE_REMOTE, candidate, APP, base], input=package.getvalue())
+    remote([APP + '/.venv/bin/python', '-c', PREPARE_REMOTE, candidate, APP, base, 'cached-only' if cached_videos_only else 'warm'], input=package.getvalue())
 
 
 
@@ -102,8 +102,12 @@ def main():
     parser.add_argument('mode', choices=('prepare', 'deploy'))
     parser.add_argument('sha', type=full_sha)
     parser.add_argument('base', type=full_sha, help='Production SHA из release.json')
+    parser.add_argument('--cached-videos-only', action='store_true', help='Prepare using only existing video cache; never send preparation messages')
     args = parser.parse_args()
-    (prepare if args.mode == 'prepare' else deploy)(args.sha, args.base)
+    if args.mode == 'prepare':
+        prepare(args.sha, args.base, cached_videos_only=args.cached_videos_only)
+    else:
+        deploy(args.sha, args.base)
 
 
 if __name__ == '__main__':

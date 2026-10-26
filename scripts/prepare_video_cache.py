@@ -3,15 +3,17 @@ import argparse
 import asyncio
 import json
 import os
+import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 from voice_memory_bot.bot import START_COVER, START_VIDEO
 from voice_memory_bot.cleanup import CleanupStore
 from voice_memory_bot.config import Config
+from voice_memory_bot.database import transaction
 from voice_memory_bot.delivery import deletion_error
 from voice_memory_bot.help_menu import HELP_COVER, HELP_TOPICS, help_video_path
 from voice_memory_bot.providers import ProviderError, Telegram, TelegramError, silent_delivery
-from voice_memory_bot.store import Store
 from voice_memory_bot.video_cache import CACHE_NAME
 
 
@@ -72,6 +74,14 @@ async def prepare(telegram, videos, owner, *, check_only=False, forget_message=N
     return {'ready': True, 'videos': results, 'uploaded': sum(item['uploaded'] for item in results)}
 
 
+def receipt_store(path):
+    # Preparation uses the installed receipt table, never candidate migrations.
+    # Opening Store here would upgrade production before the guarded code swap.
+    db = sqlite3.connect(path.resolve().as_uri() + '?mode=rw', uri=True)
+    db.execute('PRAGMA busy_timeout=5000')
+    return SimpleNamespace(db=db, transaction=lambda: transaction(db), close=db.close)
+
+
 async def main(args):
     # Keep the configured parent: the application may be a mounted-storage symlink.
     app = args.app.absolute()
@@ -86,7 +96,7 @@ async def main(args):
     try:
         # Do not start a second bot/poller or recover its processing queue.
         if not args.check:
-            store = Store(config.data_dir / 'archive.sqlite3', config.limits)
+            store = receipt_store(config.data_dir / 'archive.sqlite3')
             telegram.on_message = CleanupStore(store).remember
         def forget(chat, message_id):
             with store.transaction():

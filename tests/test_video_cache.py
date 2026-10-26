@@ -295,3 +295,26 @@ def test_help_edits_never_create_or_delete_messages(tmp_path, failure):
         finally:
             await tg.close()
     asyncio.run(run())
+
+
+def test_preparation_receipts_never_migrate_installed_archive(tmp_path):
+    import sqlite3
+
+    from voice_memory_bot.cleanup import CleanupStore
+    from voice_memory_bot.config import Limits
+    from voice_memory_bot.store import Store
+
+    path = tmp_path / 'archive.sqlite3'
+    Store(path, Limits()).close()
+    with sqlite3.connect(path) as db:
+        db.execute('DROP TABLE obsidian_devices')
+        db.execute('DROP TABLE obsidian_pairing')
+        db.execute('PRAGMA user_version=3')
+    receipts = preparation_module().receipt_store(path)
+    try:
+        CleanupStore(receipts).remember(1, 99)
+        assert receipts.db.execute('SELECT message_id FROM telegram_messages').fetchone()[0] == 99
+        assert receipts.db.execute('PRAGMA user_version').fetchone()[0] == 3
+        assert not receipts.db.execute("SELECT name FROM sqlite_master WHERE name='obsidian_devices'").fetchone()
+    finally:
+        receipts.close()
