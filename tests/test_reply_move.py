@@ -134,3 +134,50 @@ def test_inline_move_buttons_and_old_page_are_scoped(bot):
         await bot.callback(1, None, prompt, f'rmove:{session["token"]}:{other["id"]}')
         assert bot.store.note(1, note['id'])['folder_id'] == other['id']
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("target", [None, 100, 200])
+@pytest.mark.parametrize("missing", [False, True])
+def test_move_replies_to_selected_record_through_pages_and_new_folder(bot, target, missing):
+    from voice_memory_bot.providers import TelegramError
+
+    async def run():
+        note = await prepare(bot)
+        for number in range(10):
+            bot.store.create_folder(1, f"Папка {number}")
+        original = bot.telegram.text
+        replies = []
+
+        async def send(owner, text, thread=None, keyboard=None, reply_to=None):
+            if missing and reply_to in {100, 200}:
+                raise TelegramError(400, "sendMessage", "message to be replied not found")
+            result = await original(owner, text, thread, keyboard, reply_to)
+            replies.append((result["message_id"], text, reply_to))
+            return result
+
+        bot.telegram.text = send
+        message = {"message_id": 400, "from": {"id": 1},
+                   "chat": {"id": 1, "type": "private"}, "text": "/move"}
+        if target:
+            message["reply_to_message"] = {"message_id": target}
+        bot.telegram.sent.clear()
+        await bot.handle({"message": message})
+        session = bot.store.one("SELECT * FROM reply_moves WHERE owner=1")
+        expected = replies[0][0] if missing else (target or 200)
+        assert len(replies) == (2 if missing else 1)
+        assert replies[-1][1:] == ("В какую папку ты хочешь переместить запись?", expected)
+        assert bot.bottom_state(1)["reply_to"] == expected
+        # A later note must not change the selected record or the reply target.
+        await receive(bot, "Новая запись", 500)
+        await bot.callback(1, None, session["prompt_id"], f"rpage:{session['token']}:1")
+        assert replies[-1][2] == expected
+        session = bot.store.one("SELECT * FROM reply_moves WHERE owner=1")
+        await bot.callback(1, None, session["prompt_id"], f"rnew:{session['token']}")
+        assert replies[-1][1:] == ("Как назвать новую папку?", expected)
+        await receive(bot, "Папка для выбранной", 600)
+        moved = bot.store.note(1, note["id"])
+        assert bot.store.folder(1, moved["folder_id"])["name"] == "Папка для выбранной"
+        other = next(n for n in bot.store.notes(1) if n["message_id"] == 500)
+        assert other["folder_id"] == note["folder_id"]
+        assert not any(text == "Действия" for _, text, _ in replies)
+    asyncio.run(run())

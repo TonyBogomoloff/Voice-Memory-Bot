@@ -56,13 +56,16 @@ class ReplyMoveMixin:
             self.store.db.execute("INSERT INTO reply_moves(token,owner,note_id,command_id) VALUES (?,?,?,?)",
                                   (token, owner, note["id"], cleanup_command_id))
         self.store.set_action(owner, None)
-        await self.reply_move_menu(owner, thread, token)
+        await self.reply_move_menu(owner, thread, token, reply_to=(message.get("reply_to_message") or {}).get("message_id"))
 
-    async def reply_move_menu(self, owner, thread, token, page=0):
+    async def reply_move_menu(self, owner, thread, token, page=0, *, reply_to=None):
         from .bot import button, keyboard
         session = self.store.one("SELECT * FROM reply_moves WHERE owner=? AND token=?", (owner, token))
         if not session:
             return
+        state = self.bottom_state(owner) or {}
+        if reply_to is None and state.get("screen") == f"replymove:{token}":
+            reply_to = state.get("reply_to")
         source = self.store.note(owner, session["note_id"])["folder_id"]
         folders = [f for f in self.store.folders(owner) if f["id"] != source]
         page = max(0, min(page, (len(folders) - 1) // 8))
@@ -77,7 +80,8 @@ class ReplyMoveMixin:
             rows.append(nav)
         rows.extend([[button("＋ Новая папка", f"rnew:{token}")], [button("Отмена", f"rcancel:{token}")]])
         result = await self.show_bottom(owner, "В какую папку ты хочешь переместить запись?", thread,
-                                  keyboard(*rows), screen=f"replymove:{token}", keep=True, mirror=True, command_id=session["command_id"])
+                                  keyboard(*rows), screen=f"replymove:{token}", keep=True, mirror=True,
+                                  reply_to=reply_to, command_id=session["command_id"])
         with self.store.transaction():
             self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                   (result["message_id"], owner, token))
@@ -118,7 +122,7 @@ class ReplyMoveMixin:
             self.store.set_action(owner, f"replymove:{token}")
             result = await self.show_bottom(owner, "Как назвать новую папку?", thread,
                 keyboard([button("Отмена", f"rcancel:{token}")]), screen=f"replymove:{token}", keep=True, mirror=True,
-                command_id=session["command_id"])
+                reply_to=state.get("reply_to"), command_id=session["command_id"])
             with self.store.transaction():
                 self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                       (result["message_id"], owner, token))

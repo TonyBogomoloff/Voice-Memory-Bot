@@ -851,12 +851,18 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             button("Удалить", f"notedel:{token}"), button("Отмена", f"notecancel:{token}")]),
             screen=f"notedelete:{note['id']}", keep=True, mirror=True, reply_to=target, command_id=command_id)
 
-    async def send_note_delete_prompt(self, owner, thread, state, keys):
-        note = self.store.note(owner, state.screen.argument)
+    async def send_record_prompt(self, owner, thread, state, keys):
+        identity = state.screen.argument
+        if state.screen.kind == "replymove":
+            session = self.store.one("SELECT note_id FROM reply_moves WHERE owner=? AND token=?", (owner, identity))
+            identity = session["note_id"]
+        note = self.store.note(owner, identity)
         targets = [state.extra.get("reply_to")]
         targets.extend(row["message_id"] for row in self.store.all(
             "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0 "
             "AND thread_id IS ? ORDER BY message_id DESC", (owner, note["id"], thread)))
+        if not any(targets):
+            targets.append(note["message_id"])
         for target in dict.fromkeys(targets):
             if not target:
                 continue
@@ -874,7 +880,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             else:
                 state.extra["reply_to"] = target
                 return response
-        # All known copies are gone. Show which archived record is being deleted
+        # All known copies are gone. Show which archived record the action concerns
         # and attach the confirmation to this fresh, tracked preview.
         content = note.get("content") or note.get("transcript") or note.get("title") or "Запись без расшифровки"
         preview = await self.view_send(self.telegram.text, owner, "Запись из архива:\n" + content[:1000], thread)
