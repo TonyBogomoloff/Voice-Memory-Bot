@@ -225,3 +225,35 @@ def test_voice_rename_failure_keeps_target_and_allows_text_fallback(tmp_path, fa
         finally:
             store.close()
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("action", ["rename", "create"])
+def test_folder_name_can_reuse_obsolete_keyboard_label(tmp_path, action):
+    async def run():
+        store = Store(tmp_path / 'db', Limits())
+        bot = make_bot(tmp_path, store)
+        try:
+            folder = store.create_folder(1, 'Работа')
+            await bot.show_notes(1, None, folder['id'])
+            bot.emoji_keyboards.remember(1, {'Работа': '📁 Работа'})
+            await bot.callback(1, None, 500, f"rename:{folder['id']}")
+            bot.emoji_keyboards.remember(1, {'Отмена': 'Отмена'})
+            await receive(bot, 'Проекты', 1001)
+            assert store.folder(1, folder['id'])['name'] == 'Проекты'
+            if action == 'rename':
+                await bot.callback(1, None, 501, f"rename:{folder['id']}")
+            else:
+                await receive(bot, '/new', 1002)
+            await receive(bot, 'Работа', 1003)
+            assert store.action(1) is None
+            assert any(f['name'] == 'Работа' for f in store.folders(1))
+            assert len(store.folders(1)) == (1 if action == 'rename' else 2)
+            assert store.notes(1) == []
+            assert not any('кнопка устарела' in p.get('text', '') for _, p in bot.telegram.sent)
+            await bot.callback(1, None, 502, f"rename:{folder['id']}")
+            await receive(bot, '⬅️ Назад', 1004)
+            assert store.action(1) is None
+            assert not any(f['name'] == 'Отмена' for f in store.folders(1))
+        finally:
+            store.close()
+    asyncio.run(run())

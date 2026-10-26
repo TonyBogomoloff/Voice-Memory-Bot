@@ -302,6 +302,17 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
                 return result
             if "forum_topic_created" in message or "forum_topic_edited" in message:
                 return
+            naming_action = self.store.action(owner) or ""
+            raw_text = message.get("text", "").strip()
+            state = self.bottom_state(owner) or {}
+            if (raw_text and (naming_action == "create" or naming_action.startswith("rename:"))
+                    and not raw_text.startswith("/")
+                    and not self.is_folder_button(raw_text)
+                    and navigation not in {"Отмена", "✖️ Отмена", "⬅️ Назад", "🏠 Главная", "⌂ Меню"}
+                    and navigation not in state.get("actions", {})
+                    and not self.reply_input(owner, message)):
+                # A typed name may match a remembered keyboard label, including an old folder name.
+                return await self.input_action(owner, thread, raw_text)
             if alias_active is False:
                 await self.remove_menu_message(owner, message["message_id"])
                 return await self.refresh_folder_keyboard(owner, thread, force=True,
