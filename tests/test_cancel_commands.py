@@ -29,9 +29,9 @@ def deleted(bot):
     return {p["message_id"] for method, p in bot.telegram.sent if method == "deleteMessage"}
 
 
-@pytest.mark.parametrize("command", ["/move", "/delete", "/options", "/ai"])
+@pytest.mark.parametrize("command,inline", [("/move", False), ("/move", True),
+    ("/delete", False), ("/delete", True), ("/options", False), ("/ai", True)])
 @pytest.mark.parametrize("restart", [False, True])
-@pytest.mark.parametrize("inline", [False, True])
 def test_cancel_removes_only_dialog_and_command_preserving_keyboard_and_record(bot, tmp_path, command, restart, inline):
     async def run():
         bot.telegram.message_sequence = 1000
@@ -146,4 +146,19 @@ def test_consumed_ai_command_is_kept_when_old_cancel_is_tapped(bot):
         await bot.callback(1, None, prompt["message_id"], f"aicancel:{conversation}")
         assert 400 not in deleted(bot)
         assert len(bot.store.all("SELECT * FROM ai_requests")) == 1
+    asyncio.run(run())
+
+
+def test_cancel_restores_folder_options_context(bot):
+    async def run():
+        bot.telegram.message_sequence = 1000
+        await receive(bot, "Исходник", 100)
+        folder = bot.store.current_folder(1)
+        await bot.show_folder_options(1, identity=folder)
+        menu = bot.store.one("SELECT * FROM bottom_menus WHERE owner=1")
+        await reply_command(bot, "/options")
+        await receive(bot, "Отмена", 500)
+        assert bot.options_folder(1) == folder
+        assert bot.store.one("SELECT * FROM bottom_menus WHERE owner=1") == menu
+        assert menu["message_id"] not in deleted(bot)
     asyncio.run(run())

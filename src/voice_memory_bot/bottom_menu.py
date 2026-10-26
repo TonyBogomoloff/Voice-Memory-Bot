@@ -92,6 +92,8 @@ class BottomMenuMixin:
         restored = MenuState.from_json(previous["state"]) if previous else MenuState.from_mapping({
             "screen": "root", "text": "Папки внизу"})
         self.store.set_action(owner, None)
+        if restored.screen.kind == "foldermenu":
+            self.enter_folder_options(owner, restored.screen.argument)
         # Restore the keyboard through a disposable message, retaining its original
         # carrier so Telegram Web still has a keyboard after the dialog is removed.
         await self.send_bottom(owner, thread, restored,

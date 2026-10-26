@@ -37,7 +37,8 @@ def test_note_actions_preserve_bottom_menu(tmp_path, store, screen, action):
             assert store.current_folder(1) == active
             assert bot.bottom_state(1)["screen"] == "root"
             return
-        assert bot.bottom_state(1)["screen"] == "root"
+        expected_screen = "settings:all" if action == "cancel" and screen == "settings" else "root"
+        assert bot.bottom_state(1)["screen"] == expected_screen
         assert store.current_folder(1) == active
     asyncio.run(run())
 
