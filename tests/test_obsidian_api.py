@@ -8,6 +8,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from support.exports import ExportTelegram
 
 from voice_memory_bot.bot import Bot
+from voice_memory_bot.cleanup import CleanupStore
 from voice_memory_bot.config import Config
 from voice_memory_bot.obsidian_access import AccessError, ObsidianAccess, digest
 from voice_memory_bot.obsidian_api import ExportAPI
@@ -140,3 +141,19 @@ def test_telegram_pairing_menu_navigation_and_disabled_mode(store, tmp_path):
             await bot.obsidian_callback(1, None, 50, 'obsidianpair:all')
 
     asyncio.run(run())
+
+
+def test_clear_archive_revokes_pairing_and_devices_only_for_that_owner(store):
+    access = ObsidianAccess(store)
+    for owner in (1, 2):
+        store.ensure_user(owner)
+    first = access.pair(access.issue(1), 'Phone', {1, 2})
+    second = access.pair(access.issue(2), 'Phone', {1, 2})
+    pending = {owner: access.issue(owner) for owner in (1, 2)}
+    CleanupStore(store).begin(1)
+    with pytest.raises(AccessError):
+        access.authenticate(first['token'], {1, 2})
+    with pytest.raises(AccessError):
+        access.pair(pending[1], 'Old code', {1, 2})
+    assert access.authenticate(second['token'], {1, 2})['owner'] == 2
+    assert access.pair(pending[2], 'New phone', {1, 2})['token']
