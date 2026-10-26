@@ -163,3 +163,95 @@ def test_cancel_latest_voice_keeps_folder_keyboard_and_placeholder(bot, tmp_path
         assert current.store.note(1, note["id"]) == original
         assert current.store.current_folder(1) == folder
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("reply", [False, True])
+@pytest.mark.parametrize("remaining_copy", [False, True])
+@pytest.mark.parametrize("cancel", [False, True])
+def test_delete_recovers_missing_telegram_target(bot, reply, remaining_copy, cancel):
+    from voice_memory_bot.providers import Telegram, TelegramError
+
+    async def run():
+        await receive(bot, "Именно эта запись", 100)
+        note = bot.store.notes(1)[0]
+        bot.messages.record(note, 200, None, "transcript")
+        foreign, _ = bot.store.add_note(2, bot.store.ensure_user(2), {"message_id": 900},
+                                     "text", transcript="Чужая")
+        bot.messages.record(foreign, 900, None, "source")
+        attempts, delivered = [], []
+        telegram = Telegram("test:token")
+        available = {100} if remaining_copy else set()
+        sequence = 1000
+
+        async def request(method, payload):
+            nonlocal sequence
+            if method == "sendMessage":
+                target = (payload.get("reply_parameters") or {}).get("message_id")
+                attempts.append(target)
+                if target and target not in available:
+                    raise TelegramError(400, method, "Bad Request: message to be replied not found")
+                sequence += 1
+                available.add(sequence)
+                delivered.append((sequence, payload))
+                return {"message_id": sequence}
+            if method == "deleteMessage":
+                available.discard(payload["message_id"])
+            return True
+
+        telegram._request = request
+        bot.telegram = telegram
+        try:
+            message = {"message_id": 400, "from": {"id": 1},
+                       "chat": {"id": 1, "type": "private"}, "text": "/delete"}
+            if reply:
+                message["reply_to_message"] = {"message_id": 200}
+            await bot.handle({"message": message})
+            state = bot.bottom_state(1)
+            assert state["screen"] == f"notedelete:{note['id']}"
+            assert attempts[:2] == [200, 100]
+            assert 900 not in attempts
+            assert [p["text"] for _, p in delivered] == (
+                ["Удалить запись?"] if remaining_copy
+                else ["Запись из архива:\nИменно эта запись", "Удалить запись?"])
+            prompt_id, prompt = delivered[-1]
+            target = prompt["reply_parameters"]["message_id"]
+            assert target == (100 if remaining_copy else delivered[0][0])
+            assert state["reply_to"] == target and state["inline_prompt_id"] == prompt_id
+            assert prompt_id in available
+            assert [[b["text"] for b in row] for row in prompt["reply_markup"]["inline_keyboard"]] == [
+                ["Удалить", "Отмена"]]
+            assert bot.store.note(1, note["id"])
+            assert bot.store.one("SELECT deleted FROM note_messages WHERE owner=1 AND message_id=200")["deleted"]
+            label = "Отмена" if cancel else "Удалить"
+            await bot.callback(1, None, prompt_id, state["actions"][label])
+            assert bool(bot.store.notes(1)) == cancel
+            assert len(bot.store.notes(2)) == 1
+            await bot.callback(1, None, prompt_id, state["actions"][label])
+            assert bool(bot.store.notes(1)) == cancel
+        finally:
+            await telegram.close()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("error", ["transport", "other_400"])
+def test_delete_does_not_retry_unknown_or_unrelated_send_failure(bot, error):
+    from voice_memory_bot.providers import ProviderError, TelegramError
+
+    async def run():
+        await receive(bot, "Запись", 100)
+        calls = []
+
+        async def fail(*args, **kwargs):
+            calls.append(kwargs.get("reply_to"))
+            if error == "transport":
+                raise ProviderError("telegram_transport_unknown")
+            raise TelegramError(400, "sendMessage", "Bad Request: chat not found")
+
+        bot.telegram.text = fail
+        bot.telegram.sent.clear()
+        with pytest.raises(ProviderError):
+            await receive(bot, "/delete", 400)
+        assert calls == [100]
+        assert len(bot.store.notes(1)) == 1
+        assert not any(m == "deleteMessage" and p["message_id"] == 400 for m, p in bot.telegram.sent)
+    asyncio.run(run())

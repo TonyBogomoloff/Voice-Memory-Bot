@@ -851,6 +851,38 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             button("Удалить", f"notedel:{token}"), button("Отмена", f"notecancel:{token}")]),
             screen=f"notedelete:{note['id']}", keep=True, mirror=True, reply_to=target, command_id=command_id)
 
+    async def send_note_delete_prompt(self, owner, thread, state, keys):
+        note = self.store.note(owner, state.screen.argument)
+        targets = [state.extra.get("reply_to")]
+        targets.extend(row["message_id"] for row in self.store.all(
+            "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0 "
+            "AND thread_id IS ? ORDER BY message_id DESC", (owner, note["id"], thread)))
+        for target in dict.fromkeys(targets):
+            if not target:
+                continue
+            try:
+                response = await self.view_send(self.telegram.text, owner, state.text, thread, keys, reply_to=target)
+            except ProviderError as exc:
+                # Retry only an explicit rejection; an unknown send outcome may
+                # already have delivered the confirmation.
+                if getattr(exc, "reason", None) != "reply_target_missing":
+                    raise
+                with self.store.transaction():
+                    self.store.db.execute(
+                        "UPDATE note_messages SET deleted=1 WHERE owner=? AND note_id=? AND message_id=?",
+                        (owner, note["id"], target))
+            else:
+                state.extra["reply_to"] = target
+                return response
+        # All known copies are gone. Show which archived record is being deleted
+        # and attach the confirmation to this fresh, tracked preview.
+        content = note.get("content") or note.get("transcript") or note.get("title") or "Запись без расшифровки"
+        preview = await self.view_send(self.telegram.text, owner, "Запись из архива:\n" + content[:1000], thread)
+        target = preview["message_id"]
+        self.messages.record(note, target, thread, "view")
+        state.extra["reply_to"] = target
+        return await self.view_send(self.telegram.text, owner, state.text, thread, keys, reply_to=target)
+
     async def note_delete_callback(self, owner, thread, message_id, data):
         if data.split(":", 1)[0] not in {"notedel", "notecancel"}:
             return False
