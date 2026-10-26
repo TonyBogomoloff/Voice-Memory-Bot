@@ -1,0 +1,24 @@
+{
+  "name": "voice-memory-bot-onboarding-video",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "studio": "remotion studio src/index.tsx",
+    "check": "tsc --noEmit",
+    "render": "remotion render src/index.tsx VoiceMemoryIntro out/voice-memory-bot-v1-ru.mp4 --codec=h264 --crf=19 --pixel-format=yuv420p --concurrency=1",
+    "poster": "remotion still src/index.tsx VoiceMemoryIntro out/poster.png --frame=55"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.538",
+    "@remotion/fonts": "4.0.538",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.538"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "5.9.3"
+  }
+}
