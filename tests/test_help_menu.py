@@ -4,7 +4,7 @@ import pytest
 from support.base import FakeGroq, FakeRouter, FakeTelegram
 from support.commands import bot as bot
 from support.commands import receive
-from support.menus import labels, reply_keyboard
+from support.menus import reply_keyboard
 
 from voice_memory_bot.bot import Bot
 from voice_memory_bot.bottom_menu import BACK, ROOT
@@ -16,7 +16,7 @@ def last_text(bot):
 
 
 @pytest.mark.parametrize("topic", HELP_TOPICS)
-def test_help_topics_are_reachable_and_back_returns_to_index_without_changing_notes(bot, topic):
+def test_help_topics_keep_all_buttons_and_can_switch_directly_without_changing_notes(bot, topic):
     async def run():
         bot.telegram.message_sequence = 1000
         await receive(bot, "Моя запись", 100)
@@ -26,10 +26,13 @@ def test_help_topics_are_reachable_and_back_returns_to_index_without_changing_no
         assert [len(row) for row in index] == [2, 2, 2, 2, 2]
         assert index[-1] == [{"text": BACK}, {"text": ROOT}]
         await receive(bot, HELP_TOPICS[topic][0], 102)
-        assert bot.bottom_state(1)["screen"] == f"help:{topic}"
+        assert bot.bottom_state(1)["screen"] == "help"
         assert last_text(bot) == "\n\n".join(HELP_TOPICS[topic])
-        assert labels(bot) == [BACK, ROOT]
-        await receive(bot, BACK, 103)
+        assert reply_keyboard(bot)["keyboard"] == index
+        # A leaf shows its text in place: another topic is one tap away.
+        next_topic = "folders" if topic == "save" else "save"
+        await receive(bot, HELP_TOPICS[next_topic][0], 103)
+        assert last_text(bot) == "\n\n".join(HELP_TOPICS[next_topic])
         assert bot.bottom_state(1)["screen"] == "help"
         assert reply_keyboard(bot)["keyboard"] == index
         await receive(bot, ROOT, 104)
@@ -42,13 +45,14 @@ def test_help_topics_are_reachable_and_back_returns_to_index_without_changing_no
     asyncio.run(run())
 
 
-def test_help_topic_back_survives_restart_and_stale_topic_taps_are_not_notes(bot):
+def test_help_buttons_survive_restart_and_stale_topic_taps_are_not_notes(bot):
     async def run():
         await receive(bot, "/help", 100)
         await receive(bot, HELP_TOPICS["ai"][0], 101)
         restarted = Bot(bot.config, bot.store, FakeTelegram(), FakeGroq(), FakeRouter())
-        await receive(restarted, BACK, 102)
+        await receive(restarted, HELP_TOPICS["export"][0], 102)
         assert restarted.bottom_state(1)["screen"] == "help"
+        assert last_text(restarted) == "\n\n".join(HELP_TOPICS["export"])
         await receive(restarted, ROOT, 103)
         await receive(restarted, HELP_TOPICS["ai"][0], 104)
         assert "устарела" in last_text(restarted)

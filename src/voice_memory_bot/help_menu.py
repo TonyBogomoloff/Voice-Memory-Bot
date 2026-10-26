@@ -62,10 +62,8 @@ HELP_TOPICS = {
 
 
 def help_page(topic=None):
-    if topic in HELP_TOPICS:
-        title, body = HELP_TOPICS[topic]
-        return title + "\n\n" + body, [], f"help:{topic}", "help"
+    text = "\n\n".join(HELP_TOPICS[topic]) if topic in HELP_TOPICS else HELP_INTRO
     buttons = [{"text": title, "callback_data": f"help:{key}"}
                for key, (title, _) in HELP_TOPICS.items()]
     rows = [buttons[index:index + 2] for index in range(0, len(buttons), 2)]
-    return HELP_INTRO, rows, "help", "home"
+    return text, rows, "help", "home"
