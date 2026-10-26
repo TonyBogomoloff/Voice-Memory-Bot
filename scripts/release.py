@@ -39,9 +39,10 @@ with (app / '.deploy.lock').open('a') as lock:
     subprocess.run([python,'-m','pytest','-q','-p','no:cacheprovider'],check=True)
     subprocess.run([python,'-m','ruff','check','--no-cache','src','tests','scripts'],check=True)
     subprocess.run([python,'scripts/check_migration.py','--database',str(app / 'data/archive.sqlite3')],check=True)
+    subprocess.run([python,'scripts/prepare_video_cache.py','--app',str(app)],check=True)
     manifest = (candidate / 'release.json').read_bytes()
     receipt = {'commit':json.loads(manifest)['commit'], 'manifest_sha256':hashlib.sha256(manifest).hexdigest(),
-               'full_suite':True, 'ruff':True, 'migration_rehearsal':True}
+               'full_suite':True, 'ruff':True, 'migration_rehearsal':True, 'video_cache':True}
     (candidate / 'validation.json').write_text(json.dumps(receipt,indent=2))
 """
 

@@ -13,6 +13,7 @@ import httpx
 from .codex_runner import CodexRunner
 from .custom_emoji import themed_payload
 from .errors import ProviderError
+from .video_cache import VideoFileCache
 
 silent_delivery = ContextVar("silent_delivery", default=False)
 
@@ -34,6 +35,11 @@ class TelegramError(ProviderError):
             "message can't be deleted": "delete_forbidden",
             "message is not modified": "not_modified",
             "chat not found": "chat_not_found",
+            "wrong file identifier": "file_id_invalid",
+            "wrong remote file identifier": "file_id_invalid",
+            "file_id_invalid": "file_id_invalid",
+            "file_reference_expired": "file_id_invalid",
+            "file_reference_invalid": "file_id_invalid",
             "button_data_invalid": "button_invalid",
             "query is too old": "callback_expired",
             "custom emoji": "custom_emoji_unavailable",
@@ -45,9 +51,10 @@ class TelegramError(ProviderError):
 
 
 class Telegram:
-    def __init__(self, token: str, client=None, *, api_base="https://api.telegram.org", file_root=None):
+    def __init__(self, token: str, client=None, *, api_base="https://api.telegram.org", file_root=None, video_cache=None):
         self.on_message = None
         self.on_keyboard = None
+        self.video_cache = VideoFileCache(video_cache, token.split(":", 1)[0]) if video_cache else None
         self._base = f"{api_base.rstrip('/')}/bot{token}/"
         self._files = f"{api_base.rstrip('/')}/file/bot{token}/"
         self.local = api_base.rstrip('/') != "https://api.telegram.org"
@@ -174,7 +181,10 @@ class Telegram:
             raise error
 
     async def video(self, owner, path: Path, thread=None, caption=None, keyboard=None, *, duration=10):
-        """Send a bundled portrait demo with its caption and optional keyboard."""
+        """Reuse Telegram's stored video; upload only new content or a rejected reference."""
+        cache = self.video_cache
+        digest = cache.digest(path) if cache else None
+        file_id = cache.get(digest) if cache else None
         original = {"chat_id": owner, "video": "attach://video", "supports_streaming": True,
                     "show_caption_above_media": True, "duration": duration, "width": 720, "height": 1280}
         if caption:
@@ -185,6 +195,15 @@ class Telegram:
             original["message_thread_id"] = thread
         if silent_delivery.get():
             original["disable_notification"] = True
+        if file_id:
+            try:
+                return await self.call("sendVideo", **{**original, "video": file_id})
+            except TelegramError as exc:
+                # Only an explicit invalid file reference permits a fresh upload.
+                # Timeouts, rate limits and other errors must not create a second message.
+                if str(exc) != "telegram_400" or exc.reason != "file_id_invalid":
+                    raise
+                cache.discard(digest, file_id)
         payload, aliases = themed_payload("sendVideo", original)
         if aliases and self.on_keyboard:
             self.on_keyboard(owner, aliases)
@@ -199,8 +218,11 @@ class Telegram:
             except (httpx.HTTPError, ValueError):
                 raise ProviderError("telegram_transport_unknown") from None
             if isinstance(body, dict) and body.get("ok"):
-                self.remember_result(body["result"], owner, thread)
-                return body["result"]
+                result = body["result"]
+                self.remember_result(result, owner, thread)
+                if cache:
+                    cache.put(digest, result.get("video", {}).get("file_id"))
+                return result
             code = body.get("error_code", response.status_code) if isinstance(body, dict) else response.status_code
             error = TelegramError(code, "sendVideo", body.get("description", "") if isinstance(body, dict) else "")
             if isinstance(body, dict):

@@ -8,6 +8,7 @@ import pytest
 
 from voice_memory_bot.config import Limits
 from voice_memory_bot.store import Store
+from voice_memory_bot.video_cache import CACHE_NAME, VideoFileCache
 
 
 @pytest.fixture
@@ -127,11 +128,39 @@ def test_failed_start_restores_code_but_keeps_new_database_and_originals(release
 
 def test_successful_release_writes_verified_receipt_and_keeps_backup(release):
     r = release
+    cache = VideoFileCache(r.guard.app / 'data' / CACHE_NAME, '123')
+    cache.put('content-hash', 'telegram-file-id')
     r.guard.deploy()
     receipt = json.loads((r.guard.app / 'deploy-receipt.json').read_text())
     assert receipt['commit'] == r.guard.sha and receipt['matches_manifest']
     assert receipt['configuration_unchanged'] and receipt['archive_preserved_during_swap']
     assert receipt['before_counts'] == receipt['after_counts']
     assert (Path(receipt['backup']) / 'archive.sqlite3').is_file()
+    assert VideoFileCache(Path(receipt['backup']) / CACHE_NAME, '123').get('content-hash') == 'telegram-file-id'
+    assert cache.get('content-hash') == 'telegram-file-id'
     assert (r.guard.app / 'app.py').read_text() == 'new source'
     assert r.original.read_bytes() == b'original bytes'
+
+
+@pytest.mark.parametrize('prepared', [False, True])
+def test_video_cache_readiness_is_required_before_stopping_service(release, monkeypatch, prepared):
+    r = release
+    for name in ('output/remotion/help/help-save-v1-ru.mp4', 'scripts/prepare_video_cache.py'):
+        path = r.guard.candidate / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'candidate file')
+        r.new['files'][name] = r.module.digest(path)
+    (r.guard.candidate / 'release.json').write_text(json.dumps(r.new))
+    validation = json.loads((r.guard.candidate / 'validation.json').read_text())
+    validation.update(manifest_sha256=r.module.digest(r.guard.candidate / 'release.json'), video_cache=prepared)
+    (r.guard.candidate / 'validation.json').write_text(json.dumps(validation))
+    def run(args, **kwargs):
+        r.calls.append(args)
+        assert args[1].endswith('/scripts/prepare_video_cache.py') and args[-1] == '--check'
+        raise RuntimeError('video_cache_not_ready')
+    monkeypatch.setattr(r.module, 'run', run)
+    with pytest.raises(RuntimeError, match='video_cache_'):
+        r.guard.deploy()
+    assert len(r.calls) == int(prepared)
+    assert not any(args[0] == 'systemctl' for args in r.calls)
+    assert (r.guard.app / 'app.py').read_text() == 'old source'

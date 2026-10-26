@@ -139,6 +139,18 @@ class ReleaseGuard:
                 raise RuntimeError('candidate_validation_missing_or_stale')
             verify(self.app, old)
             verify(self.candidate, new)
+            cache_check = None
+            if any(name.startswith('output/remotion/help/') and name.endswith('.mp4') for name in new['files']):
+                if validation.get('video_cache') is not True or 'scripts/prepare_video_cache.py' not in new['files']:
+                    raise RuntimeError('video_cache_preparation_missing')
+                # Check the real persistent cache against this candidate's exact assets
+                # before stopping the service. This command cannot upload anything.
+                checked = run([str(self.app / '.venv/bin/python'), str(self.candidate / 'scripts/prepare_video_cache.py'),
+                               '--app', str(self.app), '--check'], capture_output=True,
+                              env={**os.environ, 'PYTHONPATH': str(self.candidate / 'src'), 'PYTHONDONTWRITEBYTECODE': '1'})
+                cache_check = json.loads(checked.stdout)
+                if cache_check.get('ready') is not True or cache_check.get('uploaded') != 0:
+                    raise RuntimeError('video_cache_not_ready')
             for name in set(new['files']) - set(old['files']):
                 if safe_path(self.app, name).exists():
                     raise RuntimeError('untracked_source_conflict:' + name)
@@ -175,6 +187,11 @@ class ReleaseGuard:
                     raise RuntimeError('database_integrity_failed_before_deploy')
                 with self.database() as source, closing(sqlite3.connect(backup / 'archive.sqlite3')) as dest:
                     source.backup(dest)
+                media_cache = self.app / 'data/telegram-video-cache.sqlite3'
+                if media_cache.is_file():
+                    with closing(sqlite3.connect(media_cache.resolve().as_uri() + '?mode=ro', uri=True)) as source, closing(
+                            sqlite3.connect(backup / media_cache.name)) as dest:
+                        source.backup(dest)
                 (backup / 'before.json').write_text(json.dumps(before, indent=2))
                 verify(self.app, old)
                 verify(self.candidate, new)
@@ -217,6 +234,8 @@ class ReleaseGuard:
                            'before_counts': before['counts'], 'after_counts': after['counts'], 'sqlite_integrity': 'ok',
                            'service': state.strip().splitlines(), 'telegram_startup': 'ok',
                            'archive_files': len(after['archive']), 'new_warnings_errors': 0, 'queue_idle': self.busy() == 0, 'backup': str(backup)}
+                if cache_check:
+                    receipt['video_cache'] = cache_check
                 (backup / 'receipt.json').write_text(json.dumps(receipt, indent=2))
                 atomic(self.app / 'deploy-receipt.json', json.dumps(receipt, indent=2).encode())
                 print(json.dumps(receipt), flush=True)

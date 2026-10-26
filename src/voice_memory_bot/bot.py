@@ -31,6 +31,7 @@ from .scheduling import dispatch_by_owner, run_for_owners
 from .states import InputKind
 from .store import Store, clean_name, new_id
 from .update_queue import update_owner
+from .video_cache import CACHE_NAME, VideoFileCache
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
                  assistant=None):
         self.config, self.store = config, store
         self.telegram, self.groq, self.router = telegram, groq, router
+        self.telegram.video_cache = VideoFileCache(config.data_dir / CACHE_NAME, config.bot_token.split(":", 1)[0])
         self.archive = Archive(config.data_dir / "notes")
         self.media = MediaProcessor(store, self.archive, telegram, groq, config.limits)
         self.messages = MessageStore(store)
