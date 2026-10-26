@@ -35,8 +35,8 @@ from .video_cache import CACHE_NAME, VideoFileCache
 
 log = logging.getLogger(__name__)
 
-START_VIDEO = Path(__file__).resolve().parents[2] / "output/remotion/voice-memory-bot-onboarding-v4-square-ru.mp4"
-START_COVER = START_VIDEO.with_name("cover-v4-square.jpg")
+START_VIDEO = Path(__file__).resolve().parents[2] / "output/remotion/voice-memory-bot-onboarding-v5-square-ru.mp4"
+START_COVER = START_VIDEO.with_name("cover-v5-square.jpg")
 START_CAPTION = "Твой голосовой блокнот, который всегда с тобой.\nСохраняй идеи, пока они свежие 💙"
 
 

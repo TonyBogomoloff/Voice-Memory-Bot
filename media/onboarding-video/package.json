@@ -9,8 +9,8 @@
     "render": "remotion render src/index.tsx VoiceMemoryIntro out/voice-memory-bot-v3-ru.mp4 --codec=h264 --crf=19 --pixel-format=yuv420p --concurrency=1",
     "poster": "remotion still src/index.tsx VoiceMemoryIntro out/poster.png --frame=55",
     "render:help": "python3 render_help.py",
-    "render:square": "remotion render src/index.tsx VoiceMemorySquare ../../output/remotion/voice-memory-bot-onboarding-v4-square-ru.mp4 --codec=h264 --crf=19 --pixel-format=yuv420p --concurrency=2 --chrome-mode=chrome-for-testing --browser-executable=/usr/bin/google-chrome",
-    "poster:square": "remotion still src/index.tsx VoiceMemorySquare ../../output/remotion/cover-v4-square.jpg --frame=55 --chrome-mode=chrome-for-testing --browser-executable=/usr/bin/google-chrome"
+    "render:square": "remotion render src/index.tsx VoiceMemorySquare ../../output/remotion/voice-memory-bot-onboarding-v5-square-ru.mp4 --codec=h264 --crf=19 --pixel-format=yuv420p --concurrency=2 --chrome-mode=chrome-for-testing --browser-executable=/usr/bin/google-chrome",
+    "poster:square": "remotion still src/index.tsx VoiceMemorySquare ../../output/remotion/cover-v5-square.jpg --frame=55 --chrome-mode=chrome-for-testing --browser-executable=/usr/bin/google-chrome"
   },
   "dependencies": {
     "@remotion/cli": "4.0.538",

@@ -23,17 +23,16 @@ const Background: React.FC = () => {
     <div style={{position: 'absolute', left: 64, right: 64, bottom: 64, display: 'flex', gap: 10}}>{SCENES.map(s => <div key={s.id} style={{flex: 1, height: 4, background: '#334a54', borderRadius: 4, overflow: 'hidden'}}><div style={{height: '100%', width: `${ramp(f, s.from, s.from + s.duration) * 100}%`, background: s.color}}/></div>)}</div>
   </AbsoluteFill>;
 };
-const Brand: React.FC = () => <div style={{position: 'absolute', top: 64, left: 64, right: 64, display: 'flex', alignItems: 'center', gap: 14}}>
-  <Img src={staticFile('bot-avatar-v2.jpg')} style={{width: 44, height: 44, borderRadius: 14}}/>
-  <div style={{fontSize: 21, fontWeight: 600, letterSpacing: 1.3}}>VOICE MEMORY BOT</div>
-  <div style={{marginLeft: 'auto', fontSize: 20, color: C.dim}}>ТВОИ ИДЕИ · В TELEGRAM</div>
+const Brand: React.FC = () => <div style={{position: 'absolute', top: 112, left: 64, width: 500, display: 'flex', alignItems: 'center', gap: 14}}>
+  <Img src={staticFile('bot-avatar-v2.jpg')} style={{width: 48, height: 48, borderRadius: 14}}/>
+  <div style={{fontSize: 23, fontWeight: 600, letterSpacing: 1.3}}>VOICE MEMORY BOT</div>
 </div>;
 const Label: React.FC<{children: ReactNode; color: string}> = ({children, color}) => <div style={{display: 'inline-flex', padding: '10px 14px', borderRadius: 12, background: `${color}10`, border: `1px solid ${color}40`, fontSize: 21, letterSpacing: 1, fontWeight: 600, color}}>{children}</div>;
 
-// Every phone remains 360 x 800; only the surrounding composition changes.
+// Scale the phone and its tap cues together, preserving the original UI proportions.
 const Device: React.FC<{children: ReactNode; active?: string; recording?: boolean; keyboard?: ReactNode; tap?: {frame: number; from: number; x: number; y: number}}> = ({children, active, recording, keyboard, tap}) => {
   const f = useCurrentFrame();
-  return <div style={{position: 'absolute', left: 640, top: 144, width: 360, height: 800, ...enter(f, 3)}}>
+  return <div style={{position: 'absolute', left: 608, top: 48, width: 360, height: 800, ...enter(f, 3), transform: `${enter(f, 3).transform} scale(1.18)`, transformOrigin: 'top left'}}>
     <Phone active={active} recording={recording} keyboard={keyboard} style={{left: 0, top: 0}}>{children}</Phone>
     {tap && <Tap {...tap}/>}
   </div>;
@@ -42,15 +41,15 @@ const Copy: React.FC<{label: string; color: string; title: ReactNode; quote: Rea
   const f = useCurrentFrame();
   return <div style={{position: 'absolute', left: 64, top: 202, width: 500}}>
     <div style={enter(f)}><Label color={color}>{label}</Label>
-      <div style={{marginTop: 29, fontSize: 65, lineHeight: 1.08, letterSpacing: -2, fontWeight: 700}}>{title}</div>
+      <div style={{marginTop: 29, fontSize: 68, lineHeight: 1.08, letterSpacing: -2, fontWeight: 700}}>{title}</div>
     </div>
-    <div style={{marginTop: 43, padding: '23px 25px', borderLeft: `4px solid ${color}`, background: `${color}0d`, borderRadius: '0 18px 18px 0', fontSize: 33, lineHeight: 1.3, ...enter(f, delay)}}>{quote}</div>
-    <div style={{marginTop: 32, display: 'flex', alignItems: 'flex-start', gap: 13, fontSize: 28, lineHeight: 1.4, color: C.dim, ...enter(f, delay + 9)}}><Icon name="check" size={30} color={color}/><span>{note}</span></div>
+    <div style={{marginTop: 43, padding: '23px 25px', borderLeft: `4px solid ${color}`, background: `${color}0d`, borderRadius: '0 18px 18px 0', fontSize: 34, lineHeight: 1.3, ...enter(f, delay)}}>{quote}</div>
+    <div style={{marginTop: 32, display: 'flex', alignItems: 'flex-start', gap: 13, fontSize: 30, lineHeight: 1.4, color: C.dim, ...enter(f, delay + 9)}}><Icon name="check" size={30} color={color}/><span>{note}</span></div>
   </div>;
 };
 const Recorder: React.FC = () => {
   const f = useCurrentFrame();
-  return <Img src={staticFile('blue-recorder-cutout-v2.png')} style={{position: 'absolute', left: 548, top: 242, width: 468, height: 468, objectFit: 'contain', filter: 'drop-shadow(0 22px 22px #0007)', opacity: ramp(f, 2, 12), transform: `translateY(${Math.sin(f / 25) * 5}px) rotate(${Math.sin(f / 40) * 2}deg)`}}/>;
+  return <Img src={staticFile('blue-recorder-cutout-v2.png')} style={{position: 'absolute', left: 534, top: 220, width: 496, height: 496, objectFit: 'contain', filter: 'drop-shadow(0 22px 22px #0007)', opacity: ramp(f, 2, 12), transform: `translateY(${Math.sin(f / 25) * 5}px) rotate(${Math.sin(f / 40) * 2}deg)`}}/>;
 };
 const Chips: React.FC = () => <div style={{position: 'absolute', left: 64, right: 64, top: 845, display: 'flex', gap: 14}}>{[['mic', 'Голос', C.blue], ['folder', 'Папки', C.mint], ['spark', 'ИИ', C.violet], ['export', 'Экспорт', C.gold]].map(([icon, label, color]) => <div key={label} style={{flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 13, height: 76, background: '#20343e', border: `1px solid ${color}40`, borderRadius: 20, fontSize: 28, fontWeight: 600}}><Icon name={icon} size={30} color={color}/>{label}</div>)}</div>;
 
@@ -60,7 +59,7 @@ const Intro: React.FC = () => {
     <Recorder/>
     <div style={{position: 'absolute', left: 64, top: 224, width: 500, ...enter(f)}}>
       <Label color={C.blue}>МЕСТО ДЛЯ ТВОИХ ИДЕЙ</Label>
-      <h1 style={{fontSize: 76, lineHeight: 1.06, letterSpacing: -2.5, margin: '33px 0 30px'}}>Пришла идея?<br/><span style={{color: C.blue}}>Сохрани её.</span></h1>
+      <h1 style={{fontSize: 80, lineHeight: 1.06, letterSpacing: -2.5, margin: '33px 0 30px'}}>Пришла идея?<br/><span style={{color: C.blue}}>Сохрани её.</span></h1>
       <div style={{fontSize: 33, lineHeight: 1.4, color: C.dim}}>Твой голосовой блокнот,<br/>который всегда с тобой.</div>
     </div>
     <div style={{position: 'absolute', left: 64, top: 722, fontSize: 32, ...enter(f, 18)}}>Голосом, текстом или фото.</div>
