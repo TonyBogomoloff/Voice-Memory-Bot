@@ -20,11 +20,11 @@ from .delivery import DeliveryService
 from .folder_menu import MENU_COMMANDS, OPTION_ACTIONS, FolderMenuMixin
 from .folder_naming import FolderNamingMixin
 from .folder_view import FolderViewMixin
-from .help_menu import help_page
+from .help_menu import help_page, help_video_path
 from .media import MediaProcessor
 from .message_store import MessageStore
 from .note_service import NoteService
-from .providers import CodexRouter, Groq, ProviderError, Telegram
+from .providers import CodexRouter, Groq, ProviderError, Telegram, silent_delivery
 from .reply_move import ReplyMoveMixin
 from .routing import fallback_title
 from .scheduling import dispatch_by_owner, run_for_owners
@@ -430,9 +430,33 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         return note
 
     async def show_help(self, owner, thread=None, topic=None, *, edit_id=None):
-        text, rows, screen, back = help_page(topic)
-        return await self.show_bottom(owner, text, thread, keyboard(*rows),
-                                      screen=screen, back=back, keep=True, edit_id=edit_id, help_topic=topic)
+        self.store.set_action(owner, None)
+        self.leave_folder_options(owner)
+        if self.store.folders(owner):
+            await self.refresh_folder_keyboard(owner, thread)
+        elif (self.bottom_state(owner) or {}).get("screen") != "root":
+            await self.send_bottom(owner, thread, {
+                "screen": "root", "back": "root", "rows": [], "keep": True,
+                "text": "Создай первую папку кнопкой «＋» внизу."}, raw_keys=self.folder_keyboard(owner))
+        text, rows = help_page(topic)
+        keys, video = keyboard(*rows), help_video_path(topic)
+        token = silent_delivery.set(True)
+        try:
+            if video is not None and video.is_file():
+                response = await self.view_send(self.telegram.video, owner, video, thread, caption=text, keyboard=keys)
+            else:
+                if video is not None:
+                    log.warning("help video missing topic=%s", topic)
+                response = await self.view_send(self.telegram.text, owner, text, thread, keys)
+        finally:
+            silent_delivery.reset(token)
+        # Text and video pages have different Telegram message types. Replace the
+        # clicked Help page only after delivery, keeping the folder keyboard carrier.
+        carrier = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,))
+        if edit_id and edit_id != response["message_id"] and (not carrier or edit_id != carrier["message_id"]):
+            await self.remove_menu_message(owner, edit_id)
+        self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
+        return response
 
     async def command(self, owner, thread, command, argument):
         if command == "/restart":

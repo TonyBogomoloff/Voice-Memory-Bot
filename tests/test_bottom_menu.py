@@ -268,11 +268,10 @@ def test_minimal_menu_toggle_help_and_back(bot):
         await receive(bot, "Скрывать кнопки действий", 3002)
         assert not bot.store.message_buttons_enabled(1)
         await receive(bot, "ℹ️ Помощь", 3003)
-        assert bot.bottom_state(1)["screen"] == "help"
-        await receive(bot, BACK, 3004)
-        assert bot.bottom_state(1)["screen"] == "home"
-        await receive(bot, BACK, 3005)
         assert bot.bottom_state(1)["screen"] == "root"
+        assert reply_keyboard(bot) == bot.folder_keyboard(1)
+        assert any(m == "sendMessage" and p.get("keyboard", {}).get("inline_keyboard")
+                   for m, p in bot.telegram.sent if p.get("keyboard"))
         assert bot.store.notes(1) == []
     asyncio.run(run())
 

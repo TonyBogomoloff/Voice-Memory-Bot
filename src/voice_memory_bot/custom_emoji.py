@@ -75,7 +75,7 @@ def semantic_icon(item):
     lower = text.lower()
     if lower.startswith(('включить кнопки', 'отправлять кнопки действий')) or lower.startswith('кнопки у сообщений: выкл'):
         return 'toggle_off'
-    if action in {'audio'} and marker:
+    if action in {'audio', 'help'} and marker:
         return marker
     if action in ACTION_ICONS:
         return ACTION_ICONS[action]

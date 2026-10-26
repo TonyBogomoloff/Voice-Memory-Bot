@@ -6,6 +6,7 @@ from email.policy import default
 import httpx
 import pytest
 
+from voice_memory_bot.custom_emoji import IDS
 from voice_memory_bot.providers import ProviderError, Telegram, silent_delivery
 
 
@@ -16,14 +17,15 @@ def multipart(request):
             for part in message.iter_parts()}
 
 
+@pytest.mark.parametrize('inline', [False, True])
 @pytest.mark.parametrize('outcome', ['success', 'emoji_rejection', 'timeout'])
-def test_help_video_caption_keyboard_receipt_and_safe_retry(tmp_path, outcome):
+def test_help_video_caption_keyboard_receipt_and_safe_retry(tmp_path, outcome, inline):
     async def run():
         path = tmp_path / 'demo.mp4'
         path.write_bytes(b'unchanged video')
         sent, receipts, aliases = [], [], []
         def handler(request):
-            assert aliases, 'Keyboard labels must be durable before an uncertain upload'
+            assert bool(aliases) is (not inline), 'Only reply keyboards update durable label aliases'
             assert request.url.path.endswith('/sendVideo')
             sent.append(multipart(request))
             if outcome == 'timeout':
@@ -35,7 +37,8 @@ def test_help_video_caption_keyboard_receipt_and_safe_retry(tmp_path, outcome):
         telegram = Telegram('123:test', httpx.AsyncClient(transport=httpx.MockTransport(handler)))
         telegram.on_message = lambda *args: receipts.append(args)
         telegram.on_keyboard = lambda *args: aliases.append(args)
-        keys = {'keyboard': [[{'text': '📁 Папки и порядок'}]], 'is_persistent': True}
+        keys = ({'inline_keyboard': [[{'text': '⬅️ Назад', 'callback_data': 'help'}]]} if inline
+                else {'keyboard': [[{'text': '📁 Папки и порядок'}]], 'is_persistent': True})
         token = silent_delivery.set(True)
         try:
             if outcome == 'timeout':
@@ -48,7 +51,10 @@ def test_help_video_caption_keyboard_receipt_and_safe_retry(tmp_path, outcome):
             await telegram.close()
         assert len(sent) == (2 if outcome == 'emoji_rejection' else 1)
         assert receipts == ([] if outcome == 'timeout' else [(1, 71, 9)])
-        assert aliases == [(1, {'Папки и порядок': '📁 Папки и порядок'})]
+        assert aliases == ([] if inline else [(1, {'Папки и порядок': '📁 Папки и порядок'})])
+        if inline:
+            assert json.loads(sent[0]['reply_markup']) == {'inline_keyboard': [[{
+                'text': 'Назад', 'callback_data': 'help', 'icon_custom_emoji_id': IDS['back']}]]}
         for payload in sent:
             assert payload['video'] == b'unchanged video'
             assert payload['caption'].decode() == '📁 Папки'

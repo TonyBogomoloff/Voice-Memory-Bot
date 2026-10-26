@@ -174,7 +174,7 @@ class Telegram:
             raise error
 
     async def video(self, owner, path: Path, thread=None, caption=None, keyboard=None):
-        """Send a bundled Help demo with its explanation and persistent keyboard."""
+        """Send a bundled Help demo with its explanation and navigation buttons."""
         original = {"chat_id": owner, "video": "attach://video", "supports_streaming": True,
                     "show_caption_above_media": True, "duration": 10, "width": 720, "height": 1280}
         if caption:

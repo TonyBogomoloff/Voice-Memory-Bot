@@ -1,9 +1,9 @@
-"""Short, task-oriented help pages for the existing bottom menu."""
+"""Short help pages with inline navigation, independent of the folder keyboard."""
 from __future__ import annotations
 
 from pathlib import Path
 
-HELP_INTRO = "ℹ️ Помощь\n\nЧто хочешь сделать? Выбери тему внизу — расскажу коротко."
+HELP_INTRO = "ℹ️ Помощь\n\nЧто хочешь сделать? Выбери тему — покажу, как это работает."
 
 # Order is shared by the two-column index and the topic lookup.
 HELP_TOPICS = {
@@ -65,11 +65,12 @@ HELP_TOPICS = {
 
 
 def help_page(topic=None):
-    text = "\n\n".join(HELP_TOPICS[topic]) if topic in HELP_TOPICS else HELP_INTRO
+    if topic in HELP_TOPICS:
+        return "\n\n".join(HELP_TOPICS[topic]), [[{"text": "⬅️ Назад", "callback_data": "help"}]]
     buttons = [{"text": title, "callback_data": f"help:{key}"}
                for key, (title, _) in HELP_TOPICS.items()]
     rows = [buttons[index:index + 2] for index in range(0, len(buttons), 2)]
-    return text, rows, "help", "home"
+    return HELP_INTRO, rows
 
 
 def help_video_path(topic):

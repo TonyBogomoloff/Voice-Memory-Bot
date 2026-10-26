@@ -6,9 +6,6 @@ from support.ai import bot as bot
 from support.ai import ready_note, receive, step, tool
 from support.note_actions import request_for
 
-from voice_memory_bot.bottom_menu import ROOT
-from voice_memory_bot.help_menu import HELP_TOPICS
-
 
 @pytest.mark.parametrize('mode', ['notes', 'chat'])
 @pytest.mark.parametrize('kind', ['voice', 'audio', 'video_note', 'document'])
@@ -88,9 +85,9 @@ def test_legacy_voice_history_survives_help_refresh_restart_search_and_export(bo
                 bot.store.db.execute("UPDATE notes SET entry_type='ai_history' WHERE id=?", (answer['id'],))
         before = bot.store.all('SELECT * FROM notes ORDER BY id')
         originals = {n['id']: bot.archive.audio(n).read_bytes() for n in voices}
-        for mid, text in enumerate(('/help', HELP_TOPICS['ai'][0], ROOT), 11000):
-            await bot.handle({'message': {'message_id': mid, 'from': {'id': 1},
-                'chat': {'id': 1, 'type': 'private'}, 'text': text}})
+        index = await bot.command(1, None, '/help', '')
+        demo = await bot.callback(1, None, index['message_id'], 'help:ai')
+        await bot.callback(1, None, demo['message_id'], 'help')
         bot.init_ai(bot.assistant)
         bot.init_folder_view()
         bot.telegram.sent.clear()
