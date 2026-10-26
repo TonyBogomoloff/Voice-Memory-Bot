@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import tempfile
+from contextlib import ExitStack
 from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
 
@@ -180,13 +181,14 @@ class Telegram:
                 continue
             raise error
 
-    async def video(self, owner, path: Path, thread=None, caption=None, keyboard=None, *, duration=10):
+    async def video(self, owner, path: Path, thread=None, caption=None, keyboard=None, *, duration=10,
+                    width=720, height=1280, cover: Path | None = None):
         """Reuse Telegram's stored video; upload only new content or a rejected reference."""
         cache = self.video_cache
         digest = cache.digest(path) if cache else None
         file_id = cache.get(digest) if cache else None
         original = {"chat_id": owner, "video": "attach://video", "supports_streaming": True,
-                    "show_caption_above_media": True, "duration": duration, "width": 720, "height": 1280}
+                    "show_caption_above_media": True, "duration": duration, "width": width, "height": height}
         if caption:
             original["caption"] = caption[:1024]
         if keyboard is not None:
@@ -204,6 +206,8 @@ class Telegram:
                 if str(exc) != "telegram_400" or exc.reason != "file_id_invalid":
                     raise
                 cache.discard(digest, file_id)
+        if cover is not None:
+            original["cover"] = "attach://cover"
         payload, aliases = themed_payload("sendVideo", original)
         if aliases and self.on_keyboard:
             self.on_keyboard(owner, aliases)
@@ -211,9 +215,12 @@ class Telegram:
             data = {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool)) else str(v)
                     for k, v in payload.items()}
             try:
-                with path.open("rb") as handle:
+                with ExitStack() as files_context:
+                    files = {"video": (path.name, files_context.enter_context(path.open("rb")), "video/mp4")}
+                    if cover is not None:
+                        files["cover"] = (cover.name, files_context.enter_context(cover.open("rb")), "image/jpeg")
                     response = await self.client.post(self._base + "sendVideo", data=data,
-                        files={"video": (path.name, handle, "video/mp4")}, timeout=httpx.Timeout(120, connect=10))
+                        files=files, timeout=httpx.Timeout(120, connect=10))
                 body = response.json()
             except (httpx.HTTPError, ValueError):
                 raise ProviderError("telegram_transport_unknown") from None

@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from voice_memory_bot.bot import START_VIDEO
+from voice_memory_bot.bot import START_COVER, START_VIDEO
 from voice_memory_bot.cleanup import CleanupStore
 from voice_memory_bot.config import Config
 from voice_memory_bot.delivery import deletion_error
@@ -48,7 +48,8 @@ async def prepare(telegram, videos, owner, *, check_only=False, forget_message=N
             telegram.on_message = remember
             token = silent_delivery.set(True)
             try:
-                await telegram.video(owner, path, caption='Подготовка видео', duration=duration)
+                options = {'width': 1080, 'height': 1080, 'cover': START_COVER} if path == START_VIDEO else {}
+                await telegram.video(owner, path, caption='Подготовка видео', duration=duration, **options)
             finally:
                 telegram.on_message = previous
                 silent_delivery.reset(token)

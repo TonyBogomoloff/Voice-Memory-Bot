@@ -35,7 +35,8 @@ from .video_cache import CACHE_NAME, VideoFileCache
 
 log = logging.getLogger(__name__)
 
-START_VIDEO = Path(__file__).resolve().parents[2] / "output/remotion/voice-memory-bot-onboarding-v3-ru.mp4"
+START_VIDEO = Path(__file__).resolve().parents[2] / "output/remotion/voice-memory-bot-onboarding-v4-square-ru.mp4"
+START_COVER = START_VIDEO.with_name("cover-v4-square.jpg")
 START_CAPTION = "Твой голосовой блокнот, который всегда с тобой.\nСохраняй идеи, пока они свежие 💙"
 
 
@@ -464,7 +465,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
 
     async def show_start(self, owner, thread=None):
         try:
-            await self.telegram.video(owner, START_VIDEO, thread, caption=START_CAPTION, duration=30)
+            await self.telegram.video(owner, START_VIDEO, thread, caption=START_CAPTION, duration=30,
+                                      width=1080, height=1080, cover=START_COVER)
         except (ProviderError, OSError) as exc:
             # Keep onboarding usable without retrying an upload whose response may be lost.
             log.warning("start video unavailable type=%s", type(exc).__name__)

@@ -211,3 +211,34 @@ def test_preparation_uses_secrets_next_to_configured_app_symlink(tmp_path, monke
         return {'ready': True, 'uploaded': 0}
     monkeypatch.setattr(module, 'prepare', check)
     asyncio.run(module.main(SimpleNamespace(app=app, check=True)))
+
+
+def test_square_start_preparation_and_cached_delivery_keep_valid_payload(bot, monkeypatch):
+    async def run():
+        prepare = preparation_module()
+        async def no_wait(_):
+            pass
+        monkeypatch.setattr(prepare.asyncio, 'sleep', no_wait)
+        uploads, reused = [], []
+        def handler(request):
+            if request.url.path.endswith('/sendVideo'):
+                if request.headers['content-type'].startswith('multipart/'):
+                    uploads.append(request.content)
+                else:
+                    reused.append(json.loads(request.content))
+                return telegram_response({'message_id': 1001, 'video': {'file_id': 'square-video'}})
+            return telegram_response(True)
+        telegram = Telegram('123:test', httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+                            video_cache=bot.config.data_dir / CACHE_NAME)
+        try:
+            await prepare.prepare(telegram, {'start': (prepare.START_VIDEO, 30)}, 1)
+            await telegram.video(1, prepare.START_VIDEO, duration=30, width=1080, height=1080,
+                                 cover=prepare.START_COVER)
+            assert len(uploads) == len(reused) == 1
+            assert prepare.START_COVER.read_bytes() in uploads[0]
+            assert reused[0]['video'] == 'square-video'
+            assert reused[0]['width'] == reused[0]['height'] == 1080
+            assert 'cover' not in reused[0]  # No unattached multipart reference in a JSON request.
+        finally:
+            await telegram.close()
+    asyncio.run(run())
