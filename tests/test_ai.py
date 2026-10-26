@@ -27,12 +27,14 @@ def test_ai_search_returns_every_match_including_a_single_match(bot):
     assert result["has_more"] is False
 
 
-def test_chat_voice_history_reply_new_conversation_and_model_change(bot):
+def test_explicit_chat_voice_reply_history_new_conversation_and_model_change(bot):
     async def run():
         folder = bot.store.create_folder(1, "Разговор", 100)
         bot.ai_state.mode(1, folder["id"], "chat")
         bot.store.select(1, folder["id"])
-        first = await receive(bot, thread=100, voice=True)
+        await bot.new_ai_conversation(1, 100, folder["id"])
+        invitation = bot.store.one("SELECT message_id FROM ai_links ORDER BY rowid DESC LIMIT 1")["message_id"]
+        first = await receive(bot, thread=100, voice=True, reply=invitation)
         assert first["entry_type"] == "ai" and bot.router.calls == 0 and bot.groq.calls == 1
         progress = bot.telegram.sent[-1][1]
         assert progress["thread"] == 100 and progress["reply_to"] == first["transcript_message_id"]
@@ -53,8 +55,8 @@ def test_chat_voice_history_reply_new_conversation_and_model_change(bot):
         await bot.process_ai(bot.ai_state.claim())
         assert bot.ai_state.request(1, third["id"])["conversation_id"] != old
         assert bot.assistant.calls[-1][0]["history"] == []
-        assert len(bot.store.notes(1)) == 2
-        assert all(n["ai_generated_from"] for n in bot.store.notes(1))
+        assert len(bot.store.notes(1)) == 6
+        assert sum(bool(n["ai_generated_from"]) for n in bot.store.notes(1)) == 3
         assert len(bot.ai_state.history(1, old)) == 2
     asyncio.run(run())
 
@@ -207,7 +209,8 @@ def test_restart_replays_receipts_without_duplicate_mutation_or_unknown_send(bot
             provider = Assistant()
             engine = AssistantEngine(state, provider, bot.config.llm.model, bot.ai_models)
             await engine.run(state.claim())
-            assert len(reopened.notes(1)) == 2
+            assert len(reopened.notes(1)) == 3
+            assert request['id'] in {n['id'] for n in reopened.notes(1)}
             assert reopened.note(1, result["id"])["transcript"] == "Текст"
             assert provider.calls[0][0]["steps"][0]["result"]["id"] == result["id"]
         finally:
@@ -235,7 +238,7 @@ def test_provider_failure_after_write_reports_receipt_and_retry_does_not_write_t
         assert "Создано: План" in bot.telegram.sent[-1][1]["text"]
         await bot.callback(1, None, 99, f"airetry:{note['id']}")
         await bot.process_ai(bot.ai_state.claim())
-        assert len(bot.store.notes(1)) == 2 and bot.ai_state.request(1, note["id"])["state"] == "ready"
+        assert len(bot.store.notes(1)) == 3 and bot.ai_state.request(1, note["id"])["state"] == "ready"
         assert sum(n["title"] == "План" for n in bot.store.notes(1)) == 1
     asyncio.run(run())
 
@@ -304,7 +307,7 @@ def test_revoke_write_access_while_model_is_generating(bot):
             return step(message="Доступ выключен")
         bot.assistant.respond = respond
         await bot.process_ai(bot.ai_state.claim())
-        assert [n["transcript"] for n in bot.store.notes(1)] == ["Доступ выключен"]
+        assert [n["transcript"] for n in bot.store.notes(1)] == ["Доступ выключен", "Создай заметку"]
     asyncio.run(run())
 
 

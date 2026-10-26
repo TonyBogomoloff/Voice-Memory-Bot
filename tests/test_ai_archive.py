@@ -69,11 +69,11 @@ def test_backfill_preserves_full_history_and_delivery_without_resurrecting_delet
         assert answer["transcript"] == text and answer["created_at"] == request["created_at"]
         assert first["delivery"] == "unknown" and first["response"] == text
         state.archive_replies()
-        assert len(reopened.notes(1)) == 1
+        assert {n['id'] for n in reopened.notes(1)} == {source['id'], failed['id'], answer['id']}
         assert state.request(1, failed["id"])["result_note_id"] is None
         reopened.delete(1, answer["id"])
         state.archive_replies()
-        assert reopened.notes(1) == []
+        assert {n['id'] for n in reopened.notes(1)} == {source['id'], failed['id']}
         assert state.request(1, source["id"])["result_note_id"] == answer["id"]
     finally:
         reopened.close()

@@ -16,34 +16,35 @@ async def answer(bot, text, message_id, reply, result):
     return note, request, saved
 
 
-def test_only_latest_answer_saved_while_old_messages_files_and_context_survive(bot):
+def test_all_answers_and_requests_remain_saved_searchable_and_exportable(bot):
     async def run():
         source = await receive(bot, 'Исходная запись', message_id=10000)
         first, first_request, old = await answer(bot, 'Обсуди', 10001, source['message_id'], step(message='Первый ответ'))
         old_messages = bot.ai_state.message_ref(1, old['id'])['telegram_messages']
         old_message_id = old_messages[0]['message_id']
         old_files = {p.name: p.read_bytes() for p in bot.archive.directory(old).iterdir()}
-        _, _, separate = await answer(bot, 'Отдельное обсуждение', 10002, 99999, step(message='Другой ответ'))
-        _, _, latest = await answer(bot, 'Уточни', 10003, old_message_id, step(message='Последний ответ'))
-        assert {n['id'] for n in bot.store.notes(1, limit=-1)} == {source['id'], separate['id'], latest['id']}
-        assert bot.store.notes(1, query='Первый ответ') == []
-        assert bot.store.note(1, old['id'])['entry_type'] == 'ai_history'
+        separate_input, _, separate = await answer(bot, 'Отдельное обсуждение', 10002, 99999, step(message='Другой ответ'))
+        latest_input, _, latest = await answer(bot, 'Уточни', 10003, old_message_id, step(message='Последний ответ'))
+        expected = {n['id'] for n in (source, first, old, separate_input, separate, latest_input, latest)}
+        assert {n['id'] for n in bot.store.notes(1, limit=-1)} == expected
+        assert bot.store.notes(1, query='Первый ответ')[0]['id'] == old['id']
+        assert bot.store.note(1, old['id'])['entry_type'] == 'note'
         assert bot.ai_state.message_ref(1, old['id'])['telegram_messages'] == old_messages
         assert {p.name: p.read_bytes() for p in bot.archive.directory(old).iterdir()} == old_files
         assert not any(m == 'deleteMessage' and p['message_id'] == old_message_id for m, p in bot.telegram.sent)
         exported = bot.store.export_notes(1)
-        assert old['id'] not in {n['id'] for n in exported}
+        assert {n['id'] for n in exported} == expected
         assert 'ai_response' not in next(n for n in exported if n['id'] == first['id'])
         bot.init_ai(bot.assistant)
         await bot.ai_engine.run(first_request)  # Replaying an old completion must not hide the latest answer.
         assert bot.store.note(1, latest['id'])['entry_type'] == 'note'
-        _, _, newest = await answer(bot, 'Продолжи старую мысль', 10004, old_message_id, step(message='Новый итог'))
+        newest_input, _, newest = await answer(bot, 'Продолжи старую мысль', 10004, old_message_id, step(message='Новый итог'))
         payload = bot.assistant.calls[-1][0]
         assert payload['reply_note_id'] == old['id']
         assert payload['history'][0]['assistant'] == 'Первый ответ'
         assert old['id'] in {n['id'] for n in payload['conversation_messages']}
-        assert {n['id'] for n in bot.store.notes(1, limit=-1)} == {source['id'], separate['id'], newest['id']}
-        assert bot.store.folders(1)[0]['count'] == 3
+        assert {n['id'] for n in bot.store.notes(1, limit=-1)} == expected | {newest_input['id'], newest['id']}
+        assert bot.store.folders(1)[0]['count'] == 9
     asyncio.run(run())
 
 

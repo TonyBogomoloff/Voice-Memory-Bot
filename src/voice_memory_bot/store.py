@@ -82,7 +82,7 @@ class Store:
 
     def folders(self, owner: int, include_removed=False):
         return self.all("SELECT f.*, (SELECT count(*) FROM notes n WHERE n.folder_id=f.id "
-                        "AND n.deleted=0 AND n.entry_type='note') AS count FROM folders f WHERE owner=? AND (removed=0 OR ?) "
+                        "AND n.deleted=0) AS count FROM folders f WHERE owner=? AND (removed=0 OR ?) "
                         "ORDER BY is_inbox DESC, normalized", (owner, int(include_removed)))
 
     def pinned_folders(self, owner):
@@ -320,7 +320,8 @@ class Store:
         # Keep the old SQL LIMIT -1 contract for callers saved before this change.
         if limit == -1:
             limit = None
-        sql, args = "SELECT * FROM notes WHERE owner=? AND deleted=0 AND entry_type='note'", [owner]
+        # AI requests and legacy answers are saved records too; navigation must never hide them.
+        sql, args = "SELECT * FROM notes WHERE owner=? AND deleted=0", [owner]
         if folder:
             self.folder(owner, folder)
             sql += " AND folder_id=?"
@@ -345,14 +346,13 @@ class Store:
 
     def export_notes(self, owner: int, folder=None):
         # Export all saved data even if a storage quota was lowered after the notes were created.
-        sql, args = "SELECT * FROM notes WHERE owner=? AND deleted=0 AND entry_type!='ai_history'", [owner]
+        sql, args = "SELECT * FROM notes WHERE owner=? AND deleted=0", [owner]
         if folder:
             self.folder(owner, folder)
             sql += " AND folder_id=?"
             args.append(folder)
         notes = self.all(sql + " ORDER BY created_at, id", args)
         selected = {n["id"]: n for n in notes}
-        history_only = {n['id'] for n in self.all("SELECT id FROM notes WHERE owner=? AND entry_type='ai_history'", (owner,))}
         tables = {r["name"] for r in self.all("SELECT name FROM sqlite_master WHERE type='table'")}
         if "ai_requests" in tables:
             for row in self.all("SELECT note_id,response AS ai_response,state AS ai_state,conversation_id,"
@@ -360,8 +360,8 @@ class Store:
                 note_id = row.pop("note_id")
                 result_note_id = row.pop("result_note_id")
                 if note_id in selected:
-                    # A standalone answer already includes the complete original text.
-                    if result_note_id in selected or result_note_id in history_only:
+                    # Standalone answers are exported at their current location, unless deleted.
+                    if result_note_id:
                         row.pop("ai_response")
                     selected[note_id].update(row)
         if "note_revisions" in tables:

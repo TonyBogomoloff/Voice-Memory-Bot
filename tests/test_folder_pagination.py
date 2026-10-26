@@ -20,6 +20,10 @@ def test_folder_pages_cover_archive_keep_photos_and_clamp_stale_page(bot, size):
         folder = bot.store.current_folder(1)
         count = size * 2 + 2
         notes = [saved(bot, folder, f'Запись {i}', 1000 + i) for i in range(count)]
+        with bot.store.transaction():
+            for index, note in enumerate(notes):
+                bot.store.db.execute('UPDATE notes SET entry_type=? WHERE id=?',
+                    (('note', 'ai', 'ai_history')[index % 3], note['id']))
         bot.store.update_note(1, notes[-2]['id'], audio_bytes=1)
         with bot.store.transaction():
             bot.store.db.execute("UPDATE notes SET kind='photo',file_id='photo-id' WHERE id=?", (notes[-2]['id'],))

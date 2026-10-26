@@ -146,7 +146,7 @@ class FolderViewMixin:
         page = view['page'] if identity == view['folder_id'] else -1
         thread = view['thread_id']
         bottom = self.bottom_state(owner) if restore_screen else None
-        count = self.store.one("SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0 AND entry_type='note'",
+        count = self.store.one("SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0",
                                (owner, identity))['n']
         page_size = self.store.folder_page_size(owner)
         pages = max(1, (count + page_size - 1) // page_size)

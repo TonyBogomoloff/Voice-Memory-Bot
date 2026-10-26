@@ -11,6 +11,7 @@ from .assistant import AssistantEngine, CodexAssistant, edge_candidate
 from .providers import ProviderError
 
 log = logging.getLogger(__name__)
+TRANSCRIBED_INPUTS = ("voice", "audio", "video_note", "document")
 
 
 def key(label, data):
@@ -59,7 +60,8 @@ class AIBotMixin:
             context = self.ai_state.note_context(owner, action.split(":", 1)[1])
             if context:
                 self.store.note(owner, context["note_id"])
-        if folder["mode"] == "chat" or reply or (self.store.action(owner) or "").startswith("ai_note:"):
+        implicit_chat = folder["mode"] == "chat" and not any(message.get(k) for k in TRANSCRIBED_INPUTS)
+        if implicit_chat or reply or action.startswith("ai_note:"):
             pending = self.store.one("SELECT count(*) AS n FROM ai_requests WHERE owner=? "
                                      "AND state IN ('queued','running')", (owner,))["n"]
             if pending >= self.store.limits.max_pending_per_user:
@@ -91,7 +93,8 @@ class AIBotMixin:
                     self.store.note(owner, context["note_id"])
                 if prompt_reply:
                     reply = None
-        if reply or conversation or note["input_mode"] == "chat":
+        implicit_chat = note["input_mode"] == "chat" and note["kind"] not in TRANSCRIBED_INPUTS
+        if reply or conversation or implicit_chat:
             trigger = "reply" if reply or conversation else "folder"
             if not reply and not conversation and not self.ai_state.request(owner, note["id"]):
                 conversation = self.ai_state.active(owner, note["source_folder"])
@@ -110,7 +113,8 @@ class AIBotMixin:
     async def route_ai(self, note, detect=True):
         owner, identity = note["owner"], note["id"]
         request = self.ai_state.request(owner, identity)
-        if request is None and detect:
+        # Dictation is a saved note unless the user explicitly requested AI or replied.
+        if request is None and detect and note["kind"] not in TRANSCRIBED_INPUTS:
             settings = self.ai_state.settings(owner)
             if settings["wake_enabled"] and edge_candidate(note["transcript"], settings["names"]):
                 try:
@@ -150,7 +154,8 @@ class AIBotMixin:
             rows.append([key("Изменить имена", "ainames")])
         rows.extend([[key("Доступ: " + access_labels[settings['notes_access']], "aiaccessmenu")],
                      [key("Модель: " + selected, "aimodels")]])
-        text += "\n\nВ ИИ-папке все сообщения идут в диалог. Ответ на любое сообщение запускает ИИ с текстом этого сообщения как контекстом."
+        text += ("\n\nВ ИИ-папке текст идёт в диалог. Голосовые и аудио только сохраняются и расшифровываются. "
+                 "Для ИИ используй /ai или ответь на сообщение с заданием.")
         text += "\nПри доступе к заметкам модель получает найденные записи по мере запроса."
         await self.show_bottom(owner, text, thread, keys(*rows), screen="aisettings",
                                back="settings:all", edit_id=edit_id)
@@ -169,7 +174,8 @@ class AIBotMixin:
         self.store.set_action(owner, None)
         self.ai_state.active(owner, folder["id"])
         await self.show_bottom(owner, f"🤖 Папка «{folder['name']}» — диалог с ИИ.\n"
-                                   "Отправь текст или голосовое. Можно попросить найти, создать или изменить заметку.",
+                                   "Отправь текст. Голосовые сохраняются без автоответа ИИ; для задания используй /ai "
+                                   "или ответь на сообщение. Можно попросить найти, создать или изменить заметку.",
                                    thread, keys([key("Новый разговор", f"ainew:{folder['id']}")],
                                    [key("История разговоров", f"ailist:{folder['id']}:0"), key("Настройки", "aisettings")]),
                                    screen=f"foldermenu:{folder['id']}", back="home")
@@ -179,7 +185,7 @@ class AIBotMixin:
         folder = self.store.folder(owner, folder_id)
         conversation = self.ai_state.new_conversation(owner, folder_id)
         text = "Новый разговор. Предыдущая история сохранена."
-        text += ("\nОтправь текст или голосовое." if folder["mode"] == "chat"
+        text += ("\nОтправь текст или ответь на это сообщение голосовым." if folder["mode"] == "chat"
                  else "\nОтветь на это сообщение, чтобы начать. Обычные сообщения в этой папке остаются заметками.")
         response = await self.show(owner, text, thread)
         self.ai_state.link(owner, response["message_id"], conversation)
