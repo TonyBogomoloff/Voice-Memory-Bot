@@ -82,6 +82,9 @@ def test_preparation_survives_restart_and_first_help_request_has_no_upload(bot, 
                 assert request['reply_markup'] == {'inline_keyboard': [[{
                     'text': 'Назад', 'callback_data': 'help', 'icon_custom_emoji_id': IDS['back']}]]}
                 index = await restarted.callback(1, None, demo['message_id'], 'help')
+                assert reused[-1]['media']['caption'] == ''
+                assert not reused[-1]['media'].get('caption_entities')
+                assert index['message_id'] == demo['message_id']
                 assert restarted.bottom_state(1)['screen'] == 'root'
                 assert restarted.store.one('SELECT message_id FROM bottom_menus WHERE owner=1')['message_id'] == carrier
             assert len(uploads) == len(videos)

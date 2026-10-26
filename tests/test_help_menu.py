@@ -24,7 +24,7 @@ async def tap(bot, message, data):
 
 def assert_index(bot):
     payload = last_message(bot)
-    assert payload["caption"] == HELP_INTRO
+    assert payload["caption"] == HELP_INTRO == ""
     rows = payload["keyboard"]["inline_keyboard"]
     assert [len(row) for row in rows] == [2, 2, 2, 2]
     assert [b["callback_data"] for row in rows for b in row] == [f"help:{key}" for key in HELP_TOPICS]
