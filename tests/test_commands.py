@@ -59,8 +59,8 @@ def test_start_registers_menu_commands(bot):
                         if c.args == ("setMyCommands",))
         assert commands == [
             {"command": "ai", "description": "Изменить с ИИ"},
-            {"command": "move", "description": "Перенести запись"},
-            {"command": "delete", "description": "Удалить запись"},
+            {"command": "move", "description": "Перенести"},
+            {"command": "delete", "description": "Удалить"},
             {"command": "options", "description": "Опции"},
         ]
     asyncio.run(run())

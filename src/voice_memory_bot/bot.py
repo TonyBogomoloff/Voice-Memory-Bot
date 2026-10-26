@@ -122,8 +122,8 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             raise ProviderError("webhook_present_stop_before_polling")
         await self.telegram.call("setMyCommands", commands=[
             {"command": "ai", "description": "Изменить с ИИ"},
-            {"command": "move", "description": "Перенести запись"},
-            {"command": "delete", "description": "Удалить запись"},
+            {"command": "move", "description": "Перенести"},
+            {"command": "delete", "description": "Удалить"},
             {"command": "options", "description": "Опции"},
         ])
         # Finish physical deletion interrupted by a previous shutdown.
@@ -659,6 +659,12 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
             "message_id": 0, "reply_to_message": {"message_id": note["message_id"]}})
 
     async def callback(self, owner, thread, message_id, data):
+        if data == "cancel_record_options":
+            state = self.menu_state(owner)
+            if (state and state.screen.kind == "recordoptions"
+                    and message_id == state.extra.get("inline_prompt_id")):
+                await self.bottom_input(owner, thread, "Отмена", None)
+            return
         if await self.note_delete_callback(owner, thread, message_id, data):
             return
         if await self.reply_move_callback(owner, thread, message_id, data):
@@ -813,9 +819,9 @@ class Bot(ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, F
         identity = note["id"]
         return await self.show_bottom(owner, "Что сделать с этой записью?", thread, keyboard(
             [button("Изменить с ИИ", f"aiask:{identity}"),
-             button("Перенести запись", f"recordmove:{identity}")],
-            [button("Удалить запись", f"delete:{identity}")]),
-            screen=f"recordoptions:{identity}", back="root", keep=True,
+             button("Перенести", f"recordmove:{identity}")],
+            [button("Удалить", f"delete:{identity}")]),
+            screen=f"recordoptions:{identity}", back="root", keep=True, mirror=True,
             reply_to=(message.get("reply_to_message") or {}).get("message_id"),
             command_id=message["message_id"] if "reply_to_message" in message else 0)
 

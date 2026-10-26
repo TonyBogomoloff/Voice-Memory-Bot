@@ -118,7 +118,9 @@ class FolderMenuMixin:
         self.folder_pages[owner] = min(max(page + (1 if text == "➡️" else -1), 0), len(pages) - 1)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
-        await self.refresh_folder_keyboard(owner, thread, force=True)
+        previous = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,))
+        await self.refresh_folder_keyboard(owner, thread, force=True,
+                                           restore_id=(previous or {}).get("message_id") or 0)
         self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
 
     @staticmethod
@@ -188,7 +190,8 @@ class FolderMenuMixin:
         await self.refresh_folder_keyboard(owner, thread, force=True,
             notice="Эта кнопка устарела. Выбери папку внизу или открой меню.")
 
-    async def refresh_folder_keyboard(self, owner, thread=None, *, force=False, notice=None, transient=False, title=None):
+    async def refresh_folder_keyboard(self, owner, thread=None, *, force=False, notice=None, transient=False,
+                                      title=None, restore_id=None):
         if not self.store.folders(owner):
             return await self.ask_first_folder(owner, thread)
         folder = self.store.folder(owner, self.store.current_folder(owner))
@@ -203,7 +206,7 @@ class FolderMenuMixin:
             text = notice + "\n\n" + text
         response = await self.send_bottom(owner, thread,
             {"screen": "root", "back": "root", "text": text, "rows": [], "page": 0, "keep": bool(notice)},
-            raw_keys=keys)
+            raw_keys=keys, restore_id=restore_id)
         self.folder_keyboards[owner] = signature
         return response
 
