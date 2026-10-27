@@ -4,6 +4,7 @@ import json
 import time
 
 from .store import new_id
+from .trash import TRASH_DESCRIPTION, folder_icon
 
 MENU_COMMANDS = {
     "📁 Папки": "/folders", "📝 Записи": "/notes",
@@ -13,7 +14,7 @@ MENU_COMMANDS = {
     "⌂ Меню": "/menu", "✖️ Отмена": "/cancel",
     "⚙️ Options": "/options", "📁 Папка": "/options",
 }
-FOLDER_PREFIXES = ("📁 ", "✅ ", "📌 ", "✓ 📌 ")
+FOLDER_PREFIXES = ("🗑 ", "📁 ", "✅ ", "📌 ", "✓ 📌 ")
 OPTION_ACTIONS = {"✏️ Переименовать": "rename", "🗑 Удалить папку": "dropfolder",
                   "📦 Скачать исходники": "raw", "← К папке": "back"}
 
@@ -92,15 +93,15 @@ class FolderMenuMixin:
 
     def folder_input_placeholder(self, owner):
         active = self.store.current_folder(owner)
-        name = self.store.folder(owner, active)["name"] if active else "Выбери папку"
-        return ("📁 " + name)[:64]
+        folder = self.store.folder(owner, active) if active else None
+        return (f"{folder_icon(folder)} {folder['name']}" if folder else "📁 Выбери папку")[:64]
 
     def folder_keyboard(self, owner):
         active = self.store.current_folder(owner)
         pages = self.folder_keyboard_pages(owner)
         page = min(max(self.folder_pages.get(owner, 0), 0), len(pages) - 1)
         self.folder_pages[owner] = page
-        buttons = [{"text": ("✅ " if folder["id"] == active else "📁 ") + folder["name"],
+        buttons = [{"text": folder_icon(folder, folder["id"] == active) + " " + folder["name"],
                     **({"style": "primary"} if folder["id"] == active else {})}
                    for folder in pages[page]]
         rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
@@ -123,6 +124,7 @@ class FolderMenuMixin:
         self.folder_pages[owner] = min(max(page + (1 if text == "➡️" else -1), 0), len(pages) - 1)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
+        self.trash_confirmations.pop(owner, None)
         await self.refresh_folder_keyboard(owner, thread, force=True)
         self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
 
@@ -187,6 +189,7 @@ class FolderMenuMixin:
                         await self.remove_menu_message(owner, message_id)
                         return
                 self.folder_delete_confirmations.pop(owner, None)
+                self.trash_confirmations.pop(owner, None)
                 return await self.show_notes(owner, thread, folder["id"], command_message_id=message_id)
         await self.remove_menu_message(owner, message_id)
         self.store.set_action(owner, None)
@@ -202,15 +205,18 @@ class FolderMenuMixin:
         if (not force and self.folder_keyboards.get(owner) == signature
                 and (self.bottom_state(owner) or {}).get("screen") == "root"):
             return
-        text = title or f"📁 {folder['name']}"
+        text = title or f"{folder_icon(folder)} {folder['name']}"
         if folder['mode'] == 'chat':
             text += "\nРежим: диалог с ИИ"
-        text += ("\nЗдесь записи из удалённых папок." if folder['is_trash']
-                 else "\nСохраняю сообщения в эту папку.")
+        if folder["is_trash"]:
+            if title != "☰ Меню":
+                text += "\n" + TRASH_DESCRIPTION
+        else:
+            text += "\nСохраняю сообщения в эту папку."
         if notice:
             text = notice + "\n\n" + text
         response = await self.send_bottom(owner, thread,
-            {"screen": "root", "back": "root", "text": text, "rows": [], "page": 0, "keep": bool(notice)},
+            {"screen": "root", "back": "root", "text": text, "rows": [], "page": 0, "keep": bool(notice) or bool(folder["is_trash"])},
             raw_keys=keys)
         self.folder_keyboards[owner] = signature
         return response
@@ -221,6 +227,7 @@ class FolderMenuMixin:
             return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
+        self.trash_confirmations.pop(owner, None)
         await self.refresh_folder_keyboard(owner, thread, force=True, title=title)
         self.remember_screen(owner, thread, "Папки внизу", {"bottom_menu": True})
 
@@ -229,6 +236,7 @@ class FolderMenuMixin:
         from .bot import button, keyboard
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
+        self.trash_confirmations.pop(owner, None)
         identity = self.store.current_folder(owner)
         folder = self.store.folder(owner, identity) if identity else None
         enabled = self.store.message_buttons_enabled(owner)
@@ -278,6 +286,7 @@ class FolderMenuMixin:
             folder = self.store.folder(owner, folder_id)
             if action == "canceldrop":
                 self.folder_delete_confirmations.pop(owner, None)
+                self.trash_confirmations.pop(owner, None)
                 await self.remove_menu_message(owner, self.folder_delete_prompts.pop(owner, None))
                 return True
             if folder["name"] != name:
@@ -287,6 +296,7 @@ class FolderMenuMixin:
             selected = self.store.delete_folder(owner, folder_id)
             self.leave_folder_options(owner)
             self.folder_delete_confirmations.pop(owner, None)
+            self.trash_confirmations.pop(owner, None)
             await self.remove_menu_message(owner, self.folder_delete_prompts.pop(owner, None))
             if selected:
                 await self.show_notes(owner, thread, selected,

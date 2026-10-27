@@ -77,7 +77,7 @@ def test_folder_keys_select_before_input_or_ai_and_plain_names_are_notes(bot):
         chat = bot.store.create_folder(1, "Диалог")
         bot.ai_state.mode(1, chat["id"], "chat")
         await receive(bot, "/start")
-        assert labels(bot) == ["✅ Входящие", "📁 Работа", "📁 Диалог", "📁 Корзина", "📁 Папка", "🎛️ Настройки"]
+        assert labels(bot) == ["✅ Входящие", "📁 Работа", "📁 Диалог", "🗑 Корзина", "📁 Папка", "🎛️ Настройки"]
         assert reply_keyboard(bot)["is_persistent"]
         await receive(bot, "📁 Диалог", 2)
         assert "✅ Диалог" in labels(bot)
@@ -118,7 +118,7 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         token = bot.folder_delete_confirmations[1][0]
         await bot.callback(1, None, 500, f"confirmdrop:{token}")
         await receive(bot, "✅ Проекты", 4)
-        assert labels(bot) == ["✅ Входящие", "📁 Корзина", "📁 Папка", "🎛️ Настройки"]
+        assert labels(bot) == ["✅ Входящие", "🗑 Корзина", "📁 Папка", "🎛️ Настройки"]
         assert bot.store.notes(1) == []
     asyncio.run(run())
 
@@ -160,9 +160,9 @@ def test_pages_reach_every_folder_and_arrows_never_become_notes(bot):
         seen = set()
         for page in range(3):
             keys = reply_keyboard(bot)["keyboard"]
-            folder_labels = [b["text"] for row in keys for b in row if b["text"] != "📁 Папка" and b["text"].startswith(("📁 ", "✅ "))]
+            folder_labels = [b["text"] for row in keys for b in row if b["text"] != "📁 Папка" and b["text"].startswith(("📁 ", "✅ ", "🗑 "))]
             assert len(folder_labels) <= 4
-            seen.update(label.removeprefix("✅ ").removeprefix("📁 ") for label in folder_labels)
+            seen.update(label.removeprefix("✅ ").removeprefix("📁 ").removeprefix("🗑 ") for label in folder_labels)
             if page < 2:
                 assert keys[2][-1]["text"] == "➡️"
                 assert all(b["text"] not in {"⬅️", "➡️"} for row in keys[:2] for b in row)

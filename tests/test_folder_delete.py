@@ -196,6 +196,6 @@ def test_saved_legacy_delete_dialog_never_restores_confirmation_keyboard(tmp_pat
             'mirror': True,
         })
         assert 'Удалить' not in labels(bot) and 'Отмена' not in labels(bot)
-        assert '📁 Корзина' in labels(bot) and bot.bottom_state(1)['screen'] == 'root'
+        assert '🗑 Корзина' in labels(bot) and bot.bottom_state(1)['screen'] == 'root'
         assert not store.folder(1, folder)['removed']
     asyncio.run(run())

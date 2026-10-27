@@ -139,3 +139,23 @@ def test_trash_upgrade_preserves_existing_records_and_reuses_namesake(tmp_path):
         assert store.all('PRAGMA foreign_key_check') == []
     finally:
         store.close()
+
+
+def test_trash_cleanup_upgrade_preserves_rows_without_starting_deletion(tmp_path):
+    path = tmp_path / 'db'
+    store = Store(path, Limits())
+    trash = store.trash_folder(1)
+    note, _ = store.add_note(1, trash['id'], {'message_id': 20}, 'text', transcript='Сохранить')
+    before = store.note(1, note['id'])
+    with store.transaction():
+        store.db.execute('DROP TABLE trash_cleanup')
+        store.db.execute('PRAGMA user_version=5')
+    store.close()
+    store = Store(path, Limits())
+    try:
+        assert store.note(1, note['id']) == before
+        assert store.folder(1, trash['id']) == trash
+        assert store.all('SELECT * FROM trash_cleanup') == []
+        assert store.all('PRAGMA foreign_key_check') == []
+    finally:
+        store.close()

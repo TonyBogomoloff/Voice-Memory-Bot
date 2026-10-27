@@ -42,11 +42,12 @@ ACTION_ICONS = {
     'airetry': 'retry', 'aicollapse': 'back', 'export': 'export', 'zip': 'export',
     'pagesettings': 'notes', 'pagesize': 'notes',
     'exportsettings': 'settings', 'exportformat': 'text', 'settings': 'settings', 'help': 'help',
-    'deleteall': 'delete', 'delete': 'delete', 'dropfolder': 'delete',
-    'confirmdelete': 'delete', 'confirmdeleteall': 'delete', 'confirmdrop': 'delete',
+    'delete': 'delete', 'dropfolder': 'delete',
+    'cleartrash': 'delete', 'confirmtrash': 'delete', 'canceltrash': 'cancel',
+    'confirmdelete': 'delete', 'confirmdrop': 'delete',
     'canceldelete': 'cancel', 'canceldrop': 'cancel', 'rcancel': 'cancel', 'rename': 'edit',
     'text': 'text', 'original': 'text', 'audio': 'waveform', 'retry': 'retry',
-    'retrydeleteall': 'retry', 'home': 'home', 'options': 'menu', 'pin': 'pin', 'unpin': 'pin',
+    'home': 'home', 'options': 'menu', 'pin': 'pin', 'unpin': 'pin',
     'recordmove': 'move', 'pick': 'move', 'choose': 'move', 'place': 'folder', 'rmove': 'folder',
     'menumessagebuttons': 'toggle', 'messagebuttons': 'toggle', 'cancel_record_options': 'cancel',
 }
@@ -69,6 +70,8 @@ def semantic_icon(item):
     if marker in {'check', 'folder_active', 'back', 'next'}:
         return marker
     action = item.get('callback_data', '').split(':', 1)[0]
+    if marker == 'delete' and action in {'folder', 'place', 'rmove'}:
+        return marker
     if action in {'menumessagebuttons', 'messagebuttons'}:
         # Callback encodes the next state; the icon shows the current one.
         return 'toggle_off' if item['callback_data'].endswith(':1') else 'toggle'

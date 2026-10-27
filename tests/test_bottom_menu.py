@@ -127,17 +127,12 @@ def test_confirmations_cancel_expire_and_do_not_delete_after_restart(bot):
         await receive(bot, BACK, 1001)
         await receive(bot, "🗑 Да, удалить папку", 1002)
         assert bot.store.folder(1, folder)["removed"] == 0
-        await receive(bot, "/delete_all", 1003)
+        await bot.callback(1, None, None, f"dropfolder:{folder}")
+        token = bot.folder_delete_confirmations[1][0]
         restarted = Bot(bot.config, bot.store, FakeTelegram(), FakeGroq(), FakeRouter())
-        await receive(restarted, "🗑 Да, удалить всё", 1004)
-        assert restarted.store.folder(1, folder)["removed"] == 0
-        assert "устарело" in last_message(restarted)["text"]
-        await receive(restarted, "/delete_all", 1005)
-        await receive(restarted, "🗑 Да, удалить всё", 1006)
-        assert [f['name'] for f in restarted.store.folders(1)] == ['Корзина']
-        assert restarted.store.all("SELECT * FROM bottom_menu_labels WHERE label LIKE '%Входящие%'") == []
-        await receive(restarted, "🗑 Да, удалить всё", 1007)
-        assert restarted.store.notes(1) == []
+        with pytest.raises(ValueError, match="устарело"):
+            await restarted.callback(1, None, None, f"confirmdrop:{token}")
+        assert not bot.store.folder(1, folder)['removed']
     asyncio.run(run())
 
 
@@ -194,11 +189,11 @@ def test_last_folder_deletion_keeps_trash_and_new_folder_controls(bot):
         assert not any("web_app" in b for row in reply_keyboard(bot)["keyboard"] for b in row)
         bot.store.delete_folder(1, bot.store.current_folder(1))
         await receive(bot, "/start", 1001)
-        assert bot.store.action(1) is None and '✅ Корзина' in labels(bot)
+        assert bot.store.action(1) is None and '🗑 Корзина' in labels(bot)
         await receive(bot, '/new', 1002)
         assert bot.store.action(1) == 'create' and labels(bot) == ['Отмена']
         await receive(bot, 'Отмена', 1003)
-        assert bot.store.action(1) is None and '✅ Корзина' in labels(bot)
+        assert bot.store.action(1) is None and '🗑 Корзина' in labels(bot)
     asyncio.run(run())
 
 
@@ -222,17 +217,6 @@ def test_selected_note_ai_keeps_bottom_menu_and_inline_cancel_survives_restart(b
         await receive(restarted, "Обычная заметка", 1002)
         assert restarted.ai_state.claim() is None
         assert restarted.store.note(1, note["id"])["transcript"] == "Исходник"
-    asyncio.run(run())
-
-
-def test_delete_all_buttons_are_red(bot):
-    async def run():
-        await bot.callback(1, None, None, "settings:all")
-        controls = [b for row in reply_keyboard(bot)["keyboard"] for b in row if b["text"] == "🗑 Удалить всё"]
-        assert controls and controls[0]["style"] == "danger"
-        await bot.delete_all_menu(1)
-        controls = [b for row in reply_keyboard(bot)["keyboard"] for b in row if b["text"] == "🗑 Да, удалить всё"]
-        assert controls and controls[0]["style"] == "danger"
     asyncio.run(run())
 
 

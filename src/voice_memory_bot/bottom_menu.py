@@ -106,6 +106,8 @@ class BottomMenuMixin:
             state = MenuState.from_mapping(state)
         if state.screen.kind == "help":
             return await self.show_help(owner, thread, state.extra.get("help_topic"), edit_id=edit_id)
+        if state.screen.kind == "deleteall":
+            return await self.show_main_menu(owner, thread)
         if state.screen.kind in {"ai_note", "dropfolder"}:
             # Saved legacy dialogs must not bring back their old reply keyboards.
             return await self.refresh_folder_keyboard(owner, thread, force=True)
@@ -232,8 +234,8 @@ class BottomMenuMixin:
             return True
         if text in {BACK, ROOT}:
             self.store.set_action(owner, None)
-            self.delete_confirmations.pop(owner, None)
             self.folder_delete_confirmations.pop(owner, None)
+            self.trash_confirmations.pop(owner, None)
             await self.open_bottom_screen(owner, thread, state.back.wire if state and text == BACK else "root")
             return True
         if action is None:

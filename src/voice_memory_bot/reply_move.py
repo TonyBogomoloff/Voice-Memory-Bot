@@ -69,7 +69,7 @@ class ReplyMoveMixin:
         source = self.store.note(owner, session["note_id"])["folder_id"]
         folders = [f for f in self.store.folders(owner) if f["id"] != source]
         page = max(0, min(page, (len(folders) - 1) // 8))
-        rows = folder_button_rows([button(folder["name"], f"rmove:{token}:{folder['id']}")
+        rows = folder_button_rows([button(("🗑 " if folder["is_trash"] else "") + folder["name"], f"rmove:{token}:{folder['id']}")
                                    for folder in folders[page * 8:(page + 1) * 8]])
         nav = []
         if page:

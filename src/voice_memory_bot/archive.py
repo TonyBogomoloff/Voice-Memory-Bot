@@ -31,8 +31,5 @@ class Archive:
     def delete(self, note):
         return self.originals.delete(note)
 
-    def delete_all(self, owner):
-        return self.originals.delete_all(owner)
-
     def export(self, notes, folders, output, include_audio, part_bytes, **options):
         return self.exporter.build(notes, folders, output, include_audio, part_bytes, **options)

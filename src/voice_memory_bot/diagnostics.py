@@ -34,7 +34,7 @@ def inspect_database(path: Path, *, now=None):
 
         result = {
             "schema_version": db.execute("PRAGMA user_version").fetchone()[0],
-            "missing_tables": sorted({'notes', 'updates', 'ai_requests', 'note_moves', 'deletion_jobs'} - tables),
+            "missing_tables": sorted({'notes', 'updates', 'ai_requests', 'note_moves', 'trash_cleanup'} - tables),
             "integrity_ok": all(row[0] == "ok" for row in db.execute("PRAGMA quick_check")),
             "foreign_key_violations": sum(1 for _ in db.execute("PRAGMA foreign_key_check")),
             "updates": {"states": states("updates", ("pending", "processing", "failed")),
@@ -47,7 +47,7 @@ def inspect_database(path: Path, *, now=None):
                    "oldest_created_age_seconds": oldest("ai_requests", "created_at", "state IN ('queued','running')"),
                    "unknown_delivery": count("ai_requests", "state!='deleted' AND delivery='unknown'")},
             "moves": states("note_moves", ("publishing", "cleanup", "done", "unknown")),
-            "deletions_pending": count("deletion_jobs", "files_pending=1"),
+            "deletions_pending": count("trash_cleanup", "files_pending=1 OR message_ids!='[]'"),
         }
         result["needs_attention"] = bool(
             result["missing_tables"] or not result["integrity_ok"] or result["foreign_key_violations"]

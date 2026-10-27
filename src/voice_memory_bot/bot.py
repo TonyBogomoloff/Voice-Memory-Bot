@@ -31,6 +31,7 @@ from .routing import fallback_title
 from .scheduling import dispatch_by_owner, run_for_owners
 from .states import InputKind
 from .store import Store, clean_name, new_id
+from .trash import TRASH_DESCRIPTION, TrashMixin, folder_icon
 from .update_queue import update_owner
 from .video_cache import CACHE_NAME, VideoFileCache
 
@@ -43,7 +44,7 @@ START_CAPTION = "Твой голосовой блокнот, который вс
 
 def button(text, data):
     return {"text": text, "callback_data": data, **(
-        {"style": "danger"} if data == "deleteall" or data.startswith(("confirmdeleteall:", "delete:", "confirmdelete:", "notedel:", "dropfolder:", "confirmdrop:")) else {})}
+        {"style": "danger"} if data.startswith(("delete:", "confirmdelete:", "notedel:", "dropfolder:", "confirmdrop:", "cleartrash:", "confirmtrash:")) else {})}
 
 
 def keyboard(*rows):
@@ -66,10 +67,9 @@ def transcript_chunks(text, limit=3900):
 HOME = keyboard([button("📂 Все папки", "folders"), button("＋ Новая папка", "create")],
                 [button("📝 Записи", "notes"), button("🔎 Поиск", "search")],
                 [button("🤖 ИИ", "aiopen"), button("📦 Экспорт всего", "export:all")],
-                [button("⚙️ Настройки", "settings:all"), button("ℹ️ Помощь", "help")],
-                [button("🗑 Удалить всё", "deleteall")])
+                [button("⚙️ Настройки", "settings:all"), button("ℹ️ Помощь", "help")])
 
-class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
+class Bot(TrashMixin, ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin, FolderViewMixin, FolderMenuMixin, CleanupMixin, AIBotMixin):
     def __init__(self, config: Config, store: Store, telegram: Telegram, groq: Groq, router: CodexRouter,
                  assistant=None):
         self.config, self.store = config, store
@@ -87,6 +87,7 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
         self.init_ai(assistant)
         self.deliveries = DeliveryService(store, self.ai_state)
         self.init_cleanup()
+        self.init_trash()
         self.folder_delete_confirmations = {}
         self.folder_delete_prompts = {}
         self.folder_keyboards = {}
@@ -113,7 +114,6 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
         # Finish physical deletion interrupted by a previous shutdown.
         for note in self.store.all("SELECT * FROM notes WHERE deleted=1"):
             self.archive.delete(note)
-        await self.resume_deletions()
         await self.configure_menu()
         log.info("started bot_id=%s folder_mode=custom telegram_topics=%s", me["id"], me.get("has_topics_enabled", False))
         from .obsidian_api import start_api
@@ -123,6 +123,7 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
                 group.create_task(self.poll())
                 group.create_task(self.dispatch())
                 group.create_task(self.worker())
+                group.create_task(self.trash_cleanup_worker())
                 group.create_task(self.ai_worker())
                 group.create_task(self.folder_view_worker())
         finally:
@@ -284,16 +285,6 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
             if move_callback:
                 await self.telegram.call("answerCallbackQuery", callback_query_id=callback["id"])
             return
-        job = self.cleanup.job(owner)
-        if owner in self.deleting_owners or job and job["files_pending"]:
-            if owner not in self.deleting_owners and (
-                callback and callback.get("data") == "retrydeleteall"
-                or message.get("text", "").split("@", 1)[0] == "/delete_all"
-                or (self.bottom_state(owner) or {}).get("actions", {}).get(navigation) == "retrydeleteall"
-            ):
-                return await self.resume_delete_all(owner)
-            return await self.show(owner, "Очистка ещё не завершена. Повтори её перед отправкой новых заметок.",
-                                   keys=keyboard([button("Повторить очистку", "retrydeleteall")]))
         self.store.register_user(owner)
         try:
             if callback:
@@ -489,8 +480,7 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
     async def command(self, owner, thread, command, argument):
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
-        if command == "/delete_all":
-            return await self.delete_all_menu(owner, thread)
+        self.trash_confirmations.pop(owner, None)
         if command == "/ai":
             return await self.open_ai(owner, thread)
         if command == "/start":
@@ -508,7 +498,6 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
         if command in {"/help", "/privacy"}:
             return await self.show_help(owner, thread)
         if command == "/cancel":
-            self.delete_confirmations.pop(owner, None)
             return await self.show_home(owner, thread)
         if command == "/folders":
             return await self.show_folders(owner, thread)
@@ -585,7 +574,7 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
         page = max(0, min(page, (len(folders) - 1) // 4))
         for folder in folders[page * 4:(page + 1) * 4]:
             action = f"folder:{folder['id']}:-1"
-            marker = "✓" if folder["id"] == active else "📁"
+            marker = "🗑" if folder["is_trash"] else "✓" if folder["id"] == active else "📁"
             rows.append([button(f"{marker} {folder['name']} · {folder['count']}", action)])
         nav = []
         mode = "folders"
@@ -607,12 +596,12 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
 
     async def show_notes_menu(self, owner, thread, identity, page=0, edit_id=None):
         folder = self.enter_folder_options(owner, identity)
-        text = f"📁 {folder['name']}"
+        text = f"{folder_icon(folder)} {folder['name']}"
         if folder["mode"] == "chat":
             text += "\nРежим: диалог с ИИ"
         if folder['is_trash']:
-            text += "\nЗдесь записи из удалённых папок. Вернуть запись можно через «Переместить»."
-            rows = [[button("＋ Создать", "create")],
+            text += "\n" + TRASH_DESCRIPTION + " Вернуть запись можно через «Переместить»."
+            rows = [[button("＋ Создать", "create"), button("🗑 Очистить корзину", f"cleartrash:{identity}")],
                     [button("💎 Для Obsidian", f"obsidian:{identity}"),
                      button("📦 Экспорт", f"zip:{identity}:all")]]
         else:
@@ -623,13 +612,13 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
                      button("📦 Экспорт", f"zip:{identity}:all")],
                     [button("🗑 Удалить папку", f"dropfolder:{identity}")]]
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"foldermenu:{identity}",
-                               back="root", edit_id=edit_id)
+                               back="root", edit_id=edit_id, keep=bool(folder["is_trash"]))
 
     def note_card(self, note):
         folder = self.store.folder(note["owner"], note["folder_id"])
         date = datetime.fromtimestamp(note["created_at"], UTC).strftime("%d.%m.%Y %H:%M UTC")
         label = f"Без папки · {folder['name']}" if folder.get('removed') else folder['name']
-        text = f"📁 {label}\n{note['title']}\n{date}"
+        text = f"{folder_icon(folder)} {label}\n{note['title']}\n{date}"
         if note["state"] in {"queued", "processing"}:
             text += "\n⏳ Обрабатываю запись."
         elif note["state"] == "asr_failed":
@@ -711,6 +700,8 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
                     and message_id == state.extra.get("inline_prompt_id")):
                 await self.bottom_input(owner, thread, "Отмена", None)
             return
+        if await self.trash_callback(owner, thread, message_id, data):
+            return
         if await self.note_delete_callback(owner, thread, message_id, data):
             return
         if await self.reply_move_callback(owner, thread, message_id, data):
@@ -720,8 +711,6 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
         if await self.obsidian_callback(owner, thread, message_id, data):
             return
         if await self.folder_menu_callback(owner, thread, message_id, data):
-            return
-        if await self.cleanup_callback(owner, thread, message_id, data):
             return
         if await self.ai_callback(owner, thread, message_id, data):
             return
@@ -1013,7 +1002,6 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
                 [button(f"📝 Записей на странице · {self.store.folder_page_size(owner)}", "pagesettings")]]
         if hasattr(self, "ai_settings"):
             rows.append([button("🤖 Настройки ИИ", "aisettings")])
-        rows.append([button("🗑 Удалить всё", "deleteall")])
         text = ("⚙️ Настройки\n\n"
                 "Кнопки у сообщений: «Переместить», «Удалить», «ИИ».\n"
                 "Когда выключены, новые текстовые сообщения и фото остаются как есть, без замены копией.\n"
@@ -1063,9 +1051,6 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
                             back="home" if identity == "all" else f"foldermenu:{identity}", edit_id=edit_id)
 
     async def send_export(self, owner, thread, identity, content):
-        job = self.cleanup.job(owner)
-        if owner in self.deleting_owners or job and job["files_pending"]:
-            return
         if self.export_locks[owner].locked():
             return await self.show(owner, "Предыдущий экспорт ещё готовится. Дождись его завершения.", thread)
         async with self.export_locks[owner]:
@@ -1347,7 +1332,7 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
 
     async def worker_for_owner(self, owner):
         while True:
-            if owner in self.view_rendering or owner in self.deleting_owners:
+            if owner in self.view_rendering:
                 await asyncio.sleep(.2)
                 continue
             note = self.store.claim_note(owner)

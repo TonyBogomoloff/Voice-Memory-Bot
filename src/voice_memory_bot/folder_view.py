@@ -8,6 +8,7 @@ from collections import defaultdict
 
 from .delivery import DeletionOutcome, deletion_error
 from .providers import ProviderError, silent_delivery
+from .trash import TRASH_DESCRIPTION, folder_icon
 
 log = logging.getLogger(__name__)
 RENEW_AFTER = 24 * 3600
@@ -23,7 +24,7 @@ class FolderViewMixin:
 
 
     def remember_screen(self, owner, thread, text, keys):
-        if (owner in self.view_rendering or owner in self.deleting_owners or (self.cleanup.job(owner) or {}).get("files_pending")):
+        if owner in self.view_rendering:
             return
         identity = self.store.current_folder(owner) or ''
         screen = json.dumps({"text": text, "keys": keys}, ensure_ascii=False)
@@ -38,7 +39,7 @@ class FolderViewMixin:
         return self.deletion_busy(owner) or bool(self.store.one(
             "SELECT 1 FROM notes WHERE owner=? AND deleted=0 AND "
             "(state IN ('queued','processing') OR delivery IN ('pending','sending')) LIMIT 1", (owner,))) or bool(
-            self.store.one("SELECT 1 FROM ai_requests WHERE owner=? AND "
+            self.store.one("SELECT 1 FROM ai_requests WHERE owner=? AND state!='deleted' AND "
                            "(state IN ('queued','running') OR delivery='pending') LIMIT 1", (owner,)))
 
     async def show_notes(self, owner, thread, identity, page=None, edit_id=None, notice=None, command_message_id=None,
@@ -137,7 +138,7 @@ class FolderViewMixin:
     async def render_folder_view(self, owner, *, restore_screen=False, notice=None, progress_text="Загружаю папку…"):
         from .bot import transcript_chunks
         view = self.store.one('SELECT * FROM folder_views WHERE owner=?', (owner,))
-        if not view or (self.cleanup.job(owner) or {}).get('files_pending') or owner in self.deleting_owners:
+        if not view:
             return
         # Folder deletion or another selection may have changed the active folder.
         identity = self.store.current_folder(owner)
@@ -163,14 +164,14 @@ class FolderViewMixin:
         complete = False
         try:
             folder = self.store.folder(owner, identity)
-            title = f"📁 {folder['name']} (страница {page + 1} из {pages})"
+            title = f"{folder_icon(folder)} {folder['name']} (страница {page + 1} из {pages})"
             nav = []
             if page:
                 nav.append({'text': '⬅️', 'callback_data': f'folder:{identity}:{page - 1}'})
             if page + 1 < pages:
                 nav.append({'text': '➡️', 'callback_data': f'folder:{identity}:{page + 1}'})
             if nav:
-                navigation = await self.view_send(self.telegram.text, owner, title, thread,
+                navigation = await self.view_send(self.telegram.text, owner, title + ("\n" + TRASH_DESCRIPTION if folder["is_trash"] else ""), thread,
                     {'inline_keyboard': [nav]})
                 navigation_id = navigation['message_id']
             loading = await self.view_send(self.telegram.text, owner, progress_text, thread)

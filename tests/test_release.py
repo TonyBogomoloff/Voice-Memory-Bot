@@ -97,7 +97,7 @@ def test_work_arriving_during_shutdown_resumes_without_replacing_files(release, 
     assert not (r.guard.app / 'added.py').exists()
 
 
-@pytest.mark.parametrize('schema_upgrade', [None, 3, 4])
+@pytest.mark.parametrize('schema_upgrade', [None, 3, 4, 5])
 def test_failed_start_restores_code_but_keeps_new_database_and_originals(release, monkeypatch, schema_upgrade):
     r = release
     starts = 0
@@ -106,8 +106,10 @@ def test_failed_start_restores_code_but_keeps_new_database_and_originals(release
             if schema_upgrade == 3:
                 db.execute('DROP TABLE obsidian_pairing')
                 db.execute('DROP TABLE obsidian_devices')
-            db.execute('DROP INDEX one_trash_per_owner')
-            db.execute('ALTER TABLE folders DROP COLUMN is_trash')
+            db.execute('DROP TABLE trash_cleanup')
+            if schema_upgrade < 5:
+                db.execute('DROP INDEX one_trash_per_owner')
+                db.execute('ALTER TABLE folders DROP COLUMN is_trash')
             db.execute(f'PRAGMA user_version={schema_upgrade}')
 
     def run(args, **kwargs):
@@ -182,11 +184,10 @@ def test_video_cache_readiness_is_required_before_stopping_service(release, monk
 
 def test_trash_schema_rollback_refuses_unexpected_schema_change(release, tmp_path):
     r = release
-    backup = tmp_path / 'before-v5.sqlite3'
+    backup = tmp_path / 'before-v6.sqlite3'
     with sqlite3.connect(r.guard.db) as db:
-        db.execute('DROP INDEX one_trash_per_owner')
-        db.execute('ALTER TABLE folders DROP COLUMN is_trash')
-        db.execute('PRAGMA user_version=4')
+        db.execute('DROP TABLE trash_cleanup')
+        db.execute('PRAGMA user_version=5')
         with sqlite3.connect(backup) as snapshot:
             db.backup(snapshot)
     Store(r.guard.db, Limits()).close()
@@ -195,4 +196,4 @@ def test_trash_schema_rollback_refuses_unexpected_schema_change(release, tmp_pat
     with pytest.raises(RuntimeError, match='rollback_schema_not_additive'):
         r.module.restore_additive_schema_marker(r.guard.db, backup)
     with sqlite3.connect(r.guard.db) as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 5
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 6
