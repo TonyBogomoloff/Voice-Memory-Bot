@@ -124,8 +124,12 @@ def test_real_transport_keyboard_taps_survive_restart_and_never_become_notes(bot
         assert bot.bottom_state(1)['screen'] == 'root'
         await receive(bot, 'Настройки', 108)
         # A delayed tap from the old keyboard must not become a note in the current folder.
+        sent_before = len(sent)
         await receive(bot, 'Работа', 104)
         assert bot.store.notes(1) == []
+        assert bot.bottom_state(1)['screen'] == 'home'
+        assert not any(m == 'sendMessage' for m, _ in sent[sent_before:])
+        await receive(bot, 'Назад', 109)
         await receive(bot, 'Папка', 105)
         assert bot.bottom_state(1)['screen'] == f"foldermenu:{work['id']}"
         keyboard = next(p['reply_markup'] for m, p in reversed(sent) if m == 'sendMessage')

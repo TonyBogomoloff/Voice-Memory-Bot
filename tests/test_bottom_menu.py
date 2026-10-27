@@ -87,10 +87,9 @@ def test_all_folders_are_reachable_and_stale_labels_never_archive(bot):
                      if action.startswith("folder:"))
         await receive(bot, stale, 1004)
         selected = bot.store.current_folder(1)
-        sent_before = len(bot.telegram.sent)
         await receive(bot, stale, 1005)
         assert bot.store.current_folder(1) == selected and bot.store.notes(1) == []
-        assert not any(m == "sendMessage" for m, _ in bot.telegram.sent[sent_before:])
+        assert "устарела" in last_message(bot)["text"]
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 " + bot.store.folder(1, selected)["name"]
         await receive(bot, ROOT, 1006)
         await receive(bot, "🎛️ Настройки", 1007)
