@@ -152,8 +152,7 @@ class FolderViewMixin:
                                (owner, identity))['n']
         page_size = self.store.folder_page_size(owner)
         pages = max(1, (count + page_size - 1) // page_size)
-        default_page = 0 if folder["is_trash"] else pages - 1
-        page = default_page if page < 0 else min(page, pages - 1)
+        page = 0 if page < 0 else min(page, pages - 1)
         with self.store.transaction():
             self.store.db.execute('UPDATE folder_views SET dirty=1,folder_id=?,page=? WHERE owner=?',
                                   (identity, page, owner))
@@ -192,9 +191,8 @@ class FolderViewMixin:
                     self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
                 complete = True
                 return
-            # Trash opens with a full batch of recent records, even when the
-            # oldest page has only one record. Ordinary folders keep chronological pages.
-            offset = page * page_size if folder['is_trash'] else max(0, count - (page + 1) * page_size)
+            # Open every folder with its latest full batch; later pages hold older records.
+            offset = page * page_size
             notes = self.store.notes(owner, identity, limit=min(page_size, max(0, count - page * page_size)),
                                      offset=offset)
             for note in reversed(notes):

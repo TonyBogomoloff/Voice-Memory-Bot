@@ -29,11 +29,11 @@ def test_folder_pages_cover_archive_keep_photos_and_clamp_stale_page(bot, size):
             bot.store.db.execute("UPDATE notes SET kind='photo',file_id='photo-id' WHERE id=?", (notes[-2]['id'],))
         before = bot.store.all('SELECT * FROM notes ORDER BY id')
         await bot.show_notes(1, None, folder)
-        assert bot.store.one('SELECT page FROM folder_views WHERE owner=1')['page'] == 2
+        assert bot.store.one('SELECT page FROM folder_views WHERE owner=1')['page'] == 0
         assert [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage'
-                and p['text'].startswith('Запись ')] == [f'Запись {i}' for i in range(size * 2, count)]
-        for page, expected in [(0, range(size)), (1, range(size, size * 2)),
-                               (2, range(size * 2, count)), (999, range(size * 2, count))]:
+                and p['text'].startswith('Запись ')] == [f'Запись {i}' for i in range(count - size, count)]
+        for page, expected in [(0, range(count - size, count)), (1, range(2, count - size)),
+                               (2, range(2)), (999, range(2))]:
             bot.telegram.sent.clear()
             await bot.callback(1, None, None, f'folder:{folder}:{page}')
             sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
@@ -49,13 +49,13 @@ def test_folder_pages_cover_archive_keep_photos_and_clamp_stale_page(bot, size):
             assert [b['icon_custom_emoji_id'] for b in themed['inline_keyboard'][0]] == [icon_id(i) for i in icons]
             assert [b['text'] for b in themed['inline_keyboard'][0]] == [ARROW_LABELS[i] for i in icons]
             photos = [p for m, p in bot.telegram.sent if m == 'sendPhoto']
-            assert [p['photo'] for p in photos] == (['photo-id'] if page >= 2 else [])
+            assert [p['photo'] for p in photos] == (['photo-id'] if page == 0 else [])
             assert bot.store.one('SELECT page FROM folder_views WHERE owner=1')['page'] == min(page, 2)
             live_ids = {r['message_id'] for r in bot.store.all('SELECT message_id FROM telegram_messages WHERE owner=1')}
             assert not live_ids & deleted_ids(bot)
-        await bot.callback(1, None, None, f'folder:{folder}:0')
+        await bot.callback(1, None, None, f'folder:{folder}:1')
         await receive(bot, '✅ Заметки', 9000)
-        assert bot.store.one('SELECT page FROM folder_views WHERE owner=1')['page'] == 2
+        assert bot.store.one('SELECT page FROM folder_views WHERE owner=1')['page'] == 0
         assert bot.store.all('SELECT * FROM notes ORDER BY id') == before
     asyncio.run(run())
 
