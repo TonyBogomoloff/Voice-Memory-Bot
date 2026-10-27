@@ -11,6 +11,7 @@ from voice_memory_bot.bot import Bot
 from voice_memory_bot.config import Config
 from voice_memory_bot.obsidian_access import AccessError, ObsidianAccess, digest
 from voice_memory_bot.obsidian_api import ExportAPI
+from voice_memory_bot.obsidian_settings import ObsidianSettings
 from voice_memory_bot.trash import TrashStore
 
 
@@ -50,6 +51,8 @@ def test_pairing_expiry_single_use_owner_revocation_and_scope(store, tmp_path):
 
 def test_api_roundtrip_is_scoped_read_only_and_verifies_immutable_media(store, tmp_path):
     bot = bot_for(store, tmp_path)
+    store.ensure_user(1)
+    ObsidianSettings(store).set_audio(1, 'all', True)
     note = store.add_note(1, store.ensure_user(1), {'message_id': 1}, kind='voice',
                           extension='ogg', file_id='SECRET_FILE_ID', transcript='Привет')[0]
     media = b'original audio bytes'
@@ -159,3 +162,100 @@ def test_clear_trash_preserves_pairing_and_devices_for_all_owners(store):
     assert access.pair(pending[1], 'New phone', {1, 2})['token']
     assert access.authenticate(second['token'], {1, 2})['owner'] == 2
     assert access.pair(pending[2], 'New phone', {1, 2})['token']
+
+
+def test_folder_api_respects_audio_scope_versions_and_pending_records(store, tmp_path):
+    bot = bot_for(store, tmp_path)
+    folder = store.ensure_user(1)
+    private_folder = store.ensure_user(2)
+    private = add(store, owner=2)
+    media = []
+    for message, kind, extension in ((10, 'photo', 'jpg'), (11, 'voice', 'ogg')):
+        note = store.add_note(1, folder, {'message_id': message}, kind=kind, extension=extension,
+                              file_id='PRIVATE_ID', transcript=f'Text {kind}')[0]
+        data = f'Original {kind}'.encode()
+        path = bot.archive.audio(note)
+        path.parent.mkdir(parents=True)
+        path.write_bytes(data)
+        store.update_note(1, note['id'], state='ready', audio_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+        media.append(note)
+    access = ObsidianAccess(store)
+    pair = access.pair(access.issue(1, folder), 'iPhone', {1})
+    headers = {'Authorization': 'Bearer ' + pair['token']}
+    voice = media[1]
+
+    async def run():
+        async with TestClient(TestServer(ExportAPI(bot).application())) as client:
+            assert (await client.get('/v2/folders')).status == 401
+            async def listing():
+                response = await client.get('/v2/folders', headers=headers)
+                assert response.status == 200
+                return await response.json()
+            initial = await listing()
+            assert initial['schema_version'] == 2 and len(initial['notes']) == 1
+            row = initial['notes'][0]
+            assert row['note_id'] == folder and row['layout'] == 'folder'
+            assert [a['note_id'] for a in row['attachments']] == [media[0]['id']]
+            url = f"/v2/folders/{folder}/document?sha256={row['sha256']}"
+            response = await client.get(url, headers=headers)
+            data = await response.read()
+            assert response.status == 200 and hashlib.sha256(data).hexdigest() == row['sha256']
+            assert b'Text voice' in data and b'Text photo' in data and b'PRIVATE_ID' not in data
+            attachment = row['attachments'][0]
+            response = await client.get(f"/v2/media/{media[0]['id']}?sha256={attachment['sha256']}", headers=headers)
+            assert await response.read() == b'Original photo'
+            assert (await client.get(f'/v2/folders/{private_folder}/document', headers=headers)).status == 404
+            assert (await client.get(f"/v2/media/{private['id']}", headers=headers)).status == 404
+            assert (await client.post(url, headers=headers, json={})).status == 405
+            voice_hash = store.note(1, voice['id'])['sha256']
+            voice_urls = [f"/v2/media/{voice['id']}?sha256={voice_hash}",
+                          f"/v1/notes/{voice['id']}/media?sha256={voice_hash}"]
+            for path in voice_urls:
+                assert (await client.get(path, headers=headers)).status == 404
+            ObsidianSettings(store).set_audio(1, folder, True)
+            assert (await client.get(url, headers=headers)).status == 409
+            enabled = (await listing())['notes'][0]
+            assert len(enabled['attachments']) == 2
+            for path in voice_urls:
+                assert await (await client.get(path, headers=headers)).read() == b'Original voice'
+            ObsidianSettings(store).set_audio(1, folder, False)
+            for path in voice_urls:
+                assert (await client.get(path, headers=headers)).status == 404
+            waiting = add(store, message=20)
+            store.update_note(1, waiting['id'], state='processing')
+            assert (await listing())['notes'] == [] and (await listing())['pending'] == 1
+            assert (await client.get(url, headers=headers)).status == 409
+            store.update_note(1, waiting['id'], state='ready')
+            ready = (await listing())['notes'][0]
+            assert ready['sha256'] != row['sha256']
+            access.revoke(1, pair['device_id'])
+            assert (await client.get('/v2/folders', headers=headers)).status == 401
+
+    asyncio.run(run())
+
+
+def test_folder_api_paginates_empty_folders_and_skips_removed_empty_ones(store, tmp_path):
+    bot = bot_for(store, tmp_path)
+    store.ensure_user(1)
+    for number in range(22):
+        store.create_folder(1, f'Project {number}')
+    removed = store.create_folder(1, 'Removed')['id']
+    store.delete_folder(1, removed)
+    expected = {folder['id'] for folder in store.folders(1)}
+    access = ObsidianAccess(store)
+    paired = access.pair(access.issue(1), 'Desktop', {1})
+    headers = {'Authorization': 'Bearer ' + paired['token']}
+
+    async def run():
+        async with TestClient(TestServer(ExportAPI(bot).application())) as client:
+            cursor, found, pages = '', [], 0
+            while True:
+                result = await (await client.get('/v2/folders?cursor=' + cursor, headers=headers)).json()
+                found.extend(row['folder_id'] for row in result['notes'])
+                pages += 1
+                if not result['next_cursor']:
+                    break
+                cursor = result['next_cursor']
+            assert pages == 2 and len(found) == len(set(found)) and set(found) == expected
+
+    asyncio.run(run())

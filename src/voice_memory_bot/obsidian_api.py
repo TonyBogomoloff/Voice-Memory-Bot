@@ -12,6 +12,9 @@ from aiohttp import web
 
 from .obsidian_access import AccessError, ObsidianAccess
 from .obsidian_export import FORMAT, IDENTITY, SCHEMA_VERSION, document
+from .obsidian_folders import SCHEMA_VERSION as FOLDER_SCHEMA_VERSION
+from .obsidian_folders import folder_document, selected_media
+from .obsidian_settings import ObsidianSettings
 
 log = logging.getLogger(__name__)
 DEVICE = web.RequestKey("obsidian_device", dict)
@@ -48,7 +51,7 @@ class ExportAPI:
     @web.middleware
     async def guard(self, request, handler):
         try:
-            if request.path.startswith('/v1/') and request.path != '/v1/pair':
+            if request.path.startswith(('/v1/', '/v2/')) and request.path != '/v1/pair':
                 authorization = request.headers.get('Authorization', '')
                 if not authorization.startswith('Bearer '):
                     raise AccessError('unauthorized')
@@ -79,7 +82,7 @@ class ExportAPI:
 
     async def health(self, request):
         return web.json_response({'service': 'voice-memory-obsidian', 'format': FORMAT,
-                                  'schema_version': SCHEMA_VERSION})
+                                  'schema_version': SCHEMA_VERSION, 'folder_schema_version': FOLDER_SCHEMA_VERSION})
 
     async def pair(self, request):
         payload = await request.json()
@@ -93,7 +96,8 @@ class ExportAPI:
         if not folder:
             raise web.HTTPNotFound()
         try:
-            data, row = document(note, folder)
+            audio = ObsidianSettings(self.store).audio(note['owner'], note['folder_id'])
+            data, row = document(note, folder, include_media=selected_media(note, audio))
         except ValueError:
             raise web.HTTPConflict(reason='media_pending') from None
         row.update(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
@@ -167,6 +171,62 @@ class ExportAPI:
                                                        'Content-Disposition': 'attachment', 'Cache-Control': 'no-store'})
         return response
 
+    def folder_query(self, device, *, after='', folder_id=None):
+        sql = ('SELECT f.* FROM folders f WHERE f.owner=? AND (f.removed=0 OR EXISTS '
+               '(SELECT 1 FROM notes n WHERE n.folder_id=f.id AND n.owner=f.owner AND n.deleted=0))')
+        args = [device['owner']]
+        if device['folder_id']:
+            sql += ' AND f.id=?'
+            args.append(device['folder_id'])
+        if folder_id:
+            sql += ' AND f.id=?'
+            args.append(folder_id)
+        else:
+            sql += ' AND f.id>?'
+            args.append(after)
+        return self.store.all(sql + ' ORDER BY f.id LIMIT 21', args)
+
+    def render_folder(self, folder):
+        with self.store.transaction():
+            notes = self.store.export_notes(folder['owner'], folder['id'])
+            audio = ObsidianSettings(self.store).audio(folder['owner'], folder['id'])
+            try:
+                data, row = folder_document(notes, folder, audio=audio)
+            except ValueError as exc:
+                if str(exc) in {'obsidian_folder_pending', 'archive_audio_pending', 'invalid_archive_media'}:
+                    raise web.HTTPConflict(reason='folder_pending') from None
+                raise
+        row.update(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+        return data, row
+
+    async def folders(self, request):
+        cursor = request.query.get('cursor', '')
+        if cursor and not IDENTITY.fullmatch(cursor):
+            raise ValueError('invalid_cursor')
+        folders = self.folder_query(request[DEVICE], after=cursor)
+        rows, pending = [], 0
+        for folder in folders[:20]:
+            try:
+                _, row = self.render_folder(folder)
+                rows.append(row)
+            except web.HTTPConflict:
+                pending += 1
+        return web.json_response({'format': FORMAT, 'schema_version': FOLDER_SCHEMA_VERSION,
+                                  'notes': rows, 'pending': pending,
+                                  'next_cursor': folders[19]['id'] if len(folders) > 20 else None})
+
+    async def folder_markdown(self, request):
+        folder_id = request.match_info['folder_id']
+        if not IDENTITY.fullmatch(folder_id):
+            raise web.HTTPNotFound()
+        folders = self.folder_query(request[DEVICE], folder_id=folder_id)
+        if not folders:
+            raise web.HTTPNotFound()
+        data, row = self.render_folder(folders[0])
+        if request.query.get('sha256') != row['sha256']:
+            raise web.HTTPConflict(reason='folder_changed')
+        return web.Response(body=data, content_type='text/markdown', charset='utf-8')
+
     async def plugin(self, request):
         name = request.match_info['name']
         if name not in {'main.js', 'manifest.json', 'styles.css', 'voice-memory.zip'}:
@@ -182,6 +242,9 @@ class ExportAPI:
                         web.get('/v1/notes', self.notes),
                         web.get('/v1/notes/{note_id}/document', self.markdown),
                         web.get('/v1/notes/{note_id}/media', self.media),
+                        web.get('/v2/folders', self.folders),
+                        web.get('/v2/folders/{folder_id}/document', self.folder_markdown),
+                        web.get('/v2/media/{note_id}', self.media),
                         web.get('/plugin/{name}', self.plugin)])
         return app
 
