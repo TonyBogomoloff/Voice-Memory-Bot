@@ -94,7 +94,7 @@ def test_move_picker_filters_source_before_pagination(tmp_path, store):
                 store.db.execute("UPDATE folders SET removed=1 WHERE id=?", (target,))
         store.db.commit()
         await bot.choose_note_folder(1, note["id"], 50, 0)
-        assert set(bot.bottom_state(1)["actions"]) == {"Корзина", "＋ Новая папка", "Отмена"}
+        assert set(bot.bottom_state(1)["actions"]) == {"🗑 Корзина", "＋ Новая папка", "Отмена"}
     asyncio.run(run())
 
 

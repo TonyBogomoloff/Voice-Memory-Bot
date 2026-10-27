@@ -139,7 +139,7 @@ def test_menu_keeps_all_actions_and_long_folder_names_are_distinct(bot):
         assert bot.store.current_folder(1) == second["id"]
         await receive(bot, "🎛️ Настройки", 3)
         callbacks = set(bot.bottom_state(1)["actions"].values())
-        assert {f"menumessagebuttons:{0 if bot.store.message_buttons_enabled(1) else 1}", "help"} == callbacks
+        assert {f"menumessagebuttons:{0 if bot.store.message_buttons_enabled(1) else 1}", "obsidian:all", "help"} == callbacks
         await bot.callback(1, None, 500, "notes")
         assert bot.store.current_folder(1) == second["id"]
         await receive(bot, "📂 Все папки", 4)

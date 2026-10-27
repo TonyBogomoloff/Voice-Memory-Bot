@@ -8,10 +8,10 @@ from aiohttp.test_utils import TestClient, TestServer
 from support.exports import ExportTelegram
 
 from voice_memory_bot.bot import Bot
-from voice_memory_bot.cleanup import CleanupStore
 from voice_memory_bot.config import Config
 from voice_memory_bot.obsidian_access import AccessError, ObsidianAccess, digest
 from voice_memory_bot.obsidian_api import ExportAPI
+from voice_memory_bot.trash import TrashStore
 
 
 def bot_for(store, tmp_path):
@@ -143,17 +143,19 @@ def test_telegram_pairing_menu_navigation_and_disabled_mode(store, tmp_path):
     asyncio.run(run())
 
 
-def test_clear_archive_revokes_pairing_and_devices_only_for_that_owner(store):
+def test_clear_trash_preserves_pairing_and_devices_for_all_owners(store):
     access = ObsidianAccess(store)
     for owner in (1, 2):
         store.ensure_user(owner)
     first = access.pair(access.issue(1), 'Phone', {1, 2})
     second = access.pair(access.issue(2), 'Phone', {1, 2})
     pending = {owner: access.issue(owner) for owner in (1, 2)}
-    CleanupStore(store).begin(1)
-    with pytest.raises(AccessError):
-        access.authenticate(first['token'], {1, 2})
-    with pytest.raises(AccessError):
-        access.pair(pending[1], 'Old code', {1, 2})
+    trash = store.trash_folder(1)['id']
+    note, _ = store.add_note(1, trash, {'message_id': 1000}, 'text', transcript='В корзине')
+    store.update_note(1, note['id'], state='ready', delivery='sent', transcript_delivery='sent')
+    TrashStore(store).begin(1, trash, [note['id']])
+    assert not store.one('SELECT 1 FROM notes WHERE id=?', (note['id'],))
+    assert access.authenticate(first['token'], {1, 2})['owner'] == 1
+    assert access.pair(pending[1], 'New phone', {1, 2})['token']
     assert access.authenticate(second['token'], {1, 2})['owner'] == 2
     assert access.pair(pending[2], 'New phone', {1, 2})['token']
