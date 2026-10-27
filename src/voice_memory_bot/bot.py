@@ -607,7 +607,8 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
     async def show_notes_menu(self, owner, thread, identity, page=0, edit_id=None):
         folder = self.enter_folder_options(owner, identity)
         text = f"📁 {folder['name']}"
-        text += "\nРежим: " + ("диалог с ИИ" if folder["mode"] == "chat" else "заметки")
+        if folder["mode"] == "chat":
+            text += "\nРежим: диалог с ИИ"
         text += "\n✅ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
         rows = [[button("✏️ Переименовать", f"rename:{identity}"),
                  button("📦 Экспорт", f"zip:{identity}:all")],
