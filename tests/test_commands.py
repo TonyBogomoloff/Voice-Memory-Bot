@@ -49,9 +49,9 @@ def test_start_registers_menu_commands(bot):
 
     async def run():
         bot.telegram.call = AsyncMock(return_value={"id": 123})
-        for name in ("poll", "dispatch", "worker", "ai_worker", "folder_view_worker"):
+        for name in ("poll", "dispatch", "worker", "ai_worker", "folder_view_worker", "trash_cleanup_worker"):
             setattr(bot, name, AsyncMock())
-        await bot.start()
+        await asyncio.wait_for(bot.start(), 5)
         menu_calls = [c.kwargs for c in bot.telegram.call.call_args_list if c.args == ("setChatMenuButton",)]
         assert {"menu_button": {"type": "commands"}} in menu_calls
         assert {"chat_id": 1, "menu_button": {"type": "commands"}} in menu_calls
