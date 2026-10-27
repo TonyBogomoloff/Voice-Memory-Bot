@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import AsyncExitStack
 
 from .delivery import DeletionOutcome, delete_message
+from .note_branches import note_branch
 
 log = logging.getLogger(__name__)
 
@@ -33,19 +35,50 @@ class NoteService:
             raise ValueError("Сначала повтори сохранение файла, затем перенеси запись")
         return self.messages.move_archive(note, folder_id)
 
+    def branch(self, owner, identities, *, exclude=None):
+        return note_branch(self.store, owner, identities, exclude=exclude)
+
+    def validate_branch_move(self, note):
+        if (note["state"] in {"processing", "queued"} or self.note_locks[note['id']].locked()
+                or self.store.one("SELECT 1 FROM ai_requests WHERE owner=? AND note_id=? "
+                                  "AND state IN ('queued','running')", (note['owner'], note['id']))):
+            raise ValueError("Дождись завершения обработки всей ветки, затем перенеси запись")
+        if note["file_id"] and not note["audio_bytes"]:
+            raise ValueError("Сначала повтори сохранение файла, затем перенеси запись")
+
     async def move(self, owner, identity, folder_id):
-        note = self.store.note(owner, identity)
         folder = self.store.folder(owner, folder_id)
         if folder['removed']:
             raise ValueError('Папка удалена. Выбери другую')
-        if note["state"] in {"processing", "queued"} or self.note_locks[identity].locked():
-            raise ValueError("Дождись завершения обработки, затем перенеси запись")
-        async with self.note_locks[identity]:
-            if folder_id == note["folder_id"]:
-                return "Запись уже в этой папке."
-            move = self.move_archive(note, folder_id)
-            result = await self.cleanup_move(move)
-            return f"Перенесено в «{folder['name']}»." if result == "Запись перенесена." else result
+        branch = self.branch(owner, [identity])
+        for note in branch.notes:
+            self.validate_branch_move(note)
+        async with AsyncExitStack() as locks:
+            for note in sorted(branch.notes, key=lambda n: n['id']):
+                await locks.enter_async_context(self.note_locks[note['id']])
+            # No awaits until all destinations and cleanup receipts commit together.
+            with self.store.transaction():
+                moves = [self.move_archive(note, folder_id) for note in branch.notes
+                         if note['folder_id'] != folder_id]
+                branch.relocate(self.store, owner, folder_id)
+            if not moves:
+                return "Ветка уже в этой папке." if len(branch.notes) > 1 else "Запись уже в этой папке."
+            for move in moves:
+                await self.cleanup_move(move)
+            if len(branch.notes) == 1:
+                state = self.messages.get(owner, identity)['state']
+                if state == 'cleanup':
+                    return "Запись перенесена. Удаляю исходные сообщения…"
+                if state == 'blocked':
+                    return "Запись перенесена, но Telegram не разрешил удалить часть исходных сообщений."
+                return f"Перенесено в «{folder['name']}»."
+            result = f"Ветка перенесена в «{folder['name']}». Записей: {len(branch.notes)}."
+            states = {self.messages.get(owner, m['note_id'])['state'] for m in moves}
+            if 'blocked' in states:
+                result += " Telegram не разрешил удалить часть исходных сообщений."
+            if 'cleanup' in states:
+                result += " Удаляю исходные сообщения…"
+            return result
 
     async def cleanup_move(self, move):
         owner, identity = move["owner"], move["note_id"]

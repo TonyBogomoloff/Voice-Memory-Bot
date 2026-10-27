@@ -1,0 +1,69 @@
+"""Resolve complete branches from durable links, never from folder or time proximity."""
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+
+
+@dataclass
+class NoteBranch:
+    notes: list[dict]
+    conversations: set[str]
+
+    def relocate(self, store, owner, folder_id):
+        # Do not let the old folder's next ordinary chat message join a moved branch.
+        for conversation in self.conversations:
+            store.db.execute("UPDATE ai_conversations SET folder_id=? WHERE owner=? AND id=?",
+                             (folder_id, owner, conversation))
+            store.db.execute("DELETE FROM ai_active WHERE owner=? AND conversation_id=? AND folder_id<>?",
+                             (owner, conversation, folder_id))
+
+
+def note_branch(store, owner, identities, *, exclude=None):
+    for identity in identities:
+        store.note(owner, identity)
+    rows = store.all("SELECT id,deleted,message_id,transcript_message_id,result_message_id,"
+                     "reply_message_id,ai_generated_from FROM notes WHERE owner=?", (owner,))
+    notes = {n['id']: n for n in rows}
+    graph, messages = defaultdict(set), defaultdict(set)
+
+    def link(left, right):
+        graph[left].add(right)
+        graph[right].add(left)
+
+    def link_notes(left, right):
+        if left in notes and right in notes:
+            link(('note', left), ('note', right))
+
+    for note in rows:
+        for field in ('message_id', 'transcript_message_id', 'result_message_id'):
+            if note[field] and note[field] > 0:
+                messages[note[field]].add(note['id'])
+        link_notes(note['id'], note['ai_generated_from'])
+    # Deleted Telegram receipts still identify replies after navigation or an earlier move.
+    for receipt in store.all("SELECT note_id,message_id FROM note_messages WHERE owner=?", (owner,)):
+        if receipt['note_id'] in notes:
+            messages[receipt['message_id']].add(receipt['note_id'])
+    for note in rows:
+        for parent in messages.get(note['reply_message_id'], ()):
+            link_notes(note['id'], parent)
+    conversations = {r['id'] for r in store.all("SELECT id FROM ai_conversations WHERE owner=?", (owner,))}
+    for request in store.all("SELECT note_id,result_note_id,conversation_id FROM ai_requests WHERE owner=?", (owner,)):
+        if request['conversation_id'] in conversations:
+            for identity in (request['note_id'], request['result_note_id']):
+                if identity in notes:
+                    link(('note', identity), ('conversation', request['conversation_id']))
+    for context in store.all("SELECT note_id,conversation_id FROM ai_note_context WHERE owner=?", (owner,)):
+        if context['note_id'] in notes and context['conversation_id'] in conversations:
+            link(('note', context['note_id']), ('conversation', context['conversation_id']))
+    visited, pending = set(), [('note', identity) for identity in identities]
+    while pending:
+        node = pending.pop()
+        if node not in visited:
+            visited.add(node)
+            pending.extend(graph[node] - visited)
+    # Deleted notes can bridge surviving replies, but must never be restored by a move.
+    members = [store.note(owner, identity) for kind, identity in visited
+               if kind == 'note' and not notes[identity]['deleted'] and identity != exclude]
+    return NoteBranch(sorted(members, key=lambda n: (n['created_at'], n['id'])),
+                      {identity for kind, identity in visited if kind == 'conversation'})

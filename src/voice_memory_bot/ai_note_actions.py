@@ -40,8 +40,9 @@ class NoteActions:
     def save_result(self, request, index, result, identity=None):
         if identity:
             saved = self.store.one("SELECT command,result FROM ai_steps WHERE note_id=? AND step=?", (request, index))
-            if json.loads(saved['command'])['action'] in BATCH_ACTIONS:
-                aggregate = json.loads(saved['result']) if saved['result'] else {'ok': True, 'items': []}
+            aggregate = json.loads(saved['result']) if saved['result'] else {}
+            if json.loads(saved['command'])['action'] in BATCH_ACTIONS or 'items' in aggregate:
+                aggregate = aggregate or {'ok': True, 'items': []}
                 aggregate['items'] = [r for r in aggregate['items'] if r['id'] != identity] + [result]
                 result = aggregate
         self.store.db.execute("UPDATE ai_steps SET result=? WHERE note_id=? AND step=?",
@@ -97,7 +98,33 @@ class NoteActions:
                 revision = revisions.get(identity, -1)
             single = {**command, 'action': action, 'note_id': identity, 'revision': revision}
             notes.append((single, self.validate(owner, request, index, single, access, versions, allowed)))
+        if action == 'move_note':
+            branch = self.bot.notes.branch(owner, list(dict.fromkeys(ids)), exclude=request)
+            if revisions is not None and set(revisions) != {n['id'] for n in branch.notes}:
+                raise ValueError('Состав ветки изменился. Попроси перенести её заново')
+            selected = {n['id']: single for single, n in notes}
+            notes = []
+            for note in branch.notes:
+                self.bot.notes.validate_branch_move(note)
+                if note['state'] != 'ready':
+                    raise ValueError('Дождись завершения обработки всей ветки')
+                if revisions is not None and revisions[note['id']] != note['revision']:
+                    raise ValueError('Запись в ветке изменилась. Попроси перенести её заново')
+                single = selected.get(note['id'], {**command, 'action': action,
+                                                  'note_id': note['id'], 'revision': note['revision']})
+                notes.append((single, note))
         return notes
+
+    def apply_many(self, owner, request, index, command, notes, folder):
+        moving = command['action'] in {'move_note', 'move_notes'}
+        if moving and len(notes) > 1:
+            self.save_result(request, index, {'ok': True, 'items': [],
+                'message': f"Ветка перенесена в «{folder['name']}». Записей: {len(notes)}."})
+        for single, note in notes:
+            self.apply(owner, request, index, single, note, folder)
+        if moving:
+            self.bot.notes.branch(owner, [n['id'] for _, n in notes], exclude=request).relocate(
+                self.store, owner, folder['id'])
 
     def apply(self, owner, request, index, command, note, folder=None):
         action, identity = command["action"], note["id"]
@@ -146,8 +173,7 @@ class NoteActions:
                                                      "или перенести сообщения в одну из существующих?"}
                                 self.save_result(request, index, result)
                                 return result
-                        for single, note in notes:
-                            self.apply(owner, request, index, single, note, folder)
+                        self.apply_many(owner, request, index, command, notes, folder)
                 except ValueError as exc:
                     with self.store.transaction():
                         self.save_result(request, index, {"error": str(exc)})
@@ -193,8 +219,7 @@ class NoteActions:
                     else:
                         raise ValueError("Выбери папку из предложенных кнопок")
                     self.save_result(request, index, None)
-                    for single, note in notes:
-                        self.apply(owner, request, index, single, note, folder)
+                    self.apply_many(owner, request, index, saved["command"], notes, folder)
                     result = self.saved(owner, request, index)['result']
                     if saved['command']['action'] in BATCH_ACTIONS:
                         result['message'] = f"Перенесено сообщений: {len(notes)}."

@@ -79,7 +79,10 @@ class ReplyMoveMixin:
         if nav:
             rows.append(nav)
         rows.extend([[button("＋ Новая папка", f"rnew:{token}")], [button("Отмена", f"rcancel:{token}")]])
-        result = await self.show_bottom(owner, "В какую папку ты хочешь переместить запись?", thread,
+        count = len(self.notes.branch(owner, [session['note_id']]).notes)
+        title = (f"В какую папку переместить всю ветку? Записей: {count}." if count > 1
+                 else "В какую папку ты хочешь переместить запись?")
+        result = await self.show_bottom(owner, title, thread,
                                   keyboard(*rows), screen=f"replymove:{token}", keep=True, mirror=True,
                                   reply_to=reply_to, command_id=session["command_id"])
         with self.store.transaction():
@@ -138,8 +141,8 @@ class ReplyMoveMixin:
             self.store.set_action(owner, None)
             raise ValueError("Перенос уже отменён. Ответь на запись командой /move ещё раз.")
         note = self.store.note(owner, session["note_id"])
-        if note["state"] in {"queued", "processing"} or self.note_locks[note["id"]].locked():
-            raise ValueError("Дождись завершения обработки, затем перенеси запись")
+        for member in self.notes.branch(owner, [note["id"]]).notes:
+            self.notes.validate_branch_move(member)
         if not session["target_folder"]:
             folder = self.store.create_folder(owner, name)
             with self.store.transaction():
