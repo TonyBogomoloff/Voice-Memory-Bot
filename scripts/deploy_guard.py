@@ -62,7 +62,7 @@ def atomic(path, data):
 
 
 def restore_additive_schema_marker(database, backup):
-    """Allow rollback of the known additive v4 connector and v5 trash migrations.
+    """Allow rollback of the known additive v4-v6 connector and trash migrations.
 
     Preserve all rows, including writes since startup. Never restore the backup DB.
     Refuse to downgrade when any pre-existing schema object has changed.
@@ -71,14 +71,16 @@ def restore_additive_schema_marker(database, backup):
             sqlite3.connect(database)) as current:
         previous = old.execute('PRAGMA user_version').fetchone()[0]
         version = current.execute('PRAGMA user_version').fetchone()[0]
-        if (previous, version) not in {(3, 4), (3, 5), (4, 5)}:
+        if (previous, version) not in {(3, 4), (3, 5), (4, 5), (3, 6), (4, 6), (5, 6)}:
             return
         query = "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY name"
         before = old.execute(query).fetchall()
         after = current.execute(query).fetchall()
         if previous == 3:
             after = [row for row in after if row[2] not in {'obsidian_pairing', 'obsidian_devices'}]
-        if version == 5:
+        if version >= 6:
+            after = [row for row in after if row[2] != "trash_cleanup"]
+        if previous < 5 <= version:
             after = [row for row in after if row[1] != 'one_trash_per_owner']
             declaration = ', is_trash INTEGER NOT NULL DEFAULT 0 CHECK(is_trash IN (0, 1))'
             after = [(kind, name, table, sql.replace(declaration, '', 1)
@@ -115,11 +117,12 @@ class ReleaseGuard:
                 "SELECT count(*) FROM updates WHERE state IN ('pending','processing')",
                 "SELECT count(*) FROM ai_requests WHERE state!='deleted' AND (state IN ('queued','running') OR delivery IN ('pending','sending'))",
                 "SELECT count(*) FROM note_moves WHERE state IN ('publishing','cleanup')",
-                "SELECT count(*) FROM deletion_jobs WHERE files_pending=1",
             ]
             for table in ('ai_note_jobs', 'ai_message_jobs'):
                 if db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
                     queries.append(f"SELECT count(*) FROM {table} WHERE state='pending'")
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='trash_cleanup'").fetchone():
+                queries.append("SELECT count(*) FROM trash_cleanup WHERE files_pending=1 OR message_ids!='[]'")
             return sum(db.execute(query).fetchone()[0] for query in queries) + len(list((self.app / 'data/exports').glob('export-*')))
 
 

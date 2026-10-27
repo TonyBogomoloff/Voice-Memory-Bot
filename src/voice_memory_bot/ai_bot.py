@@ -555,7 +555,7 @@ class AIBotMixin:
 
     async def ai_worker_for_owner(self, owner):
         while True:
-            if owner in self.view_rendering or owner in self.deleting_owners:
+            if owner in self.view_rendering:
                 await asyncio.sleep(.2)
                 continue
             request = ready = None

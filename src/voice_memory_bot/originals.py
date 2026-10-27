@@ -41,11 +41,3 @@ class Originals:
         directory = self.directory(note)
         if directory.exists():
             shutil.rmtree(directory)
-
-    def delete_all(self, owner):
-        if type(owner) is not int or owner <= 0:
-            raise ValueError("invalid_archive_owner")
-        directory = self.root / str(owner)
-        if directory.exists():
-            shutil.rmtree(directory)
-

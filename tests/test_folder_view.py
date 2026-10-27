@@ -79,7 +79,7 @@ def test_processing_defers_deletion_but_selects_destination_immediately(bot):
     asyncio.run(run())
 
 
-def test_failed_delete_remains_retryable_and_expired_id_stays_available_to_delete_all(bot):
+def test_failed_delete_remains_retryable_and_expired_receipt_is_preserved(bot):
     async def run():
         inbox = bot.store.ensure_user(1)
         bot.cleanup.remember(1, 1001, sent_at=1)
@@ -100,10 +100,6 @@ def test_failed_delete_remains_retryable_and_expired_id_stays_available_to_delet
         await bot.refresh_due_views()
         assert bot.store.one('SELECT * FROM telegram_messages WHERE message_id=1001')['view_blocked'] == 1
         assert bot.store.one('SELECT dirty FROM folder_views WHERE owner=1')['dirty'] == 0
-        bot.cleanup.begin(1)
-        await bot.refresh_due_views()
-        assert bot.store.all('SELECT * FROM folder_views') == []
-        assert 1001 in [t['identity'] for t in bot.cleanup.targets(1, 'message')]
     asyncio.run(run())
 
 
@@ -189,8 +185,6 @@ def test_settings_without_prior_folder_visit_and_return_to_folder(bot):
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage' and p['text'] != 'Загружаю папку…']
         assert len(sent) == 1 and sent[0]['keyboard']['keyboard']
         await bot.settings_menu(1, None)
-        bot.cleanup.begin(1)
-        assert bot.store.all('SELECT * FROM folder_views WHERE owner=1') == []
     asyncio.run(run())
 
 

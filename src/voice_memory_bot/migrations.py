@@ -303,7 +303,15 @@ def trash_folders(store):
                      "ON folders(owner) WHERE is_trash=1")
 
 
-MIGRATIONS = (baseline, folder_page_settings, ai_instruction_prompts, obsidian_devices, trash_folders)
+def trash_cleanup(store):
+    # No FK to notes: receipts must survive permanent erasure and process restarts.
+    store.db.execute("""CREATE TABLE IF NOT EXISTS trash_cleanup (
+        owner INTEGER NOT NULL, note_id TEXT NOT NULL, files_pending INTEGER NOT NULL DEFAULT 1,
+        message_ids TEXT NOT NULL, blocked_ids TEXT NOT NULL DEFAULT '[]', PRIMARY KEY(owner,note_id)
+    )""")
+
+
+MIGRATIONS = (baseline, folder_page_settings, ai_instruction_prompts, obsidian_devices, trash_folders, trash_cleanup)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
@@ -327,7 +335,3 @@ def recover_runtime(store):
         store.db.execute("UPDATE ai_requests SET state='queued' WHERE state='running'")
         store.db.execute("UPDATE ai_requests SET delivery='unknown' WHERE delivery='sending'")
         store.db.execute("UPDATE note_moves SET state='unknown' WHERE state='publishing'")
-        # Retired Telegram-only cleanup must never touch new archive entries.
-        store.db.execute("DELETE FROM deletion_targets WHERE owner IN "
-                         "(SELECT owner FROM deletion_jobs WHERE files_pending=0)")
-        store.db.execute("DELETE FROM deletion_jobs WHERE files_pending=0")
