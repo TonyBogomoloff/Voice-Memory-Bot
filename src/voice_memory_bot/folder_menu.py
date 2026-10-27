@@ -182,7 +182,7 @@ class FolderMenuMixin:
             if text in {prefix + folder["name"] for prefix in FOLDER_PREFIXES}:
                 if folder["id"] == self.store.current_folder(owner):
                     view = self.store.one('SELECT folder_id,page,screen,dirty FROM folder_views WHERE owner=?', (owner,))
-                    last_page = max(0, (folder['count'] - 1) // self.store.folder_page_size(owner))
+                    last_page = 0 if folder['is_trash'] else max(0, (folder['count'] - 1) // self.store.folder_page_size(owner))
                     # Selection is saved before Telegram I/O. A failed switch must be retryable.
                     if (view and view['folder_id'] == folder['id'] and not view['dirty']
                             and view['page'] == last_page and not view['screen']):

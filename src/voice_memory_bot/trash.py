@@ -12,7 +12,7 @@ from .providers import ProviderError
 from .store import new_id
 
 log = logging.getLogger(__name__)
-TRASH_DESCRIPTION = 'Это системная папка. Сюда попадают удалённые сообщения.'
+TRASH_DESCRIPTION = 'Сюда попадают удалённые сообщения.'
 
 
 def folder_icon(folder, active=False):

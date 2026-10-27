@@ -144,6 +144,7 @@ class FolderViewMixin:
         identity = self.store.current_folder(owner)
         if identity is None:
             return await self.render_empty_view(owner, view)
+        folder = self.store.folder(owner, identity)
         page = view['page'] if identity == view['folder_id'] else -1
         thread = view['thread_id']
         bottom = self.bottom_state(owner) if restore_screen else None
@@ -151,7 +152,8 @@ class FolderViewMixin:
                                (owner, identity))['n']
         page_size = self.store.folder_page_size(owner)
         pages = max(1, (count + page_size - 1) // page_size)
-        page = pages - 1 if page < 0 else min(page, pages - 1)
+        default_page = 0 if folder["is_trash"] else pages - 1
+        page = default_page if page < 0 else min(page, pages - 1)
         with self.store.transaction():
             self.store.db.execute('UPDATE folder_views SET dirty=1,folder_id=?,page=? WHERE owner=?',
                                   (identity, page, owner))
@@ -163,7 +165,6 @@ class FolderViewMixin:
         rendered = 0
         complete = False
         try:
-            folder = self.store.folder(owner, identity)
             title = f"{folder_icon(folder)} {folder['name']} (страница {page + 1} из {pages})"
             nav = []
             if page:
@@ -191,8 +192,11 @@ class FolderViewMixin:
                     self.store.db.execute('UPDATE folder_views SET dirty=0 WHERE owner=?', (owner,))
                 complete = True
                 return
+            # Trash opens with a full batch of recent records, even when the
+            # oldest page has only one record. Ordinary folders keep chronological pages.
+            offset = page * page_size if folder['is_trash'] else max(0, count - (page + 1) * page_size)
             notes = self.store.notes(owner, identity, limit=min(page_size, max(0, count - page * page_size)),
-                                     offset=max(0, count - (page + 1) * page_size))
+                                     offset=offset)
             for note in reversed(notes):
                 rendered += 1
                 content = note.get('content') if note.get('content') is not None else note['transcript']

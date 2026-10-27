@@ -33,6 +33,7 @@ def test_trash_icon_description_and_top_right_danger_button(tmp_path, store, cou
                       and 'страница 1 из' in p.get('text', ''))
         assert header['text'].startswith('🗑 Корзина (страница 1 из ')
         assert TRASH_DESCRIPTION in header['text']
+        assert 'Это системная папка' not in header['text']
         keys = reply_keyboard(bot)
         trash_button = next(b for row in keys['keyboard'] for b in row if b['text'] == '🗑 Корзина')
         assert trash_button['style'] == 'primary'
@@ -274,4 +275,38 @@ def test_large_cleanup_checkpoints_batches_and_retry_never_includes_new_messages
         batches = [p['message_ids'] for m, p in bot.telegram.sent if m == 'deleteMessages']
         assert [len(batch) for batch in batches] == [100, 2]
         assert {mid for batch in batches for mid in batch} == set(range(1100, 1202))
+    asyncio.run(run())
+
+
+def test_trash_opens_full_recent_page_and_shows_deleted_folder_records(tmp_path, store):
+    async def run():
+        bot = make_bot(tmp_path, store)
+        folder = store.create_folder(1, 'Удаляемая')['id']
+        for i in range(20):
+            note = ready(store, folder, 1000 + i)
+            store.db.execute('UPDATE notes SET entry_type=?,created_at=? WHERE id=?',
+                             ('ai' if i % 2 else 'note', i, note['id']))
+        store.db.commit()
+        store.delete_folder(1, folder)
+        trash = store.trash_folder(1)['id']
+        ready(store, trash, 2000)
+        assert len(bot.trash.snapshot(1, trash)) == 21
+        await bot.show_notes(1, None, trash)
+        first = [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage'
+                 and p['text'].startswith('Запись ')]
+        assert len(first) == 20 and 'Запись 2000' in first
+        assert store.one('SELECT page FROM folder_views WHERE owner=1')['page'] == 0
+        bot.telegram.sent.clear()
+        await receive(bot, '🗑 Корзина', 3000)
+        assert not any(m == 'sendMessage' for m, _ in bot.telegram.sent)
+        await bot.callback(1, None, None, f'folder:{trash}:1')
+        second = [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage'
+                  and p['text'].startswith('Запись ')]
+        assert second == ['Запись 1000']
+        assert set(first + second) == {f'Запись {1000 + i}' for i in range(20)} | {'Запись 2000'}
+        bot.telegram.sent.clear()
+        await receive(bot, '🗑 Корзина', 3001)
+        assert store.one('SELECT page FROM folder_views WHERE owner=1')['page'] == 0
+        assert len([p for m, p in bot.telegram.sent if m == 'sendMessage'
+                    and p['text'].startswith('Запись ')]) == 20
     asyncio.run(run())
