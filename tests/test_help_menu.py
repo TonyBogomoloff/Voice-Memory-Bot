@@ -117,8 +117,8 @@ def test_help_before_first_folder_and_unknown_topic_returns_to_index(bot):
         demo = await bot.callback(1, None, None, "help:folders")
         await tap(bot, demo, "help:old-topic")
         assert_index(bot)
-        assert [b["text"] for row in reply_keyboard(bot)["keyboard"] for b in row] == ["＋", "📁 Папка", "🎛️ Настройки"]
-        await receive(bot, "＋", 103)
+        assert [b["text"] for row in reply_keyboard(bot)["keyboard"] for b in row] == ["📁 Папка", "🎛️ Настройки"]
+        await receive(bot, "📁 Папка", 103)
         assert bot.store.action(1) == "create"
         assert bot.store.folders(1) == [] and bot.store.notes(1) == []
     asyncio.run(run())
