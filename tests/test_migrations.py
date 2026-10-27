@@ -159,3 +159,28 @@ def test_trash_cleanup_upgrade_preserves_rows_without_starting_deletion(tmp_path
         assert store.all('PRAGMA foreign_key_check') == []
     finally:
         store.close()
+
+
+def test_obsidian_audio_migration_preserves_records_and_preferences(tmp_path):
+    from voice_memory_bot.obsidian_settings import ObsidianSettings
+    path = tmp_path / 'db'
+    store = Store(path, Limits())
+    note = add(store, kind='text', transcript='Не потерять')
+    before = store.note(1, note['id'])
+    with store.transaction():
+        store.db.execute('DROP TABLE obsidian_settings')
+        store.db.execute('PRAGMA user_version=6')
+    store.close()
+    store = Store(path, Limits())
+    try:
+        settings = ObsidianSettings(store)
+        assert store.note(1, note['id']) == before and not settings.audio(1, note['folder_id'])
+        settings.set_audio(1, note['folder_id'], True)
+    finally:
+        store.close()
+    store = Store(path, Limits())
+    try:
+        assert ObsidianSettings(store).audio(1, note['folder_id'])
+        assert store.note(1, note['id']) == before
+    finally:
+        store.close()

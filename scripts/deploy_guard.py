@@ -62,7 +62,7 @@ def atomic(path, data):
 
 
 def restore_additive_schema_marker(database, backup):
-    """Allow rollback of the known additive v4-v6 connector and trash migrations.
+    """Allow rollback of the known additive v4-v7 connector and trash migrations.
 
     Preserve all rows, including writes since startup. Never restore the backup DB.
     Refuse to downgrade when any pre-existing schema object has changed.
@@ -71,15 +71,17 @@ def restore_additive_schema_marker(database, backup):
             sqlite3.connect(database)) as current:
         previous = old.execute('PRAGMA user_version').fetchone()[0]
         version = current.execute('PRAGMA user_version').fetchone()[0]
-        if (previous, version) not in {(3, 4), (3, 5), (4, 5), (3, 6), (4, 6), (5, 6)}:
+        if not 3 <= previous < version <= 7:
             return
         query = "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY name"
         before = old.execute(query).fetchall()
         after = current.execute(query).fetchall()
         if previous == 3:
             after = [row for row in after if row[2] not in {'obsidian_pairing', 'obsidian_devices'}]
-        if version >= 6:
+        if previous < 6 <= version:
             after = [row for row in after if row[2] != "trash_cleanup"]
+        if previous < 7 <= version:
+            after = [row for row in after if row[2] != 'obsidian_settings']
         if previous < 5 <= version:
             after = [row for row in after if row[1] != 'one_trash_per_owner']
             declaration = ', is_trash INTEGER NOT NULL DEFAULT 0 CHECK(is_trash IN (0, 1))'

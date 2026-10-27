@@ -387,10 +387,13 @@ class Store:
 
     def export_snapshot(self, owner: int, folder=None):
         from .exports import ExportSnapshot
+        from .obsidian_settings import ObsidianSettings
 
         with self.transaction():
             folders = [self.folder(owner, folder)] if folder else self.folders(owner, include_removed=True)
-            return ExportSnapshot.capture(self.export_notes(owner, folder), folders, self.export_preferences(owner))
+            preferences = self.export_preferences(owner)
+            preferences['obsidian_audio'] = {f['id']: ObsidianSettings(self).audio(owner, f['id']) for f in folders}
+            return ExportSnapshot.capture(self.export_notes(owner, folder), folders, preferences)
 
     def export_notes(self, owner: int, folder=None):
         # Export all saved data even if a storage quota was lowered after the notes were created.

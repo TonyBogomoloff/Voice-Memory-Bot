@@ -66,3 +66,40 @@ def test_visible_telegram_controls_deliver_usable_pairing_code(bot, entry):
             await telegram.close()
 
     asyncio.run(run())
+
+
+def test_audio_defaults_folder_override_and_export_all_button(bot):
+    from support.menus import labels
+
+    from voice_memory_bot.obsidian_settings import ObsidianSettings
+
+    async def run():
+        folder = bot.store.current_folder(1)
+        other = bot.store.create_folder(1, 'Другая')['id']
+        preferences = ObsidianSettings(bot.store)
+        await receive(bot, '/settings', 3000)
+        await receive(bot, '💎 Obsidian', 3001)
+        assert '📤 Экспортировать все папки' in labels(bot)
+        assert not preferences.audio(1, folder)
+        await receive(bot, '🎙 Экспортировать аудио: выкл', 3002)
+        assert preferences.audio(1, folder) and preferences.audio(1, other)
+        await bot.obsidian_menu(1, None, folder)
+        await receive(bot, '🎙 Экспортировать аудио: вкл', 3003)
+        assert not preferences.audio(1, folder) and preferences.audio(1, other)
+        assert '📤 Экспортировать папку' in labels(bot)
+        await receive(bot, '↩️ Как в общих настройках', 3004)
+        assert preferences.audio(1, folder)
+        foreign = bot.store.create_folder(2, 'Чужая')['id']
+        with pytest.raises(ValueError):
+            preferences.set_audio(1, foreign, False)
+        assert not preferences.audio(2, foreign)
+        await bot.obsidian_menu(1, None)
+        sent = []
+        async def document(owner, path, thread=None, caption=None):
+            sent.append(path.read_bytes())
+        bot.telegram.document = document
+        await receive(bot, '📤 Экспортировать все папки', 3005)
+        await asyncio.gather(*bot.export_tasks)
+        assert sent and sent[0].startswith(b'PK')
+
+    asyncio.run(run())

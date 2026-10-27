@@ -1042,7 +1042,7 @@ class Bot(TrashMixin, ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, Folder
                         f"Тексты: {text_format}, вся история папки в одном файле. Папки проектов сохранятся.\n"
                         "Всё будет в одном ZIP. Если он больше лимита Telegram — в нескольких частях.",
                         thread, keyboard(
-                            [button("💎 Obsidian: заметки + файлы", f"zip:{identity}:obsidian")],
+                            [button("💎 Obsidian: папки заметками", f"zip:{identity}:obsidian")],
                             [button("Исходники: медиа, тексты и файлы", f"zip:{identity}:raw")],
                             [button(f"Всё: {text_format} + файлы", f"zip:{identity}:all")],
                             [button(f"Только тексты · {text_format}", f"zip:{identity}:text"),
@@ -1094,7 +1094,9 @@ class Bot(TrashMixin, ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, Folder
                                 "повтори выгрузку. Исходники сохранены.", thread)
             except Exception as exc:
                 log.warning("export failed type=%s", type(exc).__name__)
-                if isinstance(exc, ValueError) and str(exc) == "archive_audio_pending":
+                if isinstance(exc, ValueError) and str(exc) == "obsidian_folder_pending":
+                    message = "В папке ещё обрабатываются записи. Дождись расшифровки и повтори экспорт."
+                elif isinstance(exc, ValueError) and str(exc) == "archive_audio_pending":
                     message = ("Часть файлов ещё не загружена в архив. Дождись обработки или повтори её "
                                "в карточке записи. Тексты можно выгрузить отдельно.")
                 elif isinstance(exc, ValueError) and str(exc) == "export_document_too_large":

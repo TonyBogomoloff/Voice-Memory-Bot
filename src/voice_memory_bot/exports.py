@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .documents import history_markdown
-from .obsidian_export import build as build_obsidian
+from .obsidian_folders import build as build_obsidian
 from .originals import is_audio
 from .pdf import history_pdf
 from .store import safe_component

@@ -311,7 +311,14 @@ def trash_cleanup(store):
     )""")
 
 
-MIGRATIONS = (baseline, folder_page_settings, ai_instruction_prompts, obsidian_devices, trash_folders, trash_cleanup)
+def obsidian_preferences(store):
+    store.db.execute("""CREATE TABLE IF NOT EXISTS obsidian_settings (
+        owner INTEGER NOT NULL REFERENCES users(id), scope TEXT NOT NULL,
+        audio INTEGER NOT NULL CHECK(audio IN (0, 1)), PRIMARY KEY(owner,scope)
+    )""")
+
+
+MIGRATIONS = (baseline, folder_page_settings, ai_instruction_prompts, obsidian_devices, trash_folders, trash_cleanup, obsidian_preferences)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

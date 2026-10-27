@@ -10,6 +10,7 @@ from support.exports import ExportTelegram
 from voice_memory_bot.archive import Archive
 from voice_memory_bot.bot import Bot
 from voice_memory_bot.config import Config
+from voice_memory_bot.obsidian_settings import ObsidianSettings
 
 
 def add(store, owner=1, message=1, **values):
@@ -33,34 +34,50 @@ def unpack(paths):
     return files, records
 
 
-def test_portable_notes_media_and_originals_are_lossless_and_owner_scoped(tmp_path, store):
+def test_folder_history_is_ordered_with_photos_and_optional_audio(tmp_path, store):
     archive = Archive(tmp_path / 'notes')
-    note = add(store, kind='voice', file_id='SECRET_FILE_ID', extension='ogg', transcript='  Исходный\nтекст  ')
-    media = b'original-audio' * 200
-    path = archive.audio(note)
-    path.parent.mkdir(parents=True)
-    path.write_bytes(media)
-    store.update_note(1, note['id'], title='../../Идея: "Ёж"',
-                      audio_bytes=len(media), sha256=hashlib.sha256(media).hexdigest())
-    other = add(store, message=2, kind='text', transcript='[[Ссылка]]\n- [ ] Задача')
+    voice = add(store, kind='voice', file_id='SECRET_FILE_ID', extension='ogg', transcript='Расшифровка')
+    photo = add(store, message=2, kind='photo', file_id='SECRET_PHOTO_ID', extension='jpg', transcript='Подпись фото')
+    text = add(store, message=3, kind='text', transcript='[[Ссылка]]\n- [ ] Задача')
     add(store, owner=2, kind='text', transcript='ЧУЖОЙ СЕКРЕТ')
+    media = {voice['id']: b'original-audio' * 200, photo['id']: b'original-photo' * 60}
+    for note in (voice, photo):
+        path = archive.audio(note)
+        path.parent.mkdir(parents=True)
+        path.write_bytes(media[note['id']])
+        store.update_note(1, note['id'], state='ready', audio_bytes=len(media[note['id']]),
+                          sha256=hashlib.sha256(media[note['id']]).hexdigest())
+    store.update_note(1, voice['id'], title='../../Идея: "Ёж"')
+    with store.transaction():
+        store.db.execute('UPDATE notes SET content=? WHERE id=?', ('Исправленный **текст**', voice['id']))
+        for n, note in enumerate((text, voice, photo)):
+            store.db.execute('UPDATE notes SET created_at=?,state="ready" WHERE id=?', (1000 + n, note['id']))
     snapshot = store.export_snapshot(1)
-    next(n for n in snapshot.notes if n['id'] == note['id'])['content'] = 'Исправленный **текст**'
-    first = archive.export(snapshot.notes, snapshot.folders, tmp_path / 'one', True, 4800, obsidian=True)
-    second = archive.export(snapshot.notes, snapshot.folders, tmp_path / 'two', True, 4800, obsidian=True)
+    first = archive.export(snapshot.notes, snapshot.folders, tmp_path / 'one', True, 6500,
+                           obsidian=True, settings=snapshot.settings)
     files, records = unpack(first)
-    assert files == unpack(second)[0]
-    assert len(first) > 1 and all(p.stat().st_size <= 4800 for p in first)
     documents = [r for r in records if r['kind'] == 'note']
-    assert {r['note_id'] for r in documents} == {note['id'], other['id']}
-    row = next(r for r in documents if r['note_id'] == note['id'])
+    assert {r['note_id'] for r in documents} == {f['id'] for f in snapshot.folders}
+    row = next(r for r in documents if r['folder_id'] == voice['folder_id'])
+    assert row['layout'] == 'folder' and [a['note_id'] for a in row['attachments']] == [photo['id']]
     markdown = files[row['path']].decode()
-    assert 'voice_memory_id: "' + note['id'] + '"' in markdown
-    assert 'Исправленный **текст**' in markdown and '  Исходный\nтекст  ' in markdown
-    relative = unquote(markdown.split('![Исходное аудио](', 1)[1].split(')', 1)[0])
-    assert files[relative.removeprefix('../')] == media
-    assert all('..' not in p.split('/') and not p.startswith('/') for p in files)
-    assert all(b'SECRET' not in data and 'ЧУЖОЙ'.encode() not in data for data in files.values())
+    assert markdown.index('[[Ссылка]]') < markdown.index('Исправленный **текст**') < markdown.index('Подпись фото')
+    assert 'Расшифровка' in markdown and 'Мои дополнения' in markdown
+    relative = unquote(markdown.split('![Фото](', 1)[1].split(')', 1)[0])
+    assert files[relative] == media[photo['id']]
+    assert not any(path.endswith('.ogg') for path in files)
+    ObsidianSettings(store).set_audio(1, voice['folder_id'], True)
+    selected = store.export_snapshot(1)
+    audio = archive.export(selected.notes, selected.folders, tmp_path / 'two', True, 6500,
+                           obsidian=True, settings=selected.settings)
+    repeated = archive.export(selected.notes, selected.folders, tmp_path / 'three', True, 6500,
+                              obsidian=True, settings=selected.settings)
+    audio_files, _ = unpack(audio)
+    assert audio_files == unpack(repeated)[0] and len(audio) > 1
+    assert any(data == media[voice['id']] for data in audio_files.values())
+    assert not snapshot.settings['obsidian_audio'][voice['folder_id']]  # Frozen preference.
+    assert all('..' not in p.split('/') and not p.startswith('/') for p in audio_files)
+    assert all(b'SECRET' not in data and 'ЧУЖОЙ'.encode() not in data for data in audio_files.values())
 
 
 def test_bad_media_cleans_partial_export_and_mixed_owners_are_rejected(tmp_path, store):
@@ -69,7 +86,7 @@ def test_bad_media_cleans_partial_export_and_mixed_owners_are_rejected(tmp_path,
     media = archive.audio(note)
     media.parent.mkdir(parents=True)
     media.write_bytes(b'bad')
-    store.update_note(1, note['id'], audio_bytes=3, sha256=hashlib.sha256(b'old').hexdigest())
+    store.update_note(1, note['id'], state='ready', audio_bytes=3, sha256=hashlib.sha256(b'old').hexdigest())
     with pytest.raises(ValueError, match='checksum'):
         archive.export(store.export_notes(1), store.folders(1), tmp_path / 'bad', True, 45000000, obsidian=True)
     assert not list((tmp_path / 'bad').glob('*.zip'))
@@ -79,7 +96,8 @@ def test_bad_media_cleans_partial_export_and_mixed_owners_are_rejected(tmp_path,
 
 
 def test_telegram_obsidian_export_and_folder_scope(tmp_path, store):
-    add(store, kind='text', transcript='Моя заметка')
+    note = add(store, kind='text', transcript='Моя заметка')
+    store.update_note(1, note['id'], state='ready')
     private = store.create_folder(2, 'Чужая папка')['id']
 
     async def run():
