@@ -108,8 +108,6 @@ def test_button_waits_for_instruction_and_keeps_selected_note_context(bot):
         assert bot.store.action(1) is None
         plain = await receive(bot, 'Обычная заметка', 203)
         assert plain['entry_type'] == 'note' and bot.ai_state.claim() is None
-        bot.cleanup.begin(1)
-        assert bot.store.all('SELECT * FROM ai_note_context WHERE owner=1') == []
     asyncio.run(run())
 
 

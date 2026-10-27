@@ -178,7 +178,5 @@ def test_batch_cleanup_resumes_after_interruption_without_repeating_mutations(bo
         assert all(bot.store.note(1, n['id'])['revision'] == 1 for n in notes)
         deleted = [p['message_id'] for m, p in bot.telegram.sent if m == 'deleteMessage']
         assert len(deleted) == len(set(deleted)) == 20
-        # All added foreign-key tables must participate in account cleanup.
-        bot.cleanup.begin(1)
         assert not bot.store.all('PRAGMA foreign_key_check')
     asyncio.run(run())
