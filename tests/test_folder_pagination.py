@@ -41,6 +41,12 @@ def test_folder_pages_cover_archive_keep_photos_and_clamp_stale_page(bot, size):
             assert [p['text'] for p in sent if p['text'].startswith('Запись ')] == [f'Запись {i}' for i in expected]
             assert sum('Заметки (страница' in p['text'] for p in sent) == 1
             assert not any(p['text'] == '📁 Заметки' for p in sent)
+            page_controls = [p for p in sent if 'folder:' in str(p.get('keyboard', {}))]
+            assert len(page_controls) == (2 if page < 2 else 1)
+            if page < 2:
+                assert page_controls[-1] is sent[-1]
+                assert page_controls[-1]['keyboard'] == sent[0]['keyboard']
+                assert page_controls[-1]['text'] == f'Страница {page + 1} из 3'
             navigation = sent[0]['keyboard']['inline_keyboard'][0]
             expected_pages = [1] if page == 0 or page >= 2 else [0, 2]
             assert [b['callback_data'] for b in navigation] == [f'folder:{folder}:{p}' for p in expected_pages]

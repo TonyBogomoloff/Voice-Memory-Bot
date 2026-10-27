@@ -219,6 +219,9 @@ class FolderViewMixin:
                             {'inline_keyboard': [[{'text': 'Опции', 'callback_data': f"aioptions:{note['id']}"}]]},
                             reply_to=instruction_id)
                         self.ai_state.link(owner, response['message_id'], request['conversation_id'])
+            if page + 1 < pages:
+                await self.view_send(self.telegram.text, owner, f"Страница {page + 1} из {pages}", thread,
+                                     {'inline_keyboard': [nav]})
             if bottom and bottom['screen'] != 'root':
                 if self.store.action(owner):
                     await self.send_bottom(owner, thread, bottom)
