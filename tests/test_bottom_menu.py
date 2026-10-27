@@ -87,9 +87,10 @@ def test_all_folders_are_reachable_and_stale_labels_never_archive(bot):
                      if action.startswith("folder:"))
         await receive(bot, stale, 1004)
         selected = bot.store.current_folder(1)
+        sent_before = len(bot.telegram.sent)
         await receive(bot, stale, 1005)
         assert bot.store.current_folder(1) == selected and bot.store.notes(1) == []
-        assert "устарела" in last_message(bot)["text"]
+        assert not any(m == "sendMessage" for m, _ in bot.telegram.sent[sent_before:])
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 " + bot.store.folder(1, selected)["name"]
         await receive(bot, ROOT, 1006)
         await receive(bot, "🎛️ Настройки", 1007)
@@ -325,4 +326,22 @@ def test_record_commands_send_only_inline_question(bot, command, prompt):
         if command != "dropfolder":
             assert original not in removed
         assert bot.store.note(1, note["id"]) == note
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("label", ["⬅️", "➡️", "📁 Папка", "🎛️ Настройки"])
+def test_delayed_keyboard_alias_is_silent_and_preserves_current_action(bot, label):
+    async def run():
+        await receive(bot, "/start", 1000)
+        bot.emoji_keyboards.remember(1, {"old-button": label})
+        bot.emoji_keyboards.remember(1, {"Отмена": "Отмена"})
+        bot.store.set_action(1, "ai_names")
+        state = bot.bottom_state(1)
+        bot.telegram.sent.clear()
+        await receive(bot, "old-button", 1001)
+        await receive(bot, "old-button", 1002)
+        assert not any(m == "sendMessage" for m, _ in bot.telegram.sent)
+        assert bot.bottom_state(1) == state
+        assert bot.store.action(1) == "ai_names"
+        assert bot.store.notes(1) == []
     asyncio.run(run())

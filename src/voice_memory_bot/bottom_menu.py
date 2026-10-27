@@ -238,9 +238,7 @@ class BottomMenuMixin:
             return True
         if action is None:
             # Old keyboards on another device and delayed taps never become archive input.
-            await self.show_bottom(owner, "Эта кнопка устарела. Выбери действие внизу.", thread,
-                                   screen="stale", back=state.screen.wire if state else "root", keep=True)
-            self.store.set_action(owner, None)
+            # Ignore it without replacing the current screen or cancelling pending input.
             return True
         if action == "cancel_record_options":
             if state.screen.kind == "recordoptions":

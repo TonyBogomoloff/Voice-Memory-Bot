@@ -315,8 +315,7 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
                 return await self.input_action(owner, thread, raw_text)
             if alias_active is False:
                 await self.remove_menu_message(owner, message["message_id"])
-                return await self.refresh_folder_keyboard(owner, thread, force=True,
-                    notice="Эта кнопка устарела. Выбери действие внизу.")
+                return  # A delayed tap from the replaced keyboard is already handled.
             text = navigation
             command = text.split()[0].split("@", 1)[0].lower() if text else ""
             keep_reply_command = "reply_to_message" in message and command in {"/move", "/ai", "/delete", "/options"}
