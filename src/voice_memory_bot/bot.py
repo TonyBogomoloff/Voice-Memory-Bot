@@ -88,6 +88,7 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
         self.deliveries = DeliveryService(store, self.ai_state)
         self.init_cleanup()
         self.folder_delete_confirmations = {}
+        self.folder_delete_prompts = {}
         self.folder_keyboards = {}
         self.folder_pages = {}
         self.init_folder_view()
@@ -369,7 +370,7 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
                                            {"inline_keyboard": []})
                 return await self.show(owner, "Сначала пришли ответ текстом или нажми «Отмена».", thread,
                                        keyboard([button("Отмена", "home")]))
-            if not self.store.folders(owner):
+            if not self.store.current_folder(owner):
                 return await self.ask_first_folder(owner, thread)
             folder = self.source_folder(owner, thread, message)["id"]
             self.check_ai_capacity(owner, folder, message)
@@ -452,12 +453,12 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
     async def show_help(self, owner, thread=None, topic=None, *, edit_id=None):
         self.store.set_action(owner, None)
         self.leave_folder_options(owner)
-        if self.store.folders(owner):
+        if self.store.current_folder(owner):
             await self.refresh_folder_keyboard(owner, thread)
         elif (self.bottom_state(owner) or {}).get("screen") != "root":
             await self.send_bottom(owner, thread, {
                 "screen": "root", "back": "root", "rows": [], "keep": True,
-                "text": "Создай первую папку кнопкой «＋» внизу."}, raw_keys=self.folder_keyboard(owner))
+                "text": "Создай первую папку через «Папка» внизу."}, raw_keys=self.folder_keyboard(owner))
         text, rows = help_page(topic)
         keys, video = keyboard(*rows), help_video_path(topic)
         carrier = self.store.one("SELECT message_id FROM bottom_menus WHERE owner=?", (owner,))
@@ -494,7 +495,7 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
             return await self.open_ai(owner, thread)
         if command == "/start":
             return await self.show_start(owner, thread)
-        if not self.store.folders(owner) and command in {"/restart", "/menu", "/folders", "/notes", "/newchat", "/cancel"}:
+        if not self.store.current_folder(owner) and command in {"/restart", "/menu", "/notes", "/newchat", "/cancel"}:
             return await self.ask_first_folder(owner, thread)
         if command == "/newchat":
             return await self.new_ai_conversation(owner, thread, self.store.current_folder(owner, thread))
@@ -596,10 +597,11 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
             rows.append(nav)
         rows.append([button("＋ Новая папка", "create"), button("🔎 Поиск", "search")])
         rows.append([button("⌂ Меню", "home")])
-        name = self.store.folder(owner, active)["name"]
-        text = (
-            f"📁 Все папки · {page + 1}/{(len(folders) - 1) // 4 + 1}\nСейчас сохраняю в «{name}».\n"
-            "Открой папку, чтобы выбрать её для новых записей.")
+        name = self.store.folder(owner, active)["name"] if active else None
+        text = f"📁 Все папки · {page + 1}/{(len(folders) - 1) // 4 + 1}\n"
+        if name:
+            text += f"Сейчас сохраняю в «{name}».\n"
+        text += "Открой папку, чтобы выбрать её для новых записей."
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"folders:{page}",
                                back="home", edit_id=edit_id)
 
@@ -608,12 +610,18 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
         text = f"📁 {folder['name']}"
         if folder["mode"] == "chat":
             text += "\nРежим: диалог с ИИ"
-        text += "\n✅ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
-        rows = [[button("＋ Создать", "create"),
-                 button("✏️ Переименовать", f"rename:{identity}")],
-                [button("💎 Для Obsidian", f"obsidian:{identity}"),
-                 button("📦 Экспорт", f"zip:{identity}:all")],
-                [button("🗑 Удалить папку", f"dropfolder:{identity}")]]
+        if folder['is_trash']:
+            text += "\nЗдесь записи из удалённых папок. Вернуть запись можно через «Переместить»."
+            rows = [[button("＋ Создать", "create")],
+                    [button("💎 Для Obsidian", f"obsidian:{identity}"),
+                     button("📦 Экспорт", f"zip:{identity}:all")]]
+        else:
+            text += "\n✅ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
+            rows = [[button("＋ Создать", "create"),
+                     button("✏️ Переименовать", f"rename:{identity}")],
+                    [button("💎 Для Obsidian", f"obsidian:{identity}"),
+                     button("📦 Экспорт", f"zip:{identity}:all")],
+                    [button("🗑 Удалить папку", f"dropfolder:{identity}")]]
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"foldermenu:{identity}",
                                back="root", edit_id=edit_id)
 
@@ -735,7 +743,8 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
         if action == "select":
             return await self.show_notes(owner, thread, identity, edit_id=message_id)
         if action in {"rename", "aliases"}:
-            self.store.folder(owner, identity)
+            if self.store.folder(owner, identity)['is_trash']:
+                raise ValueError("Системную папку «Корзина» нельзя переименовать")
             self.store.set_action(owner, data)
             prompt = "Напиши новое название или пришли голосовое — я выделю из него название папки." if action == "rename" else "Пришли названия через запятую. «-» удалит псевдонимы."
             return await self.show_bottom(owner, prompt, thread, screen=data, back=f"foldermenu:{identity}",

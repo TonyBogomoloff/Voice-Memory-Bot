@@ -294,7 +294,16 @@ def obsidian_devices(store):
     """)
 
 
-MIGRATIONS = (baseline, folder_page_settings, ai_instruction_prompts, obsidian_devices)
+def trash_folders(store):
+    # Add only schema here; runtime registration creates each owner's system folder.
+    if 'is_trash' not in {r['name'] for r in store.all('PRAGMA table_info(folders)')}:
+        store.db.execute("ALTER TABLE folders ADD COLUMN is_trash INTEGER NOT NULL DEFAULT 0 "
+                         "CHECK(is_trash IN (0, 1))")
+    store.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_trash_per_owner "
+                     "ON folders(owner) WHERE is_trash=1")
+
+
+MIGRATIONS = (baseline, folder_page_settings, ai_instruction_prompts, obsidian_devices, trash_folders)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

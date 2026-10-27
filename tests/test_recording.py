@@ -59,5 +59,5 @@ def test_bottom_buttons_create_rename_search_and_cancel_without_archiving_ui_inp
         assert not any(m in {"createForumTopic", "editForumTopic"} for m, _ in bot.telegram.sent)
         for data in ("record:999", f"recordlink:999:{folder['id']}"):
             await bot.callback(1, None, 500, data)
-        assert len(store.folders(1)) == 2
+        assert len(store.folders(1)) == 3
     asyncio.run(run())

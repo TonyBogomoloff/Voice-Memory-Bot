@@ -111,3 +111,31 @@ def test_ai_instruction_prompt_upgrade_from_installed_v2_preserves_archive(tmp_p
         assert store.note(1, note['id']) == before
     finally:
         store.close()
+
+
+
+def test_trash_upgrade_preserves_existing_records_and_reuses_namesake(tmp_path):
+    path = tmp_path / 'db'
+    store = Store(path, Limits())
+    trash = store.trash_folder(1)
+    note, _ = store.add_note(1, trash['id'], {'message_id': 20}, 'text', transcript='Сохранить оригинал')
+    store.update_note(1, note['id'], state='ready', delivery='sent', transcript_delivery='sent')
+    before = store.note(1, note['id'])
+    with store.transaction():
+        store.db.execute('DROP INDEX one_trash_per_owner')
+        store.db.execute('ALTER TABLE folders DROP COLUMN is_trash')
+        store.db.execute('PRAGMA user_version=4')
+    old_folder = store.folder(1, trash['id'])
+    store.close()
+    store = Store(path, Limits())
+    try:
+        migrated = store.folder(1, trash['id'])
+        assert {k: migrated[k] for k in old_folder} == old_folder
+        assert store.note(1, note['id']) == before
+        store.recover_runtime()
+        assert store.trash_folder(1)['id'] == trash['id']
+        assert store.note(1, note['id']) == before
+        assert len(store.folders(1)) == 1
+        assert store.all('PRAGMA foreign_key_check') == []
+    finally:
+        store.close()

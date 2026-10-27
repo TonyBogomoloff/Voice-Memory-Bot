@@ -62,7 +62,7 @@ def atomic(path, data):
 
 
 def restore_additive_schema_marker(database, backup):
-    """Version 4 only adds connector tables; allow v3 code to reopen the live DB.
+    """Allow rollback of the known additive v4 connector and v5 trash migrations.
 
     Preserve all rows, including writes since startup. Never restore the backup DB.
     Refuse to downgrade when any pre-existing schema object has changed.
@@ -71,13 +71,22 @@ def restore_additive_schema_marker(database, backup):
             sqlite3.connect(database)) as current:
         previous = old.execute('PRAGMA user_version').fetchone()[0]
         version = current.execute('PRAGMA user_version').fetchone()[0]
-        if (previous, version) != (3, 4):
+        if (previous, version) not in {(3, 4), (3, 5), (4, 5)}:
             return
-        query = ("SELECT type,name,tbl_name,sql FROM sqlite_master "
-                 "WHERE tbl_name NOT IN ('obsidian_pairing','obsidian_devices') ORDER BY name")
-        if old.execute(query).fetchall() != current.execute(query).fetchall():
+        query = "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY name"
+        before = old.execute(query).fetchall()
+        after = current.execute(query).fetchall()
+        if previous == 3:
+            after = [row for row in after if row[2] not in {'obsidian_pairing', 'obsidian_devices'}]
+        if version == 5:
+            after = [row for row in after if row[1] != 'one_trash_per_owner']
+            declaration = ', is_trash INTEGER NOT NULL DEFAULT 0 CHECK(is_trash IN (0, 1))'
+            after = [(kind, name, table, sql.replace(declaration, '', 1)
+                      if kind == 'table' and name == 'folders' else sql)
+                     for kind, name, table, sql in after]
+        if before != after:
             raise RuntimeError('rollback_schema_not_additive')
-        current.execute('PRAGMA user_version=3')
+        current.execute(f'PRAGMA user_version={previous}')
         current.commit()
 
 

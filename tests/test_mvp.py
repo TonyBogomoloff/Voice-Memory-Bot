@@ -102,7 +102,7 @@ def test_restart_recovers_queue_but_does_not_repeat_unknown_delivery(tmp_path):
 def test_import_of_bot_created_topic_reuses_pending_folder(store):
     folder = store.create_folder(1, "Игра")
     assert store.import_topic(1, "Игра", 123)["id"] == folder["id"]
-    assert len(store.folders(1)) == 2
+    assert len(store.folders(1)) == 3
 
 
 def test_telegram_service_events_do_not_create_custom_folders(tmp_path, store):

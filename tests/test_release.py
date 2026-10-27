@@ -97,15 +97,18 @@ def test_work_arriving_during_shutdown_resumes_without_replacing_files(release, 
     assert not (r.guard.app / 'added.py').exists()
 
 
-@pytest.mark.parametrize('schema_upgrade', [False, True])
+@pytest.mark.parametrize('schema_upgrade', [None, 3, 4])
 def test_failed_start_restores_code_but_keeps_new_database_and_originals(release, monkeypatch, schema_upgrade):
     r = release
     starts = 0
     if schema_upgrade:
         with sqlite3.connect(r.guard.db) as db:
-            db.execute('DROP TABLE obsidian_pairing')
-            db.execute('DROP TABLE obsidian_devices')
-            db.execute('PRAGMA user_version=3')
+            if schema_upgrade == 3:
+                db.execute('DROP TABLE obsidian_pairing')
+                db.execute('DROP TABLE obsidian_devices')
+            db.execute('DROP INDEX one_trash_per_owner')
+            db.execute('ALTER TABLE folders DROP COLUMN is_trash')
+            db.execute(f'PRAGMA user_version={schema_upgrade}')
 
     def run(args, **kwargs):
         nonlocal starts
@@ -129,7 +132,7 @@ def test_failed_start_restores_code_but_keeps_new_database_and_originals(release
     with sqlite3.connect(r.guard.db) as db:
         assert db.execute('SELECT transcript FROM notes').fetchone()[0] == 'saved after new startup'
         if schema_upgrade:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 3
+            assert db.execute('PRAGMA user_version').fetchone()[0] == schema_upgrade
             assert db.execute("SELECT name FROM sqlite_master WHERE name='obsidian_devices'").fetchone()
     assert (r.original.parent / 'new.bin').read_bytes() == b'new user media'
     assert r.original.read_bytes() == b'original bytes'
@@ -174,3 +177,22 @@ def test_video_cache_readiness_is_required_before_stopping_service(release, monk
     assert len(r.calls) == int(prepared)
     assert not any(args[0] == 'systemctl' for args in r.calls)
     assert (r.guard.app / 'app.py').read_text() == 'old source'
+
+
+
+def test_trash_schema_rollback_refuses_unexpected_schema_change(release, tmp_path):
+    r = release
+    backup = tmp_path / 'before-v5.sqlite3'
+    with sqlite3.connect(r.guard.db) as db:
+        db.execute('DROP INDEX one_trash_per_owner')
+        db.execute('ALTER TABLE folders DROP COLUMN is_trash')
+        db.execute('PRAGMA user_version=4')
+        with sqlite3.connect(backup) as snapshot:
+            db.backup(snapshot)
+    Store(r.guard.db, Limits()).close()
+    with sqlite3.connect(r.guard.db) as db:
+        db.execute('ALTER TABLE notes ADD COLUMN unexpected TEXT')
+    with pytest.raises(RuntimeError, match='rollback_schema_not_additive'):
+        r.module.restore_additive_schema_marker(r.guard.db, backup)
+    with sqlite3.connect(r.guard.db) as db:
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 5

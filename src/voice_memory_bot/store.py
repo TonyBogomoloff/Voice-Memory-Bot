@@ -51,6 +51,8 @@ class Store:
     def recover_runtime(self):
         """Call only at runtime startup, after acquiring the process lock."""
         recover_runtime(self)
+        for user in self.all("SELECT id FROM users"):
+            self.register_user(user['id'])
 
     def transaction(self):
         return transaction(self.db)
@@ -66,12 +68,30 @@ class Store:
         return [dict(r) for r in self.db.execute(sql, args)]
 
     def register_user(self, owner: int):
+        self.trash_folder(owner)
+
+    def trash_folder(self, owner: int):
+        """Create the owner's permanent trash, preserving an existing namesake's data."""
         with self.transaction():
             self.db.execute("INSERT OR IGNORE INTO users(id) VALUES (?)", (owner,))
+            folder = self.one("SELECT * FROM folders WHERE owner=? AND is_trash=1", (owner,))
+            if folder:
+                return folder
+            existing = self.one("SELECT id FROM folders WHERE owner=? AND normalized=? AND removed=0",
+                                (owner, normalize("Корзина")))
+            if existing:
+                identity = existing['id']
+                self.db.execute("UPDATE folders SET name='Корзина',is_trash=1,mode='notes' WHERE id=?", (identity,))
+                self.db.execute("DELETE FROM ai_active WHERE owner=? AND folder_id=?", (owner, identity))
+            else:
+                identity = new_id()
+                self.db.execute("INSERT INTO folders(id,owner,name,normalized,is_trash) VALUES (?,?,?,?,1)",
+                                (identity, owner, "Корзина", normalize("Корзина")))
+            return self.folder(owner, identity)
 
     def ensure_user(self, owner: int) -> str:
         with self.transaction():
-            self.db.execute("INSERT OR IGNORE INTO users(id) VALUES (?)", (owner,))
+            self.register_user(owner)
             folder = self.one("SELECT id FROM folders WHERE owner=? AND is_inbox=1 AND removed=0", (owner,))
             if folder:
                 return folder["id"]
@@ -83,7 +103,7 @@ class Store:
     def folders(self, owner: int, include_removed=False):
         return self.all("SELECT f.*, (SELECT count(*) FROM notes n WHERE n.folder_id=f.id "
                         "AND n.deleted=0) AS count FROM folders f WHERE owner=? AND (removed=0 OR ?) "
-                        "ORDER BY is_inbox DESC, normalized", (owner, int(include_removed)))
+                        "ORDER BY is_trash, is_inbox DESC, normalized", (owner, int(include_removed)))
 
     def pinned_folders(self, owner):
         return self.all("SELECT * FROM folders WHERE owner=? AND removed=0 AND pin_slot IS NOT NULL ORDER BY pin_slot",
@@ -167,13 +187,15 @@ class Store:
         self.register_user(owner)
         selected = self.one("SELECT f.id FROM users u JOIN folders f "
                             "ON f.id=u.active_folder AND f.owner=u.id AND f.removed=0 WHERE u.id=?", (owner,))
-        folders = self.folders(owner)
+        folders = [folder for folder in self.folders(owner) if not folder['is_trash']]
         return selected["id"] if selected else folders[0]["id"] if folders else None
 
     def delete_folder(self, owner, identity):
-        """Hide any folder, preserving the archive under its stable historical ID."""
+        """Atomically move a folder's records and conversations into the owner's trash."""
         with self.transaction():
             folder = self.folder(owner, identity)
+            if folder['is_trash']:
+                raise ValueError("Системную папку «Корзина» нельзя удалить")
             if folder["removed"]:
                 raise ValueError("Папка уже удалена")
             if self.one("SELECT 1 FROM notes WHERE owner=? AND deleted=0 AND "
@@ -182,13 +204,18 @@ class Store:
                             "SELECT 1 FROM ai_requests WHERE owner=? AND "
                             "(state IN ('queued','running') OR delivery='sending')", (owner,)):
                 raise ValueError("Дождись завершения обработки записей и ИИ, затем удали папку")
+            trash = self.trash_folder(owner)
+            self.db.execute("UPDATE notes SET folder_id=?,routing='manual',requested_folder=NULL,archive_dirty=1,"
+                            "revision=revision+(state='ready') WHERE owner=? AND folder_id=? AND deleted=0",
+                            (trash['id'], owner, identity))
+            self.db.execute("UPDATE ai_conversations SET folder_id=? WHERE owner=? AND folder_id=?",
+                            (trash['id'], owner, identity))
             self.db.execute("UPDATE folders SET removed=1,pin_slot=NULL,normalized=? WHERE owner=? AND id=?",
                             ("removed:" + identity, owner, identity))
             remaining = self.folders(owner)
             active = self.one('SELECT active_folder FROM users WHERE id=?', (owner,))['active_folder']
             selected = active if any(f['id'] == active for f in remaining) else remaining[0]['id'] if remaining else None
-            self.db.execute("UPDATE users SET active_folder=?,action=NULL WHERE id=? AND active_folder=?",
-                            (selected, owner, identity))
+            self.db.execute("UPDATE users SET active_folder=?,action=NULL WHERE id=?", (selected, owner))
             self.db.execute("DELETE FROM ai_active WHERE owner=? AND folder_id=?", (owner, identity))
             if folder["thread_id"]:
                 self.db.execute("INSERT OR IGNORE INTO implicit_topics VALUES (?,?)", (owner, folder["thread_id"]))
@@ -198,7 +225,7 @@ class Store:
         self.register_user(owner)
         name = clean_name(name)
         self.check_names(owner, [name])
-        if len(self.folders(owner)) >= self.limits.max_folders_per_user:
+        if sum(not folder['is_trash'] for folder in self.folders(owner)) >= self.limits.max_folders_per_user:
             raise ValueError("Достигнут лимит папок")
         identity = new_id()
         with self.transaction():
@@ -230,6 +257,8 @@ class Store:
 
     def rename_folder(self, owner, identity, name):
         folder = self.folder(owner, identity)
+        if folder['is_trash']:
+            raise ValueError("Системную папку «Корзина» нельзя переименовать")
         if folder["removed"]:
             raise ValueError("Папка удалена")
         name = clean_name(name)
@@ -240,6 +269,8 @@ class Store:
 
     def aliases(self, owner, identity, names):
         folder = self.folder(owner, identity)
+        if folder['is_trash']:
+            raise ValueError("У системной папки «Корзина» нельзя менять псевдонимы")
         names = [clean_name(n) for n in names]
         if len(names) > 10:
             raise ValueError("Максимум 10 псевдонимов")
@@ -249,7 +280,8 @@ class Store:
                             (json.dumps(names, ensure_ascii=False), identity, owner))
 
     def bind_thread(self, owner, identity, thread):
-        self.folder(owner, identity)
+        if self.folder(owner, identity)['is_trash']:
+            raise ValueError("Системную папку «Корзина» нельзя привязать к теме")
         with self.transaction():
             self.db.execute("UPDATE folders SET thread_id=? WHERE id=? AND owner=?", (thread, identity, owner))
 

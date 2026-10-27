@@ -15,7 +15,7 @@ from support.commands import receive
 def test_commands_do_not_import_unknown_threads_as_folders(bot, command, extra_folders):
     async def run():
         await receive(bot, command, thread=99)
-        assert {f["name"] for f in bot.store.folders(1)} == {"Входящие"} | extra_folders
+        assert {f["name"] for f in bot.store.folders(1)} == {"Входящие", "Корзина"} | extra_folders
         assert bot.store.folder_for_thread(1, 99) is None
         assert bot.store.notes(1) == []
         assert bot.telegram.sent
@@ -29,7 +29,7 @@ def test_navigation_commands_cancel_pending_folder_input(bot, command):
         await receive(bot, "/new")
         await receive(bot, command, message_id=2)
         await receive(bot, "Заметка после команды", message_id=3)
-        assert {f["name"] for f in bot.store.folders(1)} == {"Входящие"}
+        assert {f["name"] for f in bot.store.folders(1)} == {"Входящие", "Корзина"}
         assert bot.store.notes(1)[0]["transcript"] == "Заметка после команды"
     asyncio.run(run())
 
@@ -38,7 +38,7 @@ def test_folder_name_input_does_not_import_unknown_source_thread(bot):
     async def run():
         await receive(bot, "/new")
         await receive(bot, "Работа", message_id=2, thread=99)
-        assert {f["name"] for f in bot.store.folders(1)} == {"Входящие", "Работа"}
+        assert {f["name"] for f in bot.store.folders(1)} == {"Входящие", "Работа", "Корзина"}
         assert bot.store.folder_for_thread(1, 99) is None
         assert bot.store.notes(1) == []
     asyncio.run(run())

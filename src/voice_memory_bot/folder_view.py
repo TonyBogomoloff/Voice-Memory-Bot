@@ -275,7 +275,7 @@ class FolderViewMixin:
                 continue
             if owner not in self.config.allowed_user_ids or self.view_locks[owner].locked():
                 continue
-            if not self.store.folders(owner) and not view['screen']:
+            if not self.store.current_folder(owner) and not view['screen']:
                 # Delete All must never resurrect an empty folder or send a new view.
                 with self.store.transaction():
                     self.store.db.execute('DELETE FROM folder_views WHERE owner=?', (owner,))

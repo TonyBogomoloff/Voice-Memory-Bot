@@ -79,7 +79,9 @@ def test_move_picker_filters_source_before_pagination(tmp_path, store):
         bot = make_bot(tmp_path, store)
         source = store.current_folder(1)
         note, _ = store.add_note(1, source, {"message_id": 50}, "text", transcript="Текст")
-        targets = [store.create_folder(1, f"Папка {i}")["id"] for i in range(8)]
+        targets = [store.create_folder(1, f"Папка {i}")["id"] for i in range(7)]
+        trash = store.trash_folder(1)['id']
+        targets.append(trash)
         await bot.choose_note_folder(1, note["id"], 50, 0)
         actions = bot.bottom_state(1)["actions"].values()
         assert {a.split(":")[-1] for a in actions if a.startswith("rmove:")} == set(targets)
@@ -88,10 +90,11 @@ def test_move_picker_filters_source_before_pagination(tmp_path, store):
         actions = bot.bottom_state(1)["actions"].values()
         assert {a.split(":")[-1] for a in actions if a.startswith("rmove:")} == set(targets)
         for target in targets:
-            store.db.execute("UPDATE folders SET removed=1 WHERE id=?", (target,))
+            if target != trash:
+                store.db.execute("UPDATE folders SET removed=1 WHERE id=?", (target,))
         store.db.commit()
         await bot.choose_note_folder(1, note["id"], 50, 0)
-        assert set(bot.bottom_state(1)["actions"]) == {"＋ Новая папка", "Отмена"}
+        assert set(bot.bottom_state(1)["actions"]) == {"Корзина", "＋ Новая папка", "Отмена"}
     asyncio.run(run())
 
 

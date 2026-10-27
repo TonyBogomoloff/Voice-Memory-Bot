@@ -106,8 +106,8 @@ class BottomMenuMixin:
             state = MenuState.from_mapping(state)
         if state.screen.kind == "help":
             return await self.show_help(owner, thread, state.extra.get("help_topic"), edit_id=edit_id)
-        if state.screen.kind == "ai_note":
-            # Saved legacy screens must not bring back the AI-only bottom keyboard.
+        if state.screen.kind in {"ai_note", "dropfolder"}:
+            # Saved legacy dialogs must not bring back their old reply keyboards.
             return await self.refresh_folder_keyboard(owner, thread, force=True)
         rows = state.rows
         page_size = max(1, len(rows)) if state.screen.kind == "replymove" else PAGE_SIZE
@@ -253,7 +253,7 @@ class BottomMenuMixin:
                     await self.cancel_record_menu(owner, thread)
                 return True
             self.store.set_action(owner, None)
-            if state.screen.wire == "create" and not self.store.folders(owner):
+            if state.screen.wire == "create" and not self.store.current_folder(owner):
                 await self.show_main_menu(owner, thread)
             else:
                 await self.show_home(owner, thread)

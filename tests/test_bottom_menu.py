@@ -119,8 +119,11 @@ def test_menu_binding_survives_restart_and_is_owner_scoped(bot):
 def test_confirmations_cancel_expire_and_do_not_delete_after_restart(bot):
     async def run():
         folder = bot.store.current_folder(1)
+        await bot.show_folder_options(1, identity=folder)
+        before = labels(bot)
         await bot.callback(1, None, None, f"dropfolder:{folder}")
-        assert "Удалить" in labels(bot)
+        assert labels(bot) == before
+        assert 'Удалить' in last_message(bot)['keyboard']['inline_keyboard'][0][0]['text']
         await receive(bot, BACK, 1001)
         await receive(bot, "🗑 Да, удалить папку", 1002)
         assert bot.store.folder(1, folder)["removed"] == 0
@@ -131,7 +134,7 @@ def test_confirmations_cancel_expire_and_do_not_delete_after_restart(bot):
         assert "устарело" in last_message(restarted)["text"]
         await receive(restarted, "/delete_all", 1005)
         await receive(restarted, "🗑 Да, удалить всё", 1006)
-        assert restarted.store.folders(1) == []
+        assert [f['name'] for f in restarted.store.folders(1)] == ['Корзина']
         assert restarted.store.all("SELECT * FROM bottom_menu_labels WHERE label LIKE '%Входящие%'") == []
         await receive(restarted, "🗑 Да, удалить всё", 1007)
         assert restarted.store.notes(1) == []
@@ -185,17 +188,17 @@ def test_note_options_remain_attached_and_do_not_change_bottom_screen(bot):
     asyncio.run(run())
 
 
-def test_initial_folder_prompt_uses_bottom_controls(bot):
+def test_last_folder_deletion_keeps_trash_and_new_folder_controls(bot):
     async def run():
         await receive(bot, "/menu", 1000)
         assert not any("web_app" in b for row in reply_keyboard(bot)["keyboard"] for b in row)
         bot.store.delete_folder(1, bot.store.current_folder(1))
         await receive(bot, "/start", 1001)
-        assert bot.store.action(1) == "create" and labels(bot) == ["Отмена"]
-        await receive(bot, "Отмена", 1002)
-        assert bot.store.action(1) is None and "ℹ️ Помощь" in labels(bot)
-        await receive(bot, ROOT, 1003)
-        assert bot.store.action(1) == "create"
+        assert bot.store.action(1) is None and '✅ Корзина' in labels(bot)
+        await receive(bot, '/new', 1002)
+        assert bot.store.action(1) == 'create' and labels(bot) == ['Отмена']
+        await receive(bot, 'Отмена', 1003)
+        assert bot.store.action(1) is None and '✅ Корзина' in labels(bot)
     asyncio.run(run())
 
 
@@ -311,19 +314,19 @@ def test_record_commands_send_only_inline_question(bot, command, prompt):
         removed = {p["message_id"] for m, p in bot.telegram.sent if m == "deleteMessage"}
         visible = [(mid, text) for mid, text in sent if mid not in removed]
         carrier = bot.store.one("SELECT message_id FROM bottom_menus WHERE owner=1")["message_id"]
-        if command == "dropfolder":
-            assert len(visible) == 2 and visible[0] == (carrier, "Действия")
+        assert len(sent) == len(visible) == 1
+        assert "keyboard" not in last_message(bot)["keyboard"]
+        if command == 'dropfolder':
+            assert carrier == original and state['screen'] == 'root'
+            assert visible[-1][0] == bot.folder_delete_prompts[1]
         else:
-            assert len(sent) == 1
-            assert len(visible) == 1
-            assert "keyboard" not in last_message(bot)["keyboard"]
-        assert visible[-1][0] == state["inline_prompt_id"]
+            assert visible[-1][0] == state["inline_prompt_id"]
         assert visible[-1][1].split("\n", 1)[0] == prompt
         inline = last_message(bot)["keyboard"]["inline_keyboard"]
-        assert {b["text"] for row in inline for b in row} == set(state["actions"])
+        assert {b["text"] for row in inline for b in row} == (
+            {'Удалить', 'Отмена'} if command == 'dropfolder' else set(state["actions"]))
         assert 100 not in removed and carrier not in removed
-        if command != "dropfolder":
-            assert original not in removed
+        assert original not in removed
         assert bot.store.note(1, note["id"]) == note
     asyncio.run(run())
 

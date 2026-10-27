@@ -17,7 +17,9 @@ from voice_memory_bot.providers import ProviderError, Telegram
 def test_start_shows_intro_each_time_then_usable_menu_without_changing_notes(bot, new_user):
     async def run():
         if new_user:
-            bot.store.delete_folder(1, bot.store.current_folder(1))
+            # This fixture represents a new account, before any ordinary folder exists.
+            with bot.store.transaction():
+                bot.store.db.execute('DELETE FROM folders WHERE owner=1 AND is_trash=0')
         else:
             idea = bot.store.create_folder(1, 'Идеи')
             bot.store.select(1, idea['id'])

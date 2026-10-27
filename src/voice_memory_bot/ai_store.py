@@ -40,7 +40,8 @@ class AIStore:
             self.db.execute(f"UPDATE ai_settings SET {assignments} WHERE owner=?", [*fields.values(), owner])
 
     def mode(self, owner, folder_id, mode):
-        self.store.folder(owner, folder_id)
+        if self.store.folder(owner, folder_id)['is_trash']:
+            raise ValueError("Режим системной папки «Корзина» менять нельзя")
         if mode not in {"notes", "chat"}:
             raise ValueError("Неизвестный режим папки")
         with self.store.transaction():

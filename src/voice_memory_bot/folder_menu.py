@@ -83,7 +83,11 @@ class FolderMenuMixin:
         pinned = self.store.pinned_folders(owner)
         pinned_ids = {folder["id"] for folder in pinned}
         others = [folder for folder in self.store.folders(owner) if folder["id"] not in pinned_ids]
-        # Keep pinned shortcuts on their own first page, including intentional empty slots.
+        # Keep pinned shortcuts on the first page; trash can use a spare position.
+        trash = next((folder for folder in others if folder['is_trash']), None)
+        if pinned and len(pinned) < 4 and trash:
+            pinned = [*pinned, trash]
+            others = [folder for folder in others if folder['id'] != trash['id']]
         return ([pinned] if pinned else []) + [others[i:i + 4] for i in range(0, len(others), 4)] or [[]]
 
     def folder_input_placeholder(self, owner):
@@ -190,7 +194,7 @@ class FolderMenuMixin:
             notice="Эта кнопка устарела. Выбери папку внизу или открой меню.")
 
     async def refresh_folder_keyboard(self, owner, thread=None, *, force=False, notice=None, transient=False, title=None):
-        if not self.store.folders(owner):
+        if not self.store.current_folder(owner):
             return await self.ask_first_folder(owner, thread)
         folder = self.store.folder(owner, self.store.current_folder(owner))
         keys = self.folder_keyboard(owner)
@@ -198,8 +202,11 @@ class FolderMenuMixin:
         if (not force and self.folder_keyboards.get(owner) == signature
                 and (self.bottom_state(owner) or {}).get("screen") == "root"):
             return
-        mode = 'диалог с ИИ' if folder['mode'] == 'chat' else 'заметки'
-        text = (title or f"📁 {folder['name']}") + f"\nРежим: {mode}\nСохраняю сообщения в эту папку."
+        text = title or f"📁 {folder['name']}"
+        if folder['mode'] == 'chat':
+            text += "\nРежим: диалог с ИИ"
+        text += ("\nЗдесь записи из удалённых папок." if folder['is_trash']
+                 else "\nСохраняю сообщения в эту папку.")
         if notice:
             text = notice + "\n\n" + text
         response = await self.send_bottom(owner, thread,
@@ -210,7 +217,7 @@ class FolderMenuMixin:
 
     async def show_home(self, owner, thread=None, *, title=None):
         self.leave_folder_options(owner)
-        if not self.store.folders(owner):
+        if not self.store.current_folder(owner):
             return await self.ask_first_folder(owner, thread)
         self.store.set_action(owner, None)
         self.folder_delete_confirmations.pop(owner, None)
@@ -243,17 +250,25 @@ class FolderMenuMixin:
             await self.show_notes_menu(owner, thread, identity, edit_id=message_id)
         elif action == "dropfolder":
             folder = self.store.folder(owner, identity)
+            if folder['is_trash']:
+                raise ValueError("Системную папку «Корзина» нельзя удалить")
+            if folder['removed']:
+                raise ValueError("Папка уже удалена")
             count = self.store.one("SELECT count(*) AS n FROM notes WHERE owner=? AND folder_id=? AND deleted=0",
                                    (owner, identity))["n"]
             token = new_id()
             self.folder_delete_confirmations[owner] = (token, identity, folder["name"], time.monotonic() + 600)
-            await self.show_bottom(owner, f"Удалить папку «{folder['name']}»?\n"
-                            f"Все записи ({count}) и история ИИ останутся в архиве без папки.\n"
-                            "Исходные файлы сохранятся; записи доступны через поиск и экспорт.", thread,
+            # The confirmation is a separate inline prompt. Preserve both the reply
+            # keyboard carrier and its action mapping, so every lower button still works.
+            prompt = await self._show(owner, f"Удалить папку «{folder['name']}»?\n"
+                            f"Все записи ({count}) и история ИИ переместятся в «Корзину».\n"
+                            "Исходные файлы сохранятся.", thread,
                             keyboard([button("Удалить", f"confirmdrop:{token}"),
-                                      button("Отмена", f"canceldrop:{token}")]),
-                            screen=f"dropfolder:{identity}", back=f"foldermenu:{identity}",
-                            keep=True, edit_id=message_id, mirror=True)
+                                      button("Отмена", f"canceldrop:{token}")]))
+            previous = self.folder_delete_prompts.get(owner)
+            self.folder_delete_prompts[owner] = prompt['message_id']
+            if previous and previous != prompt['message_id']:
+                await self.remove_menu_message(owner, previous)
         elif action in {"confirmdrop", "canceldrop"}:
             confirmation = self.folder_delete_confirmations.get(owner)
             if not confirmation or confirmation[0] != identity or confirmation[3] < time.monotonic():
@@ -262,10 +277,7 @@ class FolderMenuMixin:
             folder = self.store.folder(owner, folder_id)
             if action == "canceldrop":
                 self.folder_delete_confirmations.pop(owner, None)
-                if self.options_folder(owner) == folder_id:
-                    await self.show_folder_options(owner, thread, folder_id)
-                else:
-                    await self.show_notes(owner, thread, folder_id, edit_id=message_id)
+                await self.remove_menu_message(owner, self.folder_delete_prompts.pop(owner, None))
                 return True
             if folder["name"] != name:
                 raise ValueError("Название папки изменилось. Открой её заново перед удалением")
@@ -274,9 +286,10 @@ class FolderMenuMixin:
             selected = self.store.delete_folder(owner, folder_id)
             self.leave_folder_options(owner)
             self.folder_delete_confirmations.pop(owner, None)
+            await self.remove_menu_message(owner, self.folder_delete_prompts.pop(owner, None))
             if selected:
                 await self.show_notes(owner, thread, selected,
-                                      notice=f"Папка «{name}» удалена. Записи доступны через поиск и экспорт.")
+                                      notice=f"Папка «{name}» удалена. Все записи перенесены в «Корзину».")
             else:
                 await self.clear_folder_view(owner, thread, all_threads=True)
                 with self.store.transaction():

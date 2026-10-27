@@ -34,7 +34,7 @@ def test_upgrade_seeds_four_pins_per_owner_and_restart_preserves_unpinning(tmp_p
             assert [f["id"] for f in store.pinned_folders(owner)] == [f"{owner}-{n}" for n in range(4)]
             assert store.current_folder(owner) == f"{owner}-5"
         assert [tuple(r) for r in store.db.execute(
-            "SELECT id,owner,name,thread_id FROM folders ORDER BY id")] == before
+            "SELECT id,owner,name,thread_id FROM folders WHERE is_trash=0 ORDER BY id")] == before
         for folder in store.pinned_folders(1):
             store.set_folder_pin(1, folder["id"], False)
     finally:
@@ -77,7 +77,7 @@ def test_folder_keys_select_before_input_or_ai_and_plain_names_are_notes(bot):
         chat = bot.store.create_folder(1, "Диалог")
         bot.ai_state.mode(1, chat["id"], "chat")
         await receive(bot, "/start")
-        assert labels(bot) == ["✅ Входящие", "📁 Работа", "📁 Диалог", "📁 Папка", "🎛️ Настройки"]
+        assert labels(bot) == ["✅ Входящие", "📁 Работа", "📁 Диалог", "📁 Корзина", "📁 Папка", "🎛️ Настройки"]
         assert reply_keyboard(bot)["is_persistent"]
         await receive(bot, "📁 Диалог", 2)
         assert "✅ Диалог" in labels(bot)
@@ -118,7 +118,7 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         token = bot.folder_delete_confirmations[1][0]
         await bot.callback(1, None, 500, f"confirmdrop:{token}")
         await receive(bot, "✅ Проекты", 4)
-        assert labels(bot) == ["✅ Входящие", "📁 Папка", "🎛️ Настройки"]
+        assert labels(bot) == ["✅ Входящие", "📁 Корзина", "📁 Папка", "🎛️ Настройки"]
         assert bot.store.notes(1) == []
     asyncio.run(run())
 
@@ -178,7 +178,7 @@ def test_pages_reach_every_folder_and_arrows_never_become_notes(bot):
         # Deleting folders clamps a stale final page; another owner is independent.
         bot.folder_pages[1] = 99
         for f in list(bot.store.folders(1)):
-            if not f["is_inbox"]:
+            if not f["is_inbox"] and not f['is_trash']:
                 bot.store.delete_folder(1, f["id"])
         await receive(bot, "➡️", 22)
         assert bot.folder_pages[1] == 0

@@ -72,7 +72,7 @@ def test_missing_folder_renders_buttons_and_choice_is_single_use(bot, target):
         await bot.callback(1, None, 999, callback)
         count = len(bot.store.folders(1))
         current = bot.store.note(1, note["id"])
-        assert count == (4 if target == "new" else 3)
+        assert count == (5 if target == "new" else 4)
         expected = ("Путешествие" if target == "new" else "Путешествия" if target == "existing" else "Входящие")
         assert bot.store.folder(1, current["folder_id"])["name"] == expected
         await bot.callback(1, None, 999, callback)
@@ -105,7 +105,7 @@ def test_pending_choice_rechecks_target_owner_permission_and_revision(bot, chang
         with pytest.raises(ValueError):
             await bot.ai_note_actions.choose(2 if change == "owner" else 1, request, 1, target)
         assert bot.store.note(1, note["id"])["folder_id"] == note["folder_id"]
-        assert len(bot.store.folders(1, include_removed=True)) == 2
+        assert len(bot.store.folders(1, include_removed=True)) == 3
     asyncio.run(run())
 
 
@@ -117,7 +117,7 @@ def test_existing_alias_and_folder_created_while_waiting_are_reused(bot):
         await act(bot, request, "move_note", note, title="Проекты")
         folder = bot.store.create_folder(1, "Проекты")
         await bot.ai_note_actions.choose(1, request, 1, "new")
-        assert len(bot.store.folders(1)) == 2
+        assert len(bot.store.folders(1)) == 3
         assert bot.store.note(1, note["id"])["folder_id"] == folder["id"]
         with bot.store.db:
             bot.store.db.execute("UPDATE folders SET aliases=? WHERE id=?", (json.dumps(["Бизнес"]), folder["id"]))
@@ -227,7 +227,7 @@ def test_update_requires_move_tool_and_folder_tool_is_complete_owner_scoped(bot)
     folders = [bot.store.create_folder(1, f"Папка {i}") for i in range(12)]
     secret = bot.store.create_folder(2, "Секрет")
     listed = tool(bot, request, step("list_folders"))["folders"]
-    assert len(listed) == 13 and secret["id"] not in {f["id"] for f in listed}
+    assert len(listed) == 14 and secret["id"] not in {f["id"] for f in listed}
     read(bot, request, note)
     result = tool(bot, request, step("update_note", note_id=note["id"], revision=0, title="Новый план",
                                      content="Текст", folder_id=folders[0]["id"]))
@@ -246,7 +246,7 @@ def test_new_folder_and_move_roll_back_together_if_receipt_cannot_be_saved(bot, 
         monkeypatch.setattr(bot.ai_note_actions, "save_result", failure)
         with pytest.raises(OSError):
             await bot.ai_note_actions.choose(1, request, 1, "new")
-        assert len(bot.store.folders(1)) == 1
+        assert len(bot.store.folders(1)) == 2
         assert bot.store.note(1, note["id"])["folder_id"] == note["folder_id"]
         assert bot.store.all("SELECT * FROM ai_message_jobs") == []
     asyncio.run(run())

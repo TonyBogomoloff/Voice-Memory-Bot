@@ -121,7 +121,7 @@ def test_full_cleanup_removes_only_owner_data_and_all_known_telegram_locations(b
         await confirm(bot, thread=110)
         assert bot.store.folder_page_size(1) == 20
         assert bot.store.folder_page_size(2) == 50
-        assert bot.store.folders(1) == []
+        assert [f['name'] for f in bot.store.folders(1)] == ['Корзина']
         assert bot.store.export_notes(1) == []
         assert bot.store.all("SELECT * FROM emoji_keyboard_labels WHERE owner=1") == []
         assert bot.emoji_keyboards.resolve(2, "Other title") == ("📁 Other title", True)
@@ -151,8 +151,8 @@ def test_full_cleanup_removes_only_owner_data_and_all_known_telegram_locations(b
         assert bot.ai_state.claim() is None
         assert last_message(bot)["thread"] is None
         await bot.handle(incoming(message_id=2000, text="/folders"))
-        assert bot.store.folders(1) == []
-        assert "первую папку" in last_message(bot)["text"]
+        assert [f['name'] for f in bot.store.folders(1)] == ['Корзина']
+        assert any('Корзина' in label for label in bot.bottom_state(1)['actions'])
     asyncio.run(run())
 
 

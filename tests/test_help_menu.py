@@ -108,7 +108,9 @@ def test_legacy_help_keyboard_and_delayed_labels_open_inline_help(bot):
 
 def test_help_before_first_folder_and_unknown_topic_returns_to_index(bot):
     async def run():
-        bot.store.delete_folder(1, bot.store.current_folder(1))
+        # This fixture represents a new account, before any ordinary folder exists.
+        with bot.store.transaction():
+            bot.store.db.execute('DELETE FROM folders WHERE owner=1 AND is_trash=0')
         await receive(bot, "/start", 100)
         assert bot.store.action(1) == "create"
         await receive(bot, "/HELP@your_audio_notes_bot", 101)
@@ -117,10 +119,10 @@ def test_help_before_first_folder_and_unknown_topic_returns_to_index(bot):
         demo = await bot.callback(1, None, None, "help:folders")
         await tap(bot, demo, "help:old-topic")
         assert_index(bot)
-        assert [b["text"] for row in reply_keyboard(bot)["keyboard"] for b in row] == ["📁 Папка", "🎛️ Настройки"]
+        assert [b["text"] for row in reply_keyboard(bot)["keyboard"] for b in row] == ["📁 Корзина", "📁 Папка", "🎛️ Настройки"]
         await receive(bot, "📁 Папка", 103)
         assert bot.store.action(1) == "create"
-        assert bot.store.folders(1) == [] and bot.store.notes(1) == []
+        assert [f['name'] for f in bot.store.folders(1)] == ['Корзина'] and bot.store.notes(1) == []
     asyncio.run(run())
 
 
