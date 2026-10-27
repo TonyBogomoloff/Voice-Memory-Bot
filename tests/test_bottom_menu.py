@@ -40,7 +40,7 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
         await receive(bot, "🎛️ Настройки", 1001)
         assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
         assert [[b["text"] for b in row] for row in reply_keyboard(bot)["keyboard"]] == [
-            ["Отправлять кнопки действий"], [BACK, "ℹ️ Помощь"]]
+            ["Отправлять кнопки действий"], ["💎 Obsidian"], [BACK, "ℹ️ Помощь"]]
         await receive(bot, "/settings", 1002)
         export = next(label for label in labels(bot) if label.startswith("📦 Экспорт"))
         await receive(bot, export, 1003)

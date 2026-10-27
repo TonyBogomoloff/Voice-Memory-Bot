@@ -22,7 +22,7 @@ class ObsidianMenuMixin:
             for index, device in enumerate(ObsidianAccess(self.store).devices(owner), 1):
                 rows.append([button(f"Отключить · {index}. {device['name']}", f"obsidianrevoke:{device['id']}:{scope}")])
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f'obsidian:{scope}',
-                               back='settings:all' if scope == 'all' else f'foldermenu:{scope}', edit_id=edit_id)
+                               back='settings:all' if scope == 'all' else f'foldermenu:{scope}', keep=True, edit_id=edit_id)
 
     async def obsidian_callback(self, owner, thread, message_id, data):
         parts = data.split(':')
