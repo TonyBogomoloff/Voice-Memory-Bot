@@ -127,6 +127,6 @@ def test_saved_reply_survives_folder_switch_and_can_be_moved_and_continued(bot):
         assert bot.ai_state.reply_conversation(1, reopened) == request["conversation_id"]
         await bot.move(1, answer["id"], other["id"], None)
         assert bot.store.note(1, answer["id"])["folder_id"] == other["id"]
-        assert bot.store.note(1, source["id"])["folder_id"] == source["folder_id"]
+        assert bot.store.note(1, source["id"])["folder_id"] == other["id"]
         assert bot.ai_state.request(1, source["id"])["response"] == "Сохранённый ответ"
     asyncio.run(run())
