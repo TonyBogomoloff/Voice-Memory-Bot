@@ -122,7 +122,7 @@ class ReplyMoveMixin:
             self.store.set_action(owner, f"replymove:{token}")
             result = await self.show_bottom(owner, "Как назвать новую папку?", thread,
                 keyboard([button("Отмена", f"rcancel:{token}")]), screen=f"replymove:{token}", keep=True, mirror=True,
-                reply_to=state.get("reply_to"), command_id=session["command_id"])
+                reply_to=state.get("reply_to"), command_id=session["command_id"], edit_id=session["prompt_id"])
             with self.store.transaction():
                 self.store.db.execute("UPDATE reply_moves SET prompt_id=? WHERE owner=? AND token=?",
                                       (result["message_id"], owner, token))

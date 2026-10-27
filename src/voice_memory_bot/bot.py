@@ -885,7 +885,16 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
             button("Удалить", f"notedel:{token}"), button("Отмена", f"notecancel:{token}")]),
             screen=f"notedelete:{note['id']}", keep=True, mirror=True, reply_to=target, command_id=command_id)
 
-    async def send_record_prompt(self, owner, thread, state, keys):
+    async def send_record_prompt(self, owner, thread, state, keys, *, edit_id=None):
+        if edit_id:
+            try:
+                return await self.view_send(self.telegram.call, "editMessageText", chat_id=owner,
+                    message_id=edit_id, text=state.text, reply_markup=keys)
+            except ProviderError as exc:
+                if getattr(exc, "reason", None) == "not_modified":
+                    return {"message_id": edit_id}
+                if getattr(exc, "reason", None) != "edit_target_missing":
+                    raise
         identity = state.screen.argument
         if state.screen.kind == "replymove":
             session = self.store.one("SELECT note_id FROM reply_moves WHERE owner=? AND token=?", (owner, identity))

@@ -162,13 +162,13 @@ class BottomMenuMixin:
                                   "DO UPDATE SET state=excluded.state", (owner, state.to_json()))
             self.store.db.executemany("INSERT OR IGNORE INTO bottom_menu_labels(owner,label) VALUES (?,?)",
                                       [(owner, label) for label in actions])
-        if edit_id:
+        inline_only = state.screen.kind in {"notedelete", "replymove", "recordoptions"}
+        if edit_id and not inline_only:
             try:
                 await self.edit_note_buttons(owner, edit_id, {"inline_keyboard": []})
             except ProviderError as exc:
                 if str(exc) != "telegram_400":
                     raise
-        inline_only = state.screen.kind in {"notedelete", "replymove", "recordoptions"}
         token = silent_delivery.set(True)
         try:
             # Replacing the markup keeps the button panel open. A remove_keyboard
@@ -179,7 +179,7 @@ class BottomMenuMixin:
             if inline_only:
                 inline_rows = [[{**item, "callback_data": actions[item["text"]]}
                                 for item in row if item["text"] in actions] for row in keyboard]
-                response = await self.send_record_prompt(owner, thread, state, {"inline_keyboard": inline_rows})
+                response = await self.send_record_prompt(owner, thread, state, {"inline_keyboard": inline_rows}, edit_id=edit_id)
                 state.extra["inline_prompt_id"] = response["message_id"]
                 with self.store.transaction():
                     self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
@@ -202,7 +202,7 @@ class BottomMenuMixin:
             if old_return_id != retained_id:
                 await self.remove_menu_message(owner, old_return_id)
             old_prompt = old_state.extra.get("inline_prompt_id")
-            if old_prompt:
+            if old_prompt and old_prompt != response["message_id"]:
                 await self.remove_menu_message(owner, old_prompt)
         if state.extra.get("mirror") and not inline_only:
             inline_rows = [[{**item, "callback_data": actions[item["text"]]}

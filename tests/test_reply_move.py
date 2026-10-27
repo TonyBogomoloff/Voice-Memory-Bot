@@ -37,8 +37,12 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         bot.telegram.sent.clear()
         if new_folder:
             await receive(bot, '＋ Новая папка', 450)
-            menu = [p for m, p in bot.telegram.sent if m == 'sendMessage'][-1]
-            assert [[b['text'] for b in row] for row in menu['keyboard']['inline_keyboard']] == [['Отмена']]
+            menu = [p for m, p in bot.telegram.sent if m == 'editMessageText'][-1]
+            assert menu['message_id'] == prompt
+            assert menu['text'] == 'Как назвать новую папку?'
+            assert [[b['text'] for b in row] for row in menu['reply_markup']['inline_keyboard']] == [['Отмена']]
+            assert not any(m == 'sendMessage' for m, _ in bot.telegram.sent)
+            assert not any(m == 'deleteMessage' and p['message_id'] == prompt for m, p in bot.telegram.sent)
             await receive(bot, 'Созданная для переноса', 500)
             other = next(f for f in bot.store.folders(1) if f['name'] == 'Созданная для переноса')
         else:
@@ -51,7 +55,7 @@ def test_move_reply_to_existing_or_new_folder(bot, new_folder):
         assert bot.store.one('SELECT * FROM reply_moves') is None
         assert bot.store.action(1) is None
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
-        assert len(sent) == (2 if new_folder else 1)
+        assert len(sent) == 1
         assert sent[-1]['text'] == f"Перенесено в «{other['name']}»."
         assert other['name'] in sent[-1]['text']
         assert sent[-1]['keyboard'] == bot.folder_keyboard(1)
@@ -173,7 +177,10 @@ def test_move_replies_to_selected_record_through_pages_and_new_folder(bot, targe
         assert replies[-1][2] == expected
         session = bot.store.one("SELECT * FROM reply_moves WHERE owner=1")
         await bot.callback(1, None, session["prompt_id"], f"rnew:{session['token']}")
-        assert replies[-1][1:] == ("Как назвать новую папку?", expected)
+        edit = next(p for m, p in reversed(bot.telegram.sent) if m == 'editMessageText')
+        assert edit['message_id'] == session['prompt_id']
+        assert edit['text'] == 'Как назвать новую папку?'
+        assert bot.bottom_state(1)['reply_to'] == expected
         await receive(bot, "Папка для выбранной", 600)
         moved = bot.store.note(1, note["id"])
         assert bot.store.folder(1, moved["folder_id"])["name"] == "Папка для выбранной"
@@ -209,4 +216,34 @@ def test_new_move_folder_reuses_deleted_folder_keyboard_label(bot, reply_to_reco
         messages = [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage']
         assert messages[-1] == 'Перенесено в «Холодос».'
         assert not any('кнопка устарела' in text for text in messages)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('reason', ['missing', 'unchanged'])
+def test_new_move_folder_edit_recovers_only_missing_prompt(bot, reason):
+    from voice_memory_bot.providers import TelegramError
+
+    async def run():
+        await prepare(bot)
+        session = await open_move(bot)
+        original = bot.telegram.call
+
+        async def call(method, **kwargs):
+            if method == 'editMessageText':
+                raise TelegramError(400, method, 'message to edit not found' if reason == 'missing'
+                                    else 'message is not modified')
+            return await original(method, **kwargs)
+
+        bot.telegram.call = call
+        bot.telegram.sent.clear()
+        await bot.callback(1, None, session['prompt_id'], f"rnew:{session['token']}")
+        current = bot.store.one('SELECT * FROM reply_moves WHERE owner=1')
+        sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
+        assert len(sent) == (1 if reason == 'missing' else 0)
+        assert (current['prompt_id'] == session['prompt_id']) == (reason == 'unchanged')
+        assert bot.store.action(1) == f"replymove:{session['token']}"
+        assert bot.bottom_state(1)['inline_prompt_id'] == current['prompt_id']
+        await bot.callback(1, None, current['prompt_id'], f"rcancel:{session['token']}")
+        assert bot.store.action(1) is None
+        assert bot.store.one('SELECT * FROM reply_moves WHERE owner=1') is None
     asyncio.run(run())
