@@ -183,6 +183,7 @@ def test_folder_api_respects_audio_scope_versions_and_pending_records(store, tmp
     pair = access.pair(access.issue(1, folder), 'iPhone', {1})
     headers = {'Authorization': 'Bearer ' + pair['token']}
     voice = media[1]
+    ObsidianSettings(store).set_audio(1, 'all', False)
 
     async def run():
         async with TestClient(TestServer(ExportAPI(bot).application())) as client:

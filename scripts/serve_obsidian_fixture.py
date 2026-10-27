@@ -27,6 +27,12 @@ async def main():
                 note = store.add_note(owner, folder, {'message_id': message}, kind='text',
                                       transcript=f'Synthetic note {message}')[0]
                 store.update_note(owner, note['id'], state='ready' if message != 53 else 'processing')
+        pending = store.create_folder(1, 'Pending')['id']
+        with store.transaction():
+            store.db.execute("UPDATE notes SET folder_id=? WHERE owner=1 AND state='processing'", (pending,))
+            store.db.execute('UPDATE notes SET created_at=1793016000+message_id WHERE owner=1')
+        for number in range(21):
+            store.create_folder(1, f'Empty {number}')
         note = store.add_note(1, store.ensure_user(1), {'message_id': 54}, kind='voice',
                               extension='ogg', file_id='SYNTHETIC_PRIVATE_FILE_ID', transcript='Голосовая идея')[0]
         media = b'synthetic original bytes'
@@ -41,7 +47,7 @@ async def main():
             site = web.TCPSite(runner, '127.0.0.1', 0)
             await site.start()
             print(json.dumps({'origin': f'http://127.0.0.1:{runner.addresses[0][1]}',
-                              'code': ObsidianAccess(store).issue(1)}), flush=True)
+                              'code': ObsidianAccess(store).issue(1), 'folders': len(store.folders(1)) - 1}), flush=True)
             stopped = asyncio.Event()
             asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stopped.set)
             await stopped.wait()

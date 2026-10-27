@@ -23,7 +23,7 @@ export async function loadZips(inputs: Uint8Array[]): Promise<{ notes: Note[]; s
   if (inputs.reduce((n, bytes) => n + bytes.length, 0) > MAX_BATCH) throw new Error('Выбери ZIP общим размером до 200 МБ.');
   const files = new Map<string, Uint8Array>();
   const records = new Map<string, Note | Attachment>();
-  let total = 0, count = 0;
+  let total = 0, count = 0, schema = 0;
   for (const bytes of inputs) {
     checkDirectory(bytes);
     let failed: Error | null = null;
@@ -62,10 +62,13 @@ export async function loadZips(inputs: Uint8Array[]): Promise<{ notes: Note[]; s
     const manifests = [...extracted.keys()].filter(path => /^manifest-[0-9]+\.json$/.test(path));
     if (manifests.length !== 1) throw new Error('Это не ZIP-экспорт Obsidian из Voice Memory.');
     const manifest = JSON.parse(decode(extracted.get(manifests[0])!));
-    if (manifest.format !== FORMAT || manifest.schema_version !== 1 || !Array.isArray(manifest.files)) throw new Error('Версия ZIP не поддерживается.');
+    if (manifest.format !== FORMAT || ![1, 2].includes(manifest.schema_version) || !Array.isArray(manifest.files)) throw new Error('Версия ZIP не поддерживается.');
+    if (schema && schema !== manifest.schema_version) throw new Error('Выбраны части разных экспортов.');
+    schema = manifest.schema_version;
     const declared = new Set<string>();
     for (const value of manifest.files) {
       const record = validateRecord(value);
+      if (record.kind === 'note' && (schema === 2) !== (record.layout === 'folder')) throw new Error('Формат заметки не совпадает с ZIP.');
       if (declared.has(record.path) || !extracted.has(record.path)) throw new Error('Состав ZIP не совпадает с манифестом.');
       declared.add(record.path);
       const previous = records.get(record.path);

@@ -19,7 +19,7 @@ def selected_media(note, audio):
     return note['kind'] == 'photo' or audio and is_audio(note)
 
 
-def folder_document(notes, folder, *, audio=False, include_media=True):
+def folder_document(notes, folder, *, audio=True, include_media=True):
     folder_id = identity(folder['id'])
     ordered = sorted(notes, key=lambda n: (n['created_at'], n['id']))
     if any(n['owner'] != folder['owner'] or n['folder_id'] != folder_id for n in ordered):
@@ -80,7 +80,7 @@ def build(snapshot, originals, output, include_media, part_bytes):
     def items():
         for folder in selected:
             grouped = groups[folder['id']]
-            data, record = folder_document(grouped, folder, audio=bool(choices.get(folder['id'], False)),
+            data, record = folder_document(grouped, folder, audio=bool(choices.get(folder['id'], True)),
                                            include_media=include_media)
             yield record['path'], data, record
             by_id = {n['id']: n for n in grouped}

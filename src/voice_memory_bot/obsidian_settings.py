@@ -15,7 +15,7 @@ class ObsidianSettings:
         selected = self.override(owner, scope)
         if selected is None and scope != 'all':
             selected = self.override(owner)
-        return bool(selected)
+        return True if selected is None else selected
 
     def set_audio(self, owner, scope, enabled):
         if scope != 'all':

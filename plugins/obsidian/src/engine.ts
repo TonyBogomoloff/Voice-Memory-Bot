@@ -2,6 +2,7 @@ export const FORMAT = 'voice-memory-obsidian';
 export const MAX_FILE = 64 * 1024 * 1024;
 export const MAX_DOCUMENT = 8 * 1024 * 1024;
 export const MAX_BATCH = 200 * 1024 * 1024;
+export const HISTORY_END = '<!-- voice-memory:history-end -->';
 export const ID = /^[A-Za-z0-9]{16}$/;
 export const HASH = /^[0-9a-f]{64}$/;
 export const utf8 = new TextEncoder();
@@ -18,8 +19,8 @@ export function safePath(value: unknown): string {
   return value;
 }
 export interface Attachment { kind: 'attachment'; note_id: string; path: string; bytes: number; sha256: string }
-export interface Note { kind: 'note'; note_id: string; folder_id: string; path: string; bytes: number; sha256: string; attachments: Attachment[] }
-export interface Saved { path: string; remoteHash: string; localHash: string }
+export interface Note { kind: 'note'; layout?: 'folder'; note_id: string; folder_id: string; path: string; bytes: number; sha256: string; attachments: Attachment[] }
+export interface Saved { path: string; remoteHash: string; localHash: string; historyHash?: string }
 export type State = Record<string, Saved>;
 export interface VaultIO {
   exists(path: string): Promise<boolean>;
@@ -49,9 +50,12 @@ export function validateRecord(value: unknown): Note | Attachment {
     }
   } else if (r.kind === 'note') {
     if (!ID.test(r.folder_id) || !r.path.endsWith('.md') || r.path.startsWith('attachments/')
-        || !Array.isArray(r.attachments) || r.attachments.length > 10) throw new Error('Некорректная заметка.');
+        || (r.layout !== undefined && r.layout !== 'folder')
+        || (r.layout === 'folder' && r.note_id !== r.folder_id)
+        || !Array.isArray(r.attachments) || r.attachments.length > (r.layout === 'folder' ? 10000 : 10)
+        || new Set(r.attachments.map(a => a.path)).size !== r.attachments.length) throw new Error('Некорректная заметка.');
     for (const attachment of r.attachments) {
-      if (attachment.kind !== 'attachment' || attachment.note_id !== r.note_id) throw new Error('Некорректное вложение.');
+      if (attachment.kind !== 'attachment' || (r.layout !== 'folder' && attachment.note_id !== r.note_id)) throw new Error('Некорректное вложение.');
       validateRecord(attachment);
     }
   } else throw new Error('Неизвестный тип файла.');
@@ -61,7 +65,11 @@ export async function checked(record: Note | Attachment, source: Source): Promis
   validateRecord(record);
   const data = await source.read(record);
   if (data.length !== record.bytes || await sha256(data) !== record.sha256) throw new Error('Контрольная сумма не совпала. Повтори загрузку.');
-  if (record.kind === 'note' && noteId(decode(data)) !== record.note_id) throw new Error('ID заметки не совпал.');
+  if (record.kind === 'note') {
+    const text = decode(data);
+    if (noteId(text) !== record.note_id) throw new Error('ID заметки не совпал.');
+    if (record.layout === 'folder' && !historyParts(text)) throw new Error('Некорректная история папки.');
+  }
   return data;
 }
 export function noteId(text: string): string | null {
@@ -70,6 +78,15 @@ export function noteId(text: string): string | null {
   if (end < 0 || end > 16000) return null;
   const match = text.slice(4, end).match(/^voice_memory_id: "([A-Za-z0-9]{16})"\s*$/m);
   return match?.[1] ?? null;
+}
+export function historyParts(text: string): { history: string; personal: string } | null {
+  const end = text.indexOf('\n---', 4);
+  if (!text.startsWith('---\n') || end < 0 || end > 16000
+      || !/^voice_memory_layout: "folder"\s*$/m.test(text.slice(4, end))) return null;
+  const marker = '\n' + HISTORY_END + '\n';
+  const index = text.indexOf(marker, end);
+  if (index < 0 || text.indexOf(marker, index + marker.length) >= 0) return null;
+  return { history: text.slice(0, index + marker.length), personal: text.slice(index + marker.length) };
 }
 function relative(from: string, to: string): string {
   const a = from.split('/').slice(0, -1), b = to.split('/');
@@ -120,6 +137,13 @@ export class Importer {
     }
     throw new Error('Не удалось сохранить вложение без замены существующего файла.');
   }
+  private async remember(row: Note, path: string, text: string): Promise<void> {
+    const parts = row.layout === 'folder' ? historyParts(text) : null;
+    this.state[row.note_id] = { path, remoteHash: row.sha256, localHash: await sha256(utf8.encode(text)),
+      ...(parts ? { historyHash: await sha256(utf8.encode(parts.history)) } : {}) };
+    this.index.set(row.note_id, [path]);
+    await this.save();
+  }
   async accept(row: Note, source: Source): Promise<void> {
     validateRecord(row);
     const existing = await this.existing(row);
@@ -141,20 +165,22 @@ export class Importer {
     }
     const raw = decode(await this.download(row, source));
     let target = existing ?? this.root + '/' + row.path;
+    const oldParts = row.layout === 'folder' && old !== null ? historyParts(old) : null;
     const render = (destination: string) => {
       let text = raw;
       for (const [original, local] of assets) {
         const before = relative(row.path, original);
         text = text.split('](' + before + ')').join('](' + relative(destination, local) + ')');
       }
-      return text;
+      const parts = row.layout === 'folder' ? historyParts(text) : null;
+      return parts && oldParts ? parts.history + oldParts.personal : text;
     };
     let text = render(target);
     if (old === text) {
-      this.state[row.note_id] = { path: target, remoteHash: row.sha256, localHash: await sha256(utf8.encode(text)) };
-      await this.save(); this.report.unchanged++; return;
+      await this.remember(row, target, text); this.report.unchanged++; return;
     }
-    const unchanged = old !== null && !!saved && await sha256(utf8.encode(old)) === saved.localHash;
+    const unchanged = old !== null && !!saved && (await sha256(utf8.encode(old)) === saved.localHash
+      || (oldParts !== null && await sha256(utf8.encode(oldParts.history)) === saved.historyHash));
     let wrote = false;
     if (existing && unchanged && !source.preserveExisting && !assetConflict) {
       wrote = await this.vault.replaceText(existing, old!, text);
@@ -176,8 +202,6 @@ export class Importer {
       if (!wrote) throw new Error('Не удалось сохранить заметку без замены твоих файлов.');
       if (collision || assetConflict) this.report.conflicts++; else this.report.added++;
     }
-    this.state[row.note_id] = { path: target, remoteHash: row.sha256, localHash: await sha256(utf8.encode(text)) };
-    this.index.set(row.note_id, [target]);
-    await this.save();
+    await this.remember(row, target, text);
   }
 }

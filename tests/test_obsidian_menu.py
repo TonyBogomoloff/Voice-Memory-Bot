@@ -80,19 +80,19 @@ def test_audio_defaults_folder_override_and_export_all_button(bot):
         await receive(bot, '/settings', 3000)
         await receive(bot, '💎 Obsidian', 3001)
         assert '📤 Экспортировать все папки' in labels(bot)
-        assert not preferences.audio(1, folder)
-        await receive(bot, '🎙 Экспортировать аудио: выкл', 3002)
-        assert preferences.audio(1, folder) and preferences.audio(1, other)
+        assert preferences.audio(1, folder)
+        await receive(bot, '🎙 Экспортировать аудио: вкл', 3002)
+        assert not preferences.audio(1, folder) and not preferences.audio(1, other)
         await bot.obsidian_menu(1, None, folder)
-        await receive(bot, '🎙 Экспортировать аудио: вкл', 3003)
-        assert not preferences.audio(1, folder) and preferences.audio(1, other)
+        await receive(bot, '🎙 Экспортировать аудио: выкл', 3003)
+        assert preferences.audio(1, folder) and not preferences.audio(1, other)
         assert '📤 Экспортировать папку' in labels(bot)
         await receive(bot, '↩️ Как в общих настройках', 3004)
-        assert preferences.audio(1, folder)
+        assert not preferences.audio(1, folder)
         foreign = bot.store.create_folder(2, 'Чужая')['id']
         with pytest.raises(ValueError):
             preferences.set_audio(1, foreign, False)
-        assert not preferences.audio(2, foreign)
+        assert preferences.audio(2, foreign)
         await bot.obsidian_menu(1, None)
         sent = []
         async def document(owner, path, thread=None, caption=None):

@@ -175,7 +175,8 @@ class VoiceMemorySettings extends PluginSettingTab {
   display(): void {
     const { containerEl: el } = this; const plugin = this.plugin;
     el.empty(); el.createEl('h2', { text: 'Voice Memory' });
-    el.createEl('p', { text: 'Заметки из Telegram в Obsidian. Обратной отправки и удаления файлов нет. При закрытом приложении загрузка ждёт следующего открытия.' });
+    el.createEl('p', { text: 'Одна папка бота — одна заметка в Obsidian: записи по времени, текст, фото и аудио. Экспорт аудио можно выключить в боте для всех или для одной папки. Обратной отправки и удаления файлов нет. При закрытом приложении загрузка ждёт следующего открытия.' });
+    el.createEl('p', { text: 'Пиши свои мысли в разделе «Мои дополнения» — они сохранятся при обновлении. Правки внутри истории из бота сохраняются отдельной копией. Старые отдельные заметки версии 0.1 остаются на месте.' });
     plugin.watchStatus(el.createEl('p', { cls: 'voice-memory-status' }));
     new Setting(el).setName('Папка для заметок').setDesc('Только эта папка участвует в получении заметок.').addText(input => input
       .setValue(plugin.settings.folder).setDisabled(plugin.busy).onChange(async value => {

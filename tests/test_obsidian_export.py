@@ -52,6 +52,8 @@ def test_folder_history_is_ordered_with_photos_and_optional_audio(tmp_path, stor
         store.db.execute('UPDATE notes SET content=? WHERE id=?', ('Исправленный **текст**', voice['id']))
         for n, note in enumerate((text, voice, photo)):
             store.db.execute('UPDATE notes SET created_at=?,state="ready" WHERE id=?', (1000 + n, note['id']))
+    assert ObsidianSettings(store).audio(1, voice['folder_id'])
+    ObsidianSettings(store).set_audio(1, 'all', False)
     snapshot = store.export_snapshot(1)
     first = archive.export(snapshot.notes, snapshot.folders, tmp_path / 'one', True, 6500,
                            obsidian=True, settings=snapshot.settings)

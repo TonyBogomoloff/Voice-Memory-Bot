@@ -9,8 +9,8 @@ if (process.argv[2] === 'test') {
   await rm('.test/fixture', { recursive: true, force: true });
   const fixture = spawnSync(resolve('../../.venv/bin/python'), ['../../scripts/build_obsidian_fixture.py', '.test/fixture'], { stdio: 'inherit' });
   if (fixture.status !== 0) process.exit(fixture.status ?? 1);
-  await build({ entryPoints: ['tests/engine.test.ts', 'tests/network.test.ts'], outdir: '.test', outExtension: { '.js': '.mjs' }, bundle: true, platform: 'node', format: 'esm', alias: { obsidian: resolve('tests/request-url.ts') } });
-  const result = spawnSync(process.execPath, ['--test', '.test/engine.test.mjs', '.test/network.test.mjs'], { stdio: 'inherit' });
+  await build({ entryPoints: ['tests/engine.test.ts', 'tests/folder.test.ts', 'tests/network.test.ts'], outdir: '.test', outExtension: { '.js': '.mjs' }, bundle: true, platform: 'node', format: 'esm', alias: { obsidian: resolve('tests/request-url.ts') } });
+  const result = spawnSync(process.execPath, ['--test', '.test/engine.test.mjs', '.test/folder.test.mjs', '.test/network.test.mjs'], { stdio: 'inherit' });
   process.exit(result.status ?? 1);
 }
 await mkdir('dist', { recursive: true });

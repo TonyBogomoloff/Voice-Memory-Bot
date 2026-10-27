@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import { once } from 'node:events';
 import { APIError, NetworkSource, serverUrl } from '../src/network';
-import { Importer, State } from '../src/engine';
+import { decode, Importer, State } from '../src/engine';
 import { setOrigin } from './request-url';
 import { MemoryVault } from './vault';
 
@@ -33,8 +33,13 @@ test('real API → production network client → vault, including pairing, pages
         cursor = page.next ?? '';
       } while (cursor);
       assert.equal(pages, 2); assert.equal(pending, 1);
-      assert.equal(round ? importer.report.unchanged : importer.report.added, 53);
-      assert.equal(vault.files.size, 54);
+      assert.equal(round ? importer.report.unchanged : importer.report.added, boot.folders);
+      assert.equal(vault.files.size, boot.folders + 1);
+      const histories = [...vault.files.values()].map(decode).filter(text => text.includes('Synthetic note 1'));
+      assert.equal(histories.length, 1);
+      assert(histories[0].indexOf('Synthetic note 1') < histories[0].indexOf('Synthetic note 52'));
+      assert(!histories[0].includes('Synthetic note 53'));
+      assert(histories[0].includes('attachments/'));
     }
     for (const data of vault.files.values()) assert(!new TextDecoder().decode(data).includes('SYNTHETIC_PRIVATE_FILE_ID'));
   } finally {

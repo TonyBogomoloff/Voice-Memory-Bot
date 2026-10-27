@@ -5,6 +5,7 @@ from pathlib import Path
 
 from voice_memory_bot.exports import ExportSnapshot
 from voice_memory_bot.obsidian_export import build
+from voice_memory_bot.obsidian_folders import build as build_folders
 from voice_memory_bot.originals import Originals
 
 
@@ -25,6 +26,21 @@ def main():
     path.parent.mkdir(parents=True)
     path.write_bytes(media)
     build(ExportSnapshot.capture([voice, text], [folder]), originals, output / 'zip', True, 5200)
+    photos = []
+    for number in range(12):
+        data = f'synthetic-photo-{number}'.encode() * 60
+        photo = {**voice, 'id': f'{number + 256:016x}', 'kind': 'photo', 'extension': 'jpg',
+                 'created_at': voice['created_at'] + number + 2, 'title': f'Фото {number}',
+                 'content': None, 'transcript': f'Подпись {number}', 'sha256': hashlib.sha256(data).hexdigest(),
+                 'audio_bytes': len(data), 'state': 'ready'}
+        path = originals.audio(photo)
+        path.parent.mkdir(parents=True)
+        path.write_bytes(data)
+        photos.append(photo)
+    empty = {**folder, 'id': 'bbbbbbbbbbbbbbbb', 'name': 'Пустая папка'}
+    build_folders(ExportSnapshot.capture([{**voice, 'state': 'ready'},
+                                          {**text, 'state': 'ready', 'created_at': voice['created_at'] + 1}, *photos],
+                                         [folder, empty]), originals, output / 'folder-zip', True, 30000)
 
 
 if __name__ == '__main__':

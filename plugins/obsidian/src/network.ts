@@ -30,19 +30,19 @@ export class NetworkSource implements Source {
     return result.token;
   }
   async list(cursor: string): Promise<{ notes: Note[]; next: string | null; pending: number }> {
-    const result = (await this.request('/v1/notes' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''))).json;
-    if (result.format !== FORMAT || result.schema_version !== 1 || !Array.isArray(result.notes)
-        || result.notes.length > 50 || (result.next_cursor !== null && !ID.test(result.next_cursor))) throw new Error('Формат сервера не поддерживается.');
+    const result = (await this.request('/v2/folders' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''))).json;
+    if (result.format !== FORMAT || result.schema_version !== 2 || !Array.isArray(result.notes)
+        || result.notes.length > 20 || (result.next_cursor !== null && !ID.test(result.next_cursor))) throw new Error('Формат сервера не поддерживается.');
     const notes = result.notes.map((value: unknown) => {
       const r = validateRecord(value);
-      if (r.kind !== 'note') throw new Error('Некорректная запись.');
+      if (r.kind !== 'note' || r.layout !== 'folder') throw new Error('Некорректная запись.');
       return r;
     });
     return { notes, next: result.next_cursor, pending: Number.isSafeInteger(result.pending) ? result.pending : 0 };
   }
   async read(record: Note | Attachment): Promise<Uint8Array> {
-    const kind = record.kind === 'note' ? 'document' : 'media';
-    const response = await this.request(`/v1/notes/${record.note_id}/${kind}?sha256=${record.sha256}`);
+    const path = record.kind === 'note' ? `/v2/folders/${record.note_id}/document` : `/v2/media/${record.note_id}`;
+    const response = await this.request(`${path}?sha256=${record.sha256}`);
     return new Uint8Array(response.arrayBuffer);
   }
 }

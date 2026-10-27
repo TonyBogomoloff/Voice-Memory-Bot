@@ -174,13 +174,13 @@ def test_obsidian_audio_migration_preserves_records_and_preferences(tmp_path):
     store = Store(path, Limits())
     try:
         settings = ObsidianSettings(store)
-        assert store.note(1, note['id']) == before and not settings.audio(1, note['folder_id'])
-        settings.set_audio(1, note['folder_id'], True)
+        assert store.note(1, note['id']) == before and settings.audio(1, note['folder_id'])
+        settings.set_audio(1, note['folder_id'], False)
     finally:
         store.close()
     store = Store(path, Limits())
     try:
-        assert ObsidianSettings(store).audio(1, note['folder_id'])
+        assert not ObsidianSettings(store).audio(1, note['folder_id'])
         assert store.note(1, note['id']) == before
     finally:
         store.close()
