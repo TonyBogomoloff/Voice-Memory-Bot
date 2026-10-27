@@ -48,7 +48,7 @@ def test_coalescing_stops_at_non_equivalent_events(bot, barrier):
               'stale_button': event(2, '📁 Удалённая'),
               'callback': {'update_id': 2, 'callback_query': {'from': {'id': 1}, 'data': 'notes',
                            'message': {'chat': {'id': 1, 'type': 'private'}}}}}[barrier]
-    bot.store.ingest([event(1, '📁 Работа'), middle, event(3, '📁 Входящие')], {1, 2})
+    bot.store.ingest([event(1, '📁 Работа'), middle, event(3, '📁 Заметки')], {1, 2})
     selected = bot.coalesce_folder_updates(bot.store.pending_update())
     assert [item['update_id'] for item in selected] == [1]
     assert bot.store.one('SELECT state FROM updates WHERE id=3')['state'] == 'pending'
@@ -59,12 +59,12 @@ def test_coalesced_noop_cleans_commands_and_recognizes_themed_labels(bot):
         bot.store.create_folder(1, 'Работа')
         await bot.show_notes(1, None, bot.store.current_folder(1))
         bot.telegram.sent.clear()
-        bot.emoji_keyboards.remember(1, {'Работа': '📁 Работа', 'Входящие': '✅ Входящие'})
-        bot.store.ingest([event(1, 'Работа'), event(2, 'Входящие')], {1})
+        bot.emoji_keyboards.remember(1, {'Работа': '📁 Работа', 'Заметки': '✅ Заметки'})
+        bot.store.ingest([event(1, 'Работа'), event(2, 'Заметки')], {1})
         await bot.dispatch_next()
         assert not any(m == 'sendMessage' for m, _ in bot.telegram.sent)
         assert {1001, 1002} <= deleted_ids(bot)
-        assert bot.store.folder(1, bot.store.current_folder(1))['name'] == 'Входящие'
+        assert bot.store.folder(1, bot.store.current_folder(1))['name'] == 'Заметки'
     asyncio.run(run())
 
 
@@ -72,7 +72,7 @@ def test_coalesced_noop_cleans_commands_and_recognizes_themed_labels(bot):
 def test_failed_or_interrupted_burst_keeps_every_durable_event(bot, cancelled):
     async def run():
         bot.store.create_folder(1, 'Работа')
-        bot.store.ingest([event(1, '📁 Работа'), event(2, '📁 Входящие')], {1})
+        bot.store.ingest([event(1, '📁 Работа'), event(2, '📁 Заметки')], {1})
         async def fail(update):
             if cancelled:
                 raise asyncio.CancelledError

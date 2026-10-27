@@ -68,7 +68,13 @@ class Store:
         return [dict(r) for r in self.db.execute(sql, args)]
 
     def register_user(self, owner: int):
-        self.trash_folder(owner)
+        with self.transaction():
+            fresh = not self.one("SELECT id FROM users WHERE id=?", (owner,))
+            self.trash_folder(owner)
+            if fresh:
+                identity = new_id()
+                self.db.execute("INSERT INTO folders(id,owner,name,normalized,is_inbox,pin_slot) VALUES (?,?,?,?,1,1)",
+                                (identity, owner, "Заметки", normalize("Заметки")))
 
     def trash_folder(self, owner: int):
         """Create the owner's permanent trash, preserving an existing namesake's data."""
@@ -95,9 +101,12 @@ class Store:
             folder = self.one("SELECT id FROM folders WHERE owner=? AND is_inbox=1 AND removed=0", (owner,))
             if folder:
                 return folder["id"]
+            existing = self.one("SELECT id FROM folders WHERE owner=? AND removed=0 AND is_trash=0 AND mode='notes'", (owner,))
+            if existing:
+                return existing['id']
             identity = new_id()
             self.db.execute("INSERT INTO folders(id,owner,name,normalized,is_inbox,pin_slot) VALUES (?,?,?,?,1,?)",
-                            (identity, owner, "Входящие", normalize("Входящие"), self.free_pin_slot(owner)))
+                            (identity, owner, "Заметки", normalize("Заметки"), self.free_pin_slot(owner)))
             return identity
 
     def folders(self, owner: int, include_removed=False):
@@ -190,14 +199,21 @@ class Store:
         folders = [folder for folder in self.folders(owner) if not folder['is_trash']]
         return selected["id"] if selected else folders[0]["id"] if folders else None
 
+    def check_folder_deletion(self, owner, identity):
+        folder = self.folder(owner, identity)
+        if folder['is_trash']:
+            raise ValueError("Системную папку «Корзина» нельзя удалить")
+        if folder['removed']:
+            raise ValueError("Папка уже удалена")
+        if not self.one("SELECT 1 FROM folders WHERE owner=? AND removed=0 AND is_trash=0 AND id<>?",
+                        (owner, identity)):
+            raise ValueError("Последнюю папку нельзя удалить. Ты можешь переименовать её или создать новую")
+
     def delete_folder(self, owner, identity):
         """Atomically move a folder's records and conversations into the owner's trash."""
         with self.transaction():
             folder = self.folder(owner, identity)
-            if folder['is_trash']:
-                raise ValueError("Системную папку «Корзина» нельзя удалить")
-            if folder["removed"]:
-                raise ValueError("Папка уже удалена")
+            self.check_folder_deletion(owner, identity)
             if self.one("SELECT 1 FROM notes WHERE owner=? AND deleted=0 AND "
                         "(folder_id=? OR source_folder=?) AND (state IN ('queued','processing') "
                         "OR delivery='sending' OR transcript_delivery='sending')", (owner, identity, identity)) or self.one(

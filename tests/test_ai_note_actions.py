@@ -73,7 +73,7 @@ def test_missing_folder_renders_buttons_and_choice_is_single_use(bot, target):
         count = len(bot.store.folders(1))
         current = bot.store.note(1, note["id"])
         assert count == (5 if target == "new" else 4)
-        expected = ("Путешествие" if target == "new" else "Путешествия" if target == "existing" else "Входящие")
+        expected = ("Путешествие" if target == "new" else "Путешествия" if target == "existing" else "Заметки")
         assert bot.store.folder(1, current["folder_id"])["name"] == expected
         await bot.callback(1, None, 999, callback)
         assert bot.store.note(1, note["id"])["revision"] == current["revision"]

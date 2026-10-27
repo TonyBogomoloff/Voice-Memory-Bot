@@ -258,6 +258,7 @@ class FolderMenuMixin:
             self.store.set_folder_pin(owner, identity, action == "pin")
             await self.show_notes_menu(owner, thread, identity, edit_id=message_id)
         elif action == "dropfolder":
+            self.store.check_folder_deletion(owner, identity)
             folder = self.store.folder(owner, identity)
             if folder['is_trash']:
                 raise ValueError("Системную папку «Корзина» нельзя удалить")

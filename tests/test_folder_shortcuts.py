@@ -24,7 +24,7 @@ def test_upgrade_seeds_four_pins_per_owner_and_restart_preserves_unpinning(tmp_p
         """)
         for owner in (1, 2):
             db.execute("INSERT INTO users(id,active_folder) VALUES (?,?)", (owner, f"{owner}-5"))
-            for number, name in enumerate(("Входящие", "А", "Б", "В", "Г", "Д")):
+            for number, name in enumerate(("Заметки", "А", "Б", "В", "Г", "Д")):
                 db.execute("INSERT INTO folders(id,owner,name,normalized,is_inbox) VALUES (?,?,?,?,?)",
                            (f"{owner}-{number}", owner, name, name.casefold(), int(number == 0)))
         before = db.execute("SELECT id,owner,name,thread_id FROM folders ORDER BY id").fetchall()
@@ -77,7 +77,7 @@ def test_folder_keys_select_before_input_or_ai_and_plain_names_are_notes(bot):
         chat = bot.store.create_folder(1, "Диалог")
         bot.ai_state.mode(1, chat["id"], "chat")
         await receive(bot, "/start")
-        assert labels(bot) == ["✅ Входящие", "📁 Работа", "📁 Диалог", "🗑 Корзина", "📁 Папка", "🎛️ Настройки"]
+        assert labels(bot) == ["✅ Заметки", "📁 Работа", "📁 Диалог", "🗑 Корзина", "📁 Папка", "🎛️ Настройки"]
         assert reply_keyboard(bot)["is_persistent"]
         await receive(bot, "📁 Диалог", 2)
         assert "✅ Диалог" in labels(bot)
@@ -87,7 +87,7 @@ def test_folder_keys_select_before_input_or_ai_and_plain_names_are_notes(bot):
         assert bot.store.action(1) is None
         assert bot.store.current_folder(1) == work["id"]
         # A delayed button with the previous check mark is still a navigation action.
-        await receive(bot, "✅ Входящие", 5)
+        await receive(bot, "✅ Заметки", 5)
         assert bot.store.current_folder(1) == bot.store.ensure_user(1)
         assert bot.store.notes(1) == []
         assert bot.store.all("SELECT * FROM ai_requests") == []
@@ -118,7 +118,7 @@ def test_pinning_rename_delete_and_stale_keys_refresh_without_archiving(bot):
         token = bot.folder_delete_confirmations[1][0]
         await bot.callback(1, None, 500, f"confirmdrop:{token}")
         await receive(bot, "✅ Проекты", 4)
-        assert labels(bot) == ["✅ Входящие", "🗑 Корзина", "📁 Папка", "🎛️ Настройки"]
+        assert labels(bot) == ["✅ Заметки", "🗑 Корзина", "📁 Папка", "🎛️ Настройки"]
         assert bot.store.notes(1) == []
     asyncio.run(run())
 

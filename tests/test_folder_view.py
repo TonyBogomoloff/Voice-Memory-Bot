@@ -231,7 +231,7 @@ def test_switch_has_latest_page_and_keeps_folder_keyboard(bot):
         assert 'Работа' in sent[1]['keyboard']['input_field_placeholder']
         assert bot.telegram.sent[next(i for i, (m, _) in enumerate(bot.telegram.sent)
                                       if m == 'sendMessage') + 1][0] == 'sendMessage'
-        assert all('Входящие' not in p['text'] for p in sent)
+        assert all('Заметки' not in p['text'] for p in sent)
         assert [p['text'] for p in sent[2:]] == [f'Запись {i}' for i in range(20, 21)]
         assert sent[0]['keyboard']['inline_keyboard'][0][0]['callback_data'] == f'folder:{work}:0'
         for p in sent[2:]:
@@ -261,7 +261,7 @@ def test_folder_tap_keeps_latest_message_until_next_selection(bot, deferred):
         if deferred:
             bot.store.update_note(1, note['id'], state='processing')
         bot.telegram.sent.clear()
-        await receive(bot, '📌 Входящие', 7002)
+        await receive(bot, '📌 Заметки', 7002)
         assert bot.store.current_folder(1) == inbox
         assert 7002 not in deleted()
         if deferred:
@@ -298,7 +298,7 @@ def test_selected_folder_button_does_not_clear_or_replay_notes(bot, prefix):
         assert bot.store.all('SELECT * FROM notes ORDER BY id') == notes
         assert bot.store.current_folder(1) == work
         bot.telegram.sent.clear()
-        await receive(bot, '📌 Входящие', 2003)
+        await receive(bot, '📌 Заметки', 2003)
         assert bot.store.current_folder(1) == inbox
         assert any(payload.get('text') == 'Первая запись' for _, payload in bot.telegram.sent)
     asyncio.run(run())

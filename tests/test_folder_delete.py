@@ -112,7 +112,7 @@ def test_deletion_prompt_preserves_working_lower_buttons(tmp_path, store, screen
         assert bot.bottom_state(1) == state and reply_keyboard(bot) == keyboard
         assert [method for method, _ in bot.telegram.sent[before:]] == ['sendMessage']
         if screen == 'root':
-            await receive(bot, '📁 Входящие', 1001)
+            await receive(bot, '📁 Заметки', 1001)
             assert store.current_folder(1) == store.ensure_user(1)
         else:
             await receive(bot, '✏️ Переименовать', 1001)
@@ -130,8 +130,9 @@ def test_trash_is_visible_empty_protected_and_does_not_take_folder_quota(tmp_pat
     try:
         store.register_user(1)
         trash = store.trash_folder(1)
-        assert [(f['name'], f['count']) for f in store.folders(1)] == [('Корзина', 0)]
-        folder = store.create_folder(1, 'Работа')
+        assert [(f['name'], f['count']) for f in store.folders(1)] == [('Заметки', 0), ('Корзина', 0)]
+        folder = store.folder(1, store.ensure_user(1))
+        store.rename_folder(1, folder['id'], 'Работа')
         with pytest.raises(ValueError, match='лимит'):
             store.create_folder(1, 'Ещё')
         for operation in (lambda: store.delete_folder(1, trash['id']),
@@ -139,9 +140,9 @@ def test_trash_is_visible_empty_protected_and_does_not_take_folder_quota(tmp_pat
             with pytest.raises(ValueError, match='Системную'):
                 operation()
         assert store.trash_folder(2)['id'] != trash['id']
-        store.delete_folder(1, folder['id'])
-        assert store.current_folder(1) == trash['id']
-        store.create_folder(1, 'Работа')
+        with pytest.raises(ValueError, match='Последнюю'):
+            store.delete_folder(1, folder['id'])
+        assert store.current_folder(1) == folder['id']
         assert store.trash_folder(1)['id'] == trash['id']
     finally:
         store.close()
@@ -199,3 +200,32 @@ def test_saved_legacy_delete_dialog_never_restores_confirmation_keyboard(tmp_pat
         assert '🗑 Корзина' in labels(bot) and bot.bottom_state(1)['screen'] == 'root'
         assert not store.folder(1, folder)['removed']
     asyncio.run(run())
+
+
+def test_last_folder_rechecked_after_confirmation_and_rename_survives_restart(tmp_path, store):
+    async def run():
+        bot = make_bot(tmp_path, store)
+        first = store.ensure_user(1)
+        second = store.create_folder(1, 'Вторая')['id']
+        await bot.callback(1, None, 500, f'dropfolder:{first}')
+        token = bot.folder_delete_confirmations[1][0]
+        store.delete_folder(1, second)
+        with pytest.raises(ValueError, match='Последнюю'):
+            await bot.callback(1, None, 500, f'confirmdrop:{token}')
+        with pytest.raises(ValueError, match='Последнюю'):
+            await bot.callback(1, None, 500, f'dropfolder:{first}')
+        store.rename_folder(1, first, 'Мои записи')
+        store.recover_runtime()
+        assert store.ensure_user(1) == first
+        assert [f['name'] for f in store.folders(1)] == ['Мои записи', 'Корзина']
+    asyncio.run(run())
+
+
+def test_existing_user_folders_are_preserved_on_registration(store):
+    identity = store.ensure_user(1)
+    store.rename_folder(1, identity, 'Входящие')
+    store.create_folder(1, 'Работа')
+    before = store.folders(1)
+    store.register_user(1)
+    store.recover_runtime()
+    assert store.folders(1) == before

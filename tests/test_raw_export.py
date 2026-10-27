@@ -20,6 +20,7 @@ from voice_memory_bot.providers import ProviderError, Telegram
 def test_options_bind_actions_to_folder_and_survive_restart(bot, tmp_path):
     async def run():
         folder = bot.store.current_folder(1)
+        bot.store.create_folder(1, 'Запасная')
         await receive(bot, '⚙️ Options')
         assert {'＋ Создать', '✏️ Переименовать', '🗑 Удалить папку', '📦 Экспорт', '💎 Для Obsidian',
                 '⬅️ Назад'} == set(labels(bot))

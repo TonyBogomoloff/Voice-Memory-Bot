@@ -36,9 +36,9 @@ def test_menu_settings_back_cancel_and_plain_input(bot):
     async def run():
         folder = bot.store.current_folder(1)
         await receive(bot, "/start", 1000)
-        assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
+        assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Заметки"
         await receive(bot, "🎛️ Настройки", 1001)
-        assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Входящие"
+        assert reply_keyboard(bot)["input_field_placeholder"] == "📁 Заметки"
         assert [[b["text"] for b in row] for row in reply_keyboard(bot)["keyboard"]] == [
             ["Отправлять кнопки действий"], ["💎 Obsidian"], [BACK, "ℹ️ Помощь"]]
         await receive(bot, "/settings", 1002)
@@ -118,6 +118,7 @@ def test_menu_binding_survives_restart_and_is_owner_scoped(bot):
 
 def test_confirmations_cancel_expire_and_do_not_delete_after_restart(bot):
     async def run():
+        bot.store.create_folder(1, "Запасная")
         folder = bot.store.current_folder(1)
         await bot.show_folder_options(1, identity=folder)
         before = labels(bot)
@@ -187,7 +188,8 @@ def test_last_folder_deletion_keeps_trash_and_new_folder_controls(bot):
     async def run():
         await receive(bot, "/menu", 1000)
         assert not any("web_app" in b for row in reply_keyboard(bot)["keyboard"] for b in row)
-        bot.store.delete_folder(1, bot.store.current_folder(1))
+        with pytest.raises(ValueError, match="Последнюю"):
+            bot.store.delete_folder(1, bot.store.current_folder(1))
         await receive(bot, "/start", 1001)
         assert bot.store.action(1) is None and '🗑 Корзина' in labels(bot)
         await receive(bot, '/new', 1002)
@@ -269,7 +271,7 @@ def test_minimal_menu_toggle_help_and_back(bot):
     ("/options", "Что сделать с этой записью?"),
     ("/delete", "Удалить запись?"),
     ("/move", "В какую папку ты хочешь переместить запись?"),
-    ("dropfolder", "Удалить папку «Входящие»?"),
+    ("dropfolder", "Удалить папку «Заметки»?"),
 ])
 def test_record_commands_send_only_inline_question(bot, command, prompt):
     async def run():
@@ -289,6 +291,7 @@ def test_record_commands_send_only_inline_question(bot, command, prompt):
         bot.telegram.text = record
         bot.telegram.sent.clear()
         if command == "dropfolder":
+            bot.store.create_folder(1, "Запасная")
             await bot.callback(1, None, None, f"dropfolder:{note['folder_id']}")
         else:
             await bot.handle({"message": {"message_id": 400, "from": {"id": 1},
