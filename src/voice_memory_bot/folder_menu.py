@@ -100,14 +100,15 @@ class FolderMenuMixin:
                     **({"style": "primary"} if folder["id"] == active else {})}
                    for folder in pages[page]]
         rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+        controls = [{"text": "📁 Папка"}, {"text": "🎛️ Настройки"}]
         if len(pages) > 1:
             while len(rows) < 2:
                 rows.append([])
             if page > 0:
-                rows[1].insert(0, {"text": "⬅️"})
+                controls.insert(0, {"text": "⬅️"})
             if page < len(pages) - 1:
-                rows[1].append({"text": "➡️"})
-        return {"keyboard": rows + [[{"text": "＋"}, {"text": "📁 Папка"}, {"text": "🎛️ Настройки"}]],
+                controls.append({"text": "➡️"})
+        return {"keyboard": rows + [controls],
                 "resize_keyboard": True, "is_persistent": True, "one_time_keyboard": False,
                 "input_field_placeholder": self.folder_input_placeholder(owner)}
 

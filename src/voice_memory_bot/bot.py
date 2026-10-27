@@ -610,9 +610,10 @@ class Bot(ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, FolderNamingMixin,
         if folder["mode"] == "chat":
             text += "\nРежим: диалог с ИИ"
         text += "\n✅ Новые записи сохраняются сюда. Пришли голосовое, текст или фото."
-        rows = [[button("✏️ Переименовать", f"rename:{identity}"),
+        rows = [[button("＋ Создать", "create"),
+                 button("✏️ Переименовать", f"rename:{identity}")],
+                [button("💎 Для Obsidian", f"obsidian:{identity}"),
                  button("📦 Экспорт", f"zip:{identity}:all")],
-                [button("💎 Для Obsidian", f"obsidian:{identity}")],
                 [button("🗑 Удалить папку", f"dropfolder:{identity}")]]
         await self.show_bottom(owner, text, thread, keyboard(*rows), screen=f"foldermenu:{identity}",
                                back="root", edit_id=edit_id)

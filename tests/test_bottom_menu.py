@@ -236,20 +236,22 @@ def test_delete_all_buttons_are_red(bot):
 def test_home_add_folder_and_options_back(bot):
     async def run():
         await receive(bot, "/start", 2000)
-        assert reply_keyboard(bot)["keyboard"][-1][0]["text"] == "＋"
-        await receive(bot, "＋", 2001)
+        assert "＋" not in labels(bot)
+        await receive(bot, "📁 Папка", 2001)
+        await receive(bot, "＋ Создать", 2010)
         assert bot.store.action(1) == "create"
         await receive(bot, BACK, 2002)
         assert bot.bottom_state(1)["screen"] == "root"
-        await receive(bot, "＋", 2003)
+        await receive(bot, "📁 Папка", 2003)
+        await receive(bot, "＋ Создать", 2011)
         await receive(bot, "Новая с главной", 2004)
         folder = bot.store.current_folder(1)
         assert bot.store.folder(1, folder)["name"] == "Новая с главной"
         await receive(bot, "📁 Папка", 2005)
-        assert set(labels(bot)) == {"✏️ Переименовать", "🗑 Удалить папку", "📦 Экспорт", "💎 Для Obsidian", BACK}
+        assert set(labels(bot)) == {"＋ Создать", "✏️ Переименовать", "🗑 Удалить папку", "📦 Экспорт", "💎 Для Obsidian", BACK}
         assert bot.bottom_state(1)["actions"]["📦 Экспорт"] == f"zip:{folder}:all"
         assert [[button["text"] for button in row] for row in reply_keyboard(bot)["keyboard"]] == [
-            ["✏️ Переименовать", "📦 Экспорт"], ["💎 Для Obsidian"], [BACK, "🗑 Удалить папку"]]
+            ["＋ Создать", "✏️ Переименовать"], ["💎 Для Obsidian", "📦 Экспорт"], [BACK, "🗑 Удалить папку"]]
         await receive(bot, BACK, 2006)
         assert bot.bottom_state(1)["screen"] == "root"
         assert bot.options_folder(1) is None
