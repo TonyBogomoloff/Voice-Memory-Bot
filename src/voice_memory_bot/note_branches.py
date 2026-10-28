@@ -24,7 +24,7 @@ class NoteBranch:
 
 
 def is_branch_source(store, note):
-    """AI outputs and follow-up instructions are secondary, even after their parent is deleted."""
+    """AI requests and outputs have their own deletion scope, separate from the source branch."""
     owner, identity = note['owner'], note['id']
     if note['origin'] == 'ai' or note['ai_generated_from']:
         return False
@@ -34,17 +34,7 @@ def is_branch_source(store, note):
             "(SELECT 1 FROM note_messages m WHERE m.owner=n.owner AND m.note_id=n.id AND m.message_id=?))",
             (owner, identity, *([note['reply_message_id']] * 4))):
         return False
-    request = store.one("SELECT conversation_id FROM ai_requests WHERE owner=? AND note_id=?", (owner, identity))
-    if request:
-        conversation = request['conversation_id']
-        if store.one("SELECT 1 FROM ai_note_context WHERE owner=? AND conversation_id=? AND note_id<>?",
-                     (owner, conversation, identity)):
-            return False
-        first = store.one("SELECT note_id FROM ai_requests WHERE owner=? AND conversation_id=? "
-                          "ORDER BY created_at,note_id LIMIT 1", (owner, conversation))
-        if first['note_id'] != identity:
-            return False
-    return True
+    return not store.one("SELECT 1 FROM ai_requests WHERE owner=? AND note_id=?", (owner, identity))
 
 
 def deletion_branch(store, owner, identities, *, exclude=None):
@@ -52,6 +42,17 @@ def deletion_branch(store, owner, identities, *, exclude=None):
     roots = [note['id'] for note in selected if is_branch_source(store, note)]
     branch = note_branch(store, owner, roots, exclude=exclude) if roots else NoteBranch([], set())
     members = {note['id']: note for note in [*branch.notes, *selected] if note['id'] != exclude}
+    # A request owns only its direct results, including generated images and legacy
+    # results linked through result_note_id. Conversation peers are not its children.
+    for note in selected:
+        if note['id'] == exclude:
+            continue
+        for result in store.all(
+                "SELECT n.* FROM notes n JOIN ai_requests r ON r.owner=n.owner "
+                "WHERE r.owner=? AND r.note_id=? AND n.deleted=0 "
+                "AND (n.id=r.result_note_id OR n.ai_generated_from=r.note_id)", (owner, note['id'])):
+            if result['id'] != exclude:
+                members[result['id']] = result
     return NoteBranch(sorted(members.values(), key=lambda n: (n['created_at'], n['id'])), branch.conversations)
 
 

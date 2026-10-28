@@ -845,7 +845,7 @@ class Bot(TrashMixin, ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, Folder
         if action == "confirmarchive":
             deleted = self.notes.delete(owner, identity)
             await self.remove_menu_message(owner, message_id)
-            text = "Ветка удалена из базы." if len(deleted) > 1 else "Запись удалена из базы."
+            text = "Записи удалены из базы." if len(deleted) > 1 else "Запись удалена из базы."
             return await self._show(owner, text + " Сообщения в Telegram остались.", thread)
 
     async def record_options(self, owner, thread, message):
@@ -882,9 +882,13 @@ class Bot(TrashMixin, ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, Folder
             target = receipt["message_id"] if receipt else note["message_id"]
         self.store.set_action(owner, None)
         token = new_id()
-        text = ("Удалить исходную запись и всю ветку?\n"
-                f"Запросы и ответы ИИ тоже удалятся. Записей: {len(branch.notes)}."
-                if len(branch.notes) > 1 else "Удалить запись?")
+        text = "Удалить запись?"
+        if len(branch.notes) > 1:
+            if self.store.one("SELECT 1 FROM ai_requests WHERE owner=? AND note_id=?", (owner, note['id'])):
+                text = "Удалить запрос вместе с ответом ИИ?"
+            else:
+                text = ("Удалить исходную запись и всю ветку?\n"
+                        f"Запросы и ответы ИИ тоже удалятся. Записей: {len(branch.notes)}.")
         return await self.show_bottom(owner, text, thread, keyboard([
             button("Удалить", f"notedel:{token}"), button("Отмена", f"notecancel:{token}")]),
             screen=f"notedelete:{note['id']}", keep=True, mirror=True, reply_to=target, command_id=command_id)
@@ -967,7 +971,10 @@ class Bot(TrashMixin, ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, Folder
 
     async def announce_note_deletion(self, note, thread, target=None, *, deleted=None):
         deleted = deleted if deleted is not None else [note]
-        text = f"Ветка удалена. Записей: {len(deleted)}." if len(deleted) > 1 else "Сообщение удалено."
+        text = "Сообщение удалено."
+        if len(deleted) > 1:
+            request = self.store.one("SELECT 1 FROM ai_requests WHERE owner=? AND note_id=?", (note['owner'], note['id']))
+            text = "Запрос и ответ ИИ удалены." if request else f"Ветка удалена. Записей: {len(deleted)}."
         if not target:
             receipt = self.store.one(
                 "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0 "

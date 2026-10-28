@@ -33,18 +33,21 @@ async def confirm_delete(bot, message_id):
     return bot.bottom_state(1)
 
 
-@pytest.mark.parametrize('selected,transcript', [(0, False), (0, True), (2, False), (4, False), (3, True)])
-def test_source_deletes_branch_but_ai_answer_or_instruction_deletes_only_itself(bot, selected, transcript):
+@pytest.mark.parametrize('selected,transcript', [
+    (0, False), (0, True), (1, False), (2, False), (4, False), (3, False), (3, True)])
+def test_source_deletes_branch_request_deletes_its_answers_and_answer_deletes_itself(bot, selected, transcript):
     async def run():
         members, unrelated = await make_branch(bot)
         note = bot.store.note(1, members[selected]['id'])
         foreign = ready_note(bot, owner=2, message_id=note['message_id'])
         target = note['transcript_message_id'] if transcript else min(receipts(bot, [note]))
-        expected = members if selected == 0 else [note]
+        expected = {0: members, 1: members[1:3], 3: members[3:5]}.get(selected, [note])
         kept = [n for n in members if n['id'] not in {m['id'] for m in expected}] + [unrelated]
         removed_ids, kept_ids = receipts(bot, expected), receipts(bot, kept)
         state = await confirm_delete(bot, target)
         assert ('всю ветку' in state['text']) == (selected == 0)
+        if selected in {1, 3}:
+            assert state['text'] == 'Удалить запрос вместе с ответом ИИ?'
         assert all(bot.store.note(1, n['id']) for n in members)
         bot.telegram.sent.clear()
         await bot.callback(1, None, state['inline_prompt_id'], state['actions']['Удалить'])
@@ -83,15 +86,18 @@ def test_deleting_source_still_finds_followups_through_a_deleted_answer(bot):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize('selected', [0, 1])
 @pytest.mark.parametrize('failure', ['locked', 'queued_ai', 'sending', 'storage'])
-def test_branch_deletion_rechecks_every_member_and_rolls_back_before_removing_files(bot, monkeypatch, failure):
+def test_branch_deletion_rechecks_every_member_and_rolls_back_before_removing_files(bot, monkeypatch, failure, selected):
     async def run():
         members, _ = await make_branch(bot)
-        state = await confirm_delete(bot, members[0]['message_id'])
+        state = await confirm_delete(bot, members[selected]['message_id'])
+        answer = members[-1] if selected == 0 else members[selected + 1]
+        request = members[-2] if selected == 0 else members[selected]
         if failure == 'locked':
-            await bot.note_locks[members[-1]['id']].acquire()
+            await bot.note_locks[answer['id']].acquire()
         elif failure in {'queued_ai', 'sending'}:
-            bot.ai_state.update_request(1, members[-2]['id'], **(
+            bot.ai_state.update_request(1, request['id'], **(
                 {'state': 'queued'} if failure == 'queued_ai' else {'delivery': 'sending'}))
         else:
             delete = bot.store.delete
@@ -111,7 +117,7 @@ def test_branch_deletion_rechecks_every_member_and_rolls_back_before_removing_fi
                 await bot.callback(1, None, state['inline_prompt_id'], state['actions']['Удалить'])
         finally:
             if failure == 'locked':
-                bot.note_locks[members[-1]['id']].release()
+                bot.note_locks[answer['id']].release()
         assert all(bot.store.note(1, n['id']) for n in members)
         assert all(bot.archive.directory(n).exists() for n in members)
         assert bot.ai_state.request(1, members[1]['id'])['response'] == 'Первый ответ'
@@ -119,7 +125,7 @@ def test_branch_deletion_rechecks_every_member_and_rolls_back_before_removing_fi
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('selected', [0, 4])
+@pytest.mark.parametrize('selected', [0, 1, 3, 4])
 def test_ai_delete_uses_same_scope_and_keeps_its_running_command(bot, selected):
     async def run():
         members, unrelated = await make_branch(bot)
@@ -128,7 +134,7 @@ def test_ai_delete_uses_same_scope_and_keeps_its_running_command(bot, selected):
         bot.assistant.responses = [step('read_note', note_id=note['id']),
             step('delete_note', note_id=note['id'], revision=note['revision']), step(message='Удалено')]
         await bot.process_ai(bot.ai_state.claim())
-        expected = {n['id'] for n in members} if selected == 0 else {note['id']}
+        expected = {n['id'] for n in {0: members, 1: members[1:3], 3: members[3:5]}.get(selected, [note])}
         deleted = {n['id'] for n in bot.store.all('SELECT id FROM notes WHERE owner=1 AND deleted=1')}
         assert deleted == expected
         assert bot.store.note(1, unrelated['id'])
@@ -142,7 +148,7 @@ def test_ai_delete_uses_same_scope_and_keeps_its_running_command(bot, selected):
 
 
 @pytest.mark.parametrize('via_ai', [False, True])
-def test_first_ai_question_is_a_source_and_deletion_detaches_the_active_conversation(bot, via_ai):
+def test_first_ai_question_deletes_only_its_answer_and_keeps_later_turns(bot, via_ai):
     async def run():
         folder = bot.store.current_folder(1)
         bot.ai_state.mode(1, folder, 'chat')
@@ -159,9 +165,11 @@ def test_first_ai_question_is_a_source_and_deletion_detaches_the_active_conversa
             deleted = bot.store.all('SELECT id FROM notes WHERE owner=1 AND deleted=1')
         else:
             deleted = bot.notes.delete(1, source['id'])
-        assert len(deleted) == 4 and next_question['id'] in {n['id'] for n in deleted}
-        new = await receive(bot, 'Новая тема', message_id=11000)
-        assert bot.ai_state.request(1, new['id'])['conversation_id'] != first['conversation_id']
+        assert {n['id'] for n in deleted} == {source['id'], first['result_note_id']}
+        followup = bot.ai_state.request(1, next_question['id'])
+        assert followup['state'] == 'ready' and followup['response']
+        assert bot.store.note(1, followup['result_note_id'])
+        assert bot.store.note(1, next_question['id'])['transcript'] == 'Уточнение'
     asyncio.run(run())
 
 
@@ -177,4 +185,33 @@ def test_deleting_answer_cancels_pending_delivery_without_losing_the_question(bo
         before = len(bot.telegram.sent)
         await bot.deliver_ai(current)
         assert len(bot.telegram.sent) == before
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('link', ['result_note_id', 'ai_generated_from'])
+def test_request_deletion_follows_exact_result_links_and_includes_additional_outputs(bot, link):
+    from voice_memory_bot.ai_store import result_text
+
+    async def run():
+        members, unrelated = await make_branch(bot)
+        request, answer = members[1:3]
+        with bot.store.transaction():
+            if link == 'result_note_id':
+                bot.store.db.execute('UPDATE notes SET ai_generated_from=NULL WHERE id=?', (answer['id'],))
+            else:
+                bot.store.db.execute('UPDATE ai_requests SET result_note_id=NULL WHERE note_id=?', (request['id'],))
+            extra = result_text(bot.store, request, 'Дополнительный результат этого запроса')
+        bot.messages.record(extra, 13000, None, 'ai_response')
+        bot.flush_ai_archive()
+        expected = {request['id'], answer['id'], extra['id']}
+        # Selecting the request and an already included answer in a batch deduplicates them.
+        scope = bot.notes.deletion_branch(1, [request['id'], answer['id']])
+        assert {n['id'] for n in scope.notes} == expected and len(scope.notes) == 3
+        deleted = bot.notes.delete(1, request['id'])
+        assert {n['id'] for n in deleted} == expected
+        assert all(not bot.archive.directory(n).exists() for n in deleted)
+        assert all(bot.store.note(1, n['id']) for n in [members[0], *members[3:], unrelated])
+        bot.init_ai(bot.assistant)
+        assert all(bot.store.one('SELECT deleted FROM notes WHERE id=?', (identity,))['deleted']
+                   for identity in expected)
     asyncio.run(run())
