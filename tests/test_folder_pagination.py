@@ -30,6 +30,7 @@ def test_folder_pages_cover_archive_keep_photos_and_clamp_stale_page(bot, size):
         before = bot.store.all('SELECT * FROM notes ORDER BY id')
         await bot.show_notes(1, None, folder)
         assert bot.store.one('SELECT page FROM folder_views WHERE owner=1')['page'] == 0
+        assert next(p['text'] for m, p in bot.telegram.sent if m == 'sendMessage') == '📁 Заметки (страница 3 из 3)'
         assert [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage'
                 and p['text'].startswith('Запись ')] == [f'Запись {i}' for i in range(count - size, count)]
         for page, expected in [(0, range(count - size, count)), (1, range(2, count - size)),
@@ -37,20 +38,21 @@ def test_folder_pages_cover_archive_keep_photos_and_clamp_stale_page(bot, size):
             bot.telegram.sent.clear()
             await bot.callback(1, None, None, f'folder:{folder}:{page}')
             sent = [p for m, p in bot.telegram.sent if m == 'sendMessage']
-            assert sent[0]['text'] == f'📁 Заметки (страница {min(page, 2) + 1} из 3)'
+            page_number = 3 - min(page, 2)
+            assert sent[0]['text'] == f'📁 Заметки (страница {page_number} из 3)'
             assert [p['text'] for p in sent if p['text'].startswith('Запись ')] == [f'Запись {i}' for i in expected]
             assert sum('Заметки (страница' in p['text'] for p in sent) == 1
             assert not any(p['text'] == '📁 Заметки' for p in sent)
             page_controls = [p for p in sent if 'folder:' in str(p.get('keyboard', {}))]
-            assert len(page_controls) == (2 if page < 2 else 1)
-            if page < 2:
+            assert len(page_controls) == (2 if page > 0 else 1)
+            if page > 0:
                 assert page_controls[-1] is sent[-1]
                 assert page_controls[-1]['keyboard'] == sent[0]['keyboard']
-                assert page_controls[-1]['text'] == f'Страница {page + 1} из 3'
+                assert page_controls[-1]['text'] == f'Страница {page_number} из 3'
             navigation = sent[0]['keyboard']['inline_keyboard'][0]
-            expected_pages = [1] if page == 0 or page >= 2 else [0, 2]
+            expected_pages = [1] if page == 0 or page >= 2 else [2, 0]
             assert [b['callback_data'] for b in navigation] == [f'folder:{folder}:{p}' for p in expected_pages]
-            icons = ['next'] if page == 0 else ['back'] if page >= 2 else ['back', 'next']
+            icons = ['back'] if page == 0 else ['next'] if page >= 2 else ['back', 'next']
             themed, _ = themed_markup(sent[0]['keyboard'])
             assert [b['icon_custom_emoji_id'] for b in themed['inline_keyboard'][0]] == [icon_id(i) for i in icons]
             assert [b['text'] for b in themed['inline_keyboard'][0]] == [ARROW_LABELS[i] for i in icons]

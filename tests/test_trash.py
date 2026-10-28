@@ -20,8 +20,8 @@ def ready(store, folder, message, owner=1):
     return store.note(owner, note['id'])
 
 
-@pytest.mark.parametrize('count', [0, 11])
-def test_trash_icon_description_and_top_right_danger_button(tmp_path, store, count):
+@pytest.mark.parametrize(('count', 'page_label'), [(0, '1 из 1'), (11, '2 из 2')])
+def test_trash_icon_description_and_top_right_danger_button(tmp_path, store, count, page_label):
     async def run():
         bot = make_bot(tmp_path, store)
         trash = store.trash_folder(1)['id']
@@ -30,8 +30,8 @@ def test_trash_icon_description_and_top_right_danger_button(tmp_path, store, cou
             ready(store, trash, 1000 + i)
         await bot.show_notes(1, None, trash, page=0)
         header = next(p for m, p in bot.telegram.sent if m == 'sendMessage'
-                      and 'страница 1 из' in p.get('text', ''))
-        assert header['text'].startswith('🗑 Корзина (страница 1 из ')
+                      and 'страница ' in p.get('text', ''))
+        assert header['text'].startswith(f'🗑 Корзина (страница {page_label})')
         assert TRASH_DESCRIPTION in header['text']
         assert 'Это системная папка' not in header['text']
         keys = reply_keyboard(bot)
@@ -292,6 +292,9 @@ def test_trash_opens_full_recent_page_and_shows_deleted_folder_records(tmp_path,
         ready(store, trash, 2000)
         assert len(bot.trash.snapshot(1, trash)) == 21
         await bot.show_notes(1, None, trash)
+        header = next(p for m, p in bot.telegram.sent if m == 'sendMessage')
+        assert header['text'].startswith('🗑 Корзина (страница 2 из 2)')
+        assert header['keyboard']['inline_keyboard'] == [[{'text': '⬅️', 'callback_data': f'folder:{trash}:1'}]]
         first = [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage'
                  and p['text'].startswith('Запись ')]
         assert len(first) == 20 and 'Запись 2000' in first
@@ -300,6 +303,9 @@ def test_trash_opens_full_recent_page_and_shows_deleted_folder_records(tmp_path,
         await receive(bot, '🗑 Корзина', 3000)
         assert not any(m == 'sendMessage' for m, _ in bot.telegram.sent)
         await bot.callback(1, None, None, f'folder:{trash}:1')
+        header = next(p for m, p in bot.telegram.sent if m == 'sendMessage')
+        assert header['text'].startswith('🗑 Корзина (страница 1 из 2)')
+        assert header['keyboard']['inline_keyboard'] == [[{'text': '➡️', 'callback_data': f'folder:{trash}:0'}]]
         second = [p['text'] for m, p in bot.telegram.sent if m == 'sendMessage'
                   and p['text'].startswith('Запись ')]
         assert second == ['Запись 1000']

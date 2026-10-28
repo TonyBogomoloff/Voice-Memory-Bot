@@ -226,15 +226,15 @@ def test_switch_has_latest_page_and_keeps_folder_keyboard(bot):
         await receive(bot, '📌 Работа', 2000)
         sent = [p for m, p in bot.telegram.sent if m == 'sendMessage'
                 and p['text'] != 'Загружаю папку…' and not (p.get('keyboard') or {}).get('remove_keyboard')]
-        assert len(sent) == 23
-        assert sent[0]['text'] == '📁 Работа (страница 1 из 2)'
+        assert len(sent) == 22
+        assert sent[0]['text'] == '📁 Работа (страница 2 из 2)'
         assert 'Работа' in sent[1]['keyboard']['input_field_placeholder']
         assert bot.telegram.sent[next(i for i, (m, _) in enumerate(bot.telegram.sent)
                                       if m == 'sendMessage') + 1][0] == 'sendMessage'
         assert all('Заметки' not in p['text'] for p in sent)
-        assert [p['text'] for p in sent[2:-1]] == [f'Запись {i}' for i in range(1, 21)]
+        assert [p['text'] for p in sent[2:]] == [f'Запись {i}' for i in range(1, 21)]
         assert sent[0]['keyboard']['inline_keyboard'][0][0]['callback_data'] == f'folder:{work}:1'
-        for p in sent[2:-1]:
+        for p in sent[2:]:
             rows = p['keyboard']['inline_keyboard']
             assert [[b['text'] for b in row] for row in rows] == [['Переместить', 'Удалить', 'ИИ']]
         deleted = deleted_ids(bot)

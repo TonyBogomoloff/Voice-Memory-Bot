@@ -153,6 +153,8 @@ class FolderViewMixin:
         page_size = self.store.folder_page_size(owner)
         pages = max(1, (count + page_size - 1) // page_size)
         page = 0 if page < 0 else min(page, pages - 1)
+        # Stored offsets start with the newest batch; visible numbers follow chronology.
+        page_number = pages - page
         with self.store.transaction():
             self.store.db.execute('UPDATE folder_views SET dirty=1,folder_id=?,page=? WHERE owner=?',
                                   (identity, page, owner))
@@ -164,12 +166,12 @@ class FolderViewMixin:
         rendered = 0
         complete = False
         try:
-            title = f"{folder_icon(folder)} {folder['name']} (страница {page + 1} из {pages})"
+            title = f"{folder_icon(folder)} {folder['name']} (страница {page_number} из {pages})"
             nav = []
-            if page:
-                nav.append({'text': '⬅️', 'callback_data': f'folder:{identity}:{page - 1}'})
             if page + 1 < pages:
-                nav.append({'text': '➡️', 'callback_data': f'folder:{identity}:{page + 1}'})
+                nav.append({'text': '⬅️', 'callback_data': f'folder:{identity}:{page + 1}'})
+            if page:
+                nav.append({'text': '➡️', 'callback_data': f'folder:{identity}:{page - 1}'})
             if nav:
                 navigation = await self.view_send(self.telegram.text, owner, title + ("\n" + TRASH_DESCRIPTION if folder["is_trash"] else ""), thread,
                     {'inline_keyboard': [nav]})
@@ -219,8 +221,8 @@ class FolderViewMixin:
                             {'inline_keyboard': [[{'text': 'Опции', 'callback_data': f"aioptions:{note['id']}"}]]},
                             reply_to=instruction_id)
                         self.ai_state.link(owner, response['message_id'], request['conversation_id'])
-            if page + 1 < pages:
-                await self.view_send(self.telegram.text, owner, f"Страница {page + 1} из {pages}", thread,
+            if page:
+                await self.view_send(self.telegram.text, owner, f"Страница {page_number} из {pages}", thread,
                                      {'inline_keyboard': [nav]})
             if bottom and bottom['screen'] != 'root':
                 if self.store.action(owner):
