@@ -6,7 +6,7 @@ import logging
 from contextlib import AsyncExitStack
 
 from .delivery import DeletionOutcome, delete_message
-from .note_branches import note_branch
+from .note_branches import deletion_branch, note_branch
 
 log = logging.getLogger(__name__)
 
@@ -18,15 +18,34 @@ class NoteService:
 
     def delete_archive(self, owner, identity):
         note = self.store.note(owner, identity)
-        if note["state"] == "processing" or self.note_locks[identity].locked():
-            raise ValueError("Дождись завершения обработки, затем удали запись")
+        self.validate_deletion(note)
         self.store.delete(owner, identity)
         return note
 
     def delete(self, owner, identity):
-        note = self.delete_archive(owner, identity)
-        self.archive.delete(note)
-        return note
+        # Resolve and validate the whole scope before changing any record or file.
+        # This synchronous transaction cannot interleave with an async worker.
+        with self.store.transaction():
+            branch = self.deletion_branch(owner, [identity])
+            for note in branch.notes:
+                self.validate_deletion(note)
+            for note in branch.notes:
+                self.delete_archive(owner, note['id'])
+            branch.detach(self.store, owner)
+        for note in branch.notes:
+            self.archive.delete(note)
+        return branch.notes
+
+    def deletion_branch(self, owner, identities, *, exclude=None):
+        return deletion_branch(self.store, owner, identities, exclude=exclude)
+
+    def validate_deletion(self, note):
+        if (note['state'] == 'processing' or self.note_locks[note['id']].locked()
+                or note['delivery'] == 'sending' or note['transcript_delivery'] == 'sending'
+                or self.store.one("SELECT 1 FROM ai_requests WHERE owner=? AND (note_id=? OR result_note_id=?) "
+                                  "AND (state IN ('queued','running') OR delivery='sending')",
+                                  (note['owner'], note['id'], note['id']))):
+            raise ValueError("Дождись завершения обработки всей ветки, затем удали запись")
 
     def move_archive(self, note, folder_id):
         if note["state"] in {"processing", "queued"}:

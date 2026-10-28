@@ -113,13 +113,24 @@ class NoteActions:
                 single = selected.get(note['id'], {**command, 'action': action,
                                                   'note_id': note['id'], 'revision': note['revision']})
                 notes.append((single, note))
+        else:
+            branch = self.bot.notes.deletion_branch(owner, ids, exclude=request)
+            notes = []
+            for note in branch.notes:
+                self.bot.notes.validate_deletion(note)
+                notes.append(({**command, 'action': action, 'note_id': note['id']}, note))
         return notes
 
     def apply_many(self, owner, request, index, command, notes, folder):
         moving = command['action'] in {'move_note', 'move_notes'}
-        if moving and len(notes) > 1:
+        if not moving:
+            self.bot.notes.deletion_branch(owner, [n['id'] for _, n in notes], exclude=request).detach(
+                self.store, owner)
+        if len(notes) > 1:
+            message = (f"Ветка перенесена в «{folder['name']}». Записей: {len(notes)}." if moving
+                       else f"Удалено записей: {len(notes)}.")
             self.save_result(request, index, {'ok': True, 'items': [],
-                'message': f"Ветка перенесена в «{folder['name']}». Записей: {len(notes)}."})
+                'message': message})
         for single, note in notes:
             self.apply(owner, request, index, single, note, folder)
         if moving:

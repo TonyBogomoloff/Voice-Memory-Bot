@@ -843,9 +843,10 @@ class Bot(TrashMixin, ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, Folder
         if action == "canceldelete":
             return await self.remove_menu_message(owner, message_id)
         if action == "confirmarchive":
-            note = self.notes.delete(owner, identity)
+            deleted = self.notes.delete(owner, identity)
             await self.remove_menu_message(owner, message_id)
-            return await self._show(owner, "Запись удалена из базы. Сообщения в Telegram остались.", thread)
+            text = "Ветка удалена из базы." if len(deleted) > 1 else "Запись удалена из базы."
+            return await self._show(owner, text + " Сообщения в Telegram остались.", thread)
 
     async def record_options(self, owner, thread, message):
         note = self.reply_note(owner, message)
@@ -871,8 +872,9 @@ class Bot(TrashMixin, ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, Folder
             command_id=message["message_id"] if "reply_to_message" in message else 0)
 
     async def confirm_note_deletion(self, owner, thread, note, target=None, *, command_id=0):
-        if note["state"] == "processing" or self.note_locks[note["id"]].locked():
-            raise ValueError("Дождись завершения обработки, затем удали запись")
+        branch = self.notes.deletion_branch(owner, [note['id']])
+        for member in branch.notes:
+            self.notes.validate_deletion(member)
         if not target:
             receipt = self.store.one(
                 "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0 "
@@ -880,7 +882,10 @@ class Bot(TrashMixin, ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, Folder
             target = receipt["message_id"] if receipt else note["message_id"]
         self.store.set_action(owner, None)
         token = new_id()
-        return await self.show_bottom(owner, "Удалить запись?", thread, keyboard([
+        text = ("Удалить исходную запись и всю ветку?\n"
+                f"Запросы и ответы ИИ тоже удалятся. Записей: {len(branch.notes)}."
+                if len(branch.notes) > 1 else "Удалить запись?")
+        return await self.show_bottom(owner, text, thread, keyboard([
             button("Удалить", f"notedel:{token}"), button("Отмена", f"notecancel:{token}")]),
             screen=f"notedelete:{note['id']}", keep=True, mirror=True, reply_to=target, command_id=command_id)
 
@@ -949,32 +954,37 @@ class Bot(TrashMixin, ObsidianMenuMixin, ReplyMoveMixin, BottomMenuMixin, Folder
         if state.epoch != self.bottom_epoch or time.time() >= state.expires:
             return True
         # Both keyboards share one target and a single-use confirmation.
-        note = self.notes.delete(owner, state.screen.argument)
+        deleted = self.notes.delete(owner, state.screen.argument)
+        note = next(n for n in deleted if n['id'] == state.screen.argument)
         state.actions.clear()
         with self.store.transaction():
             self.store.db.execute("UPDATE bottom_menus SET state=? WHERE owner=?", (state.to_json(), owner))
         try:
-            await self.announce_note_deletion(note, thread, state.extra.get("reply_to"))
+            await self.announce_note_deletion(note, thread, state.extra.get("reply_to"), deleted=deleted)
         finally:
             await self.show_home(owner, thread)
         return True
 
-    async def announce_note_deletion(self, note, thread, target=None):
+    async def announce_note_deletion(self, note, thread, target=None, *, deleted=None):
+        deleted = deleted if deleted is not None else [note]
+        text = f"Ветка удалена. Записей: {len(deleted)}." if len(deleted) > 1 else "Сообщение удалено."
         if not target:
             receipt = self.store.one(
                 "SELECT message_id FROM note_messages WHERE owner=? AND note_id=? AND deleted=0 "
                 "ORDER BY message_id DESC LIMIT 1", (note["owner"], note["id"]))
             target = receipt["message_id"] if receipt else note["message_id"]
         try:
-            result = await self.telegram.text(note["owner"], "Сообщение удалено.", thread, reply_to=target)
+            result = await self.telegram.text(note["owner"], text, thread, reply_to=target)
         except ProviderError as exc:
             if getattr(exc, "reason", None) != "reply_target_missing":
                 raise
-            result = await self._show(note["owner"], "Сообщение удалено.", thread)
-        remaining = await self.delete_note_messages(note)
+            result = await self._show(note["owner"], text, thread)
+        remaining = 0
+        for member in deleted:
+            remaining += await self.delete_note_messages(member)
         if remaining:
             await self._show(note["owner"],
-                "Сообщение удалено из базы, но часть сообщений не удалось удалить из Telegram.", thread)
+                "Удалено из базы, но часть сообщений не удалось удалить из Telegram.", thread)
         return result
 
     async def delete_note_messages(self, note, *, details=False):

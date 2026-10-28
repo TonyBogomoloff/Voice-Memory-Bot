@@ -10,6 +10,10 @@ class NoteBranch:
     notes: list[dict]
     conversations: set[str]
 
+    def detach(self, store, owner):
+        for conversation in self.conversations:
+            store.db.execute("DELETE FROM ai_active WHERE owner=? AND conversation_id=?", (owner, conversation))
+
     def relocate(self, store, owner, folder_id):
         # Do not let the old folder's next ordinary chat message join a moved branch.
         for conversation in self.conversations:
@@ -17,6 +21,38 @@ class NoteBranch:
                              (folder_id, owner, conversation))
             store.db.execute("DELETE FROM ai_active WHERE owner=? AND conversation_id=? AND folder_id<>?",
                              (owner, conversation, folder_id))
+
+
+def is_branch_source(store, note):
+    """AI outputs and follow-up instructions are secondary, even after their parent is deleted."""
+    owner, identity = note['owner'], note['id']
+    if note['origin'] == 'ai' or note['ai_generated_from']:
+        return False
+    if note['reply_message_id'] and store.one(
+            "SELECT 1 FROM notes n WHERE n.owner=? AND n.id<>? AND "
+            "(n.message_id=? OR n.transcript_message_id=? OR n.result_message_id=? OR EXISTS "
+            "(SELECT 1 FROM note_messages m WHERE m.owner=n.owner AND m.note_id=n.id AND m.message_id=?))",
+            (owner, identity, *([note['reply_message_id']] * 4))):
+        return False
+    request = store.one("SELECT conversation_id FROM ai_requests WHERE owner=? AND note_id=?", (owner, identity))
+    if request:
+        conversation = request['conversation_id']
+        if store.one("SELECT 1 FROM ai_note_context WHERE owner=? AND conversation_id=? AND note_id<>?",
+                     (owner, conversation, identity)):
+            return False
+        first = store.one("SELECT note_id FROM ai_requests WHERE owner=? AND conversation_id=? "
+                          "ORDER BY created_at,note_id LIMIT 1", (owner, conversation))
+        if first['note_id'] != identity:
+            return False
+    return True
+
+
+def deletion_branch(store, owner, identities, *, exclude=None):
+    selected = [store.note(owner, identity) for identity in dict.fromkeys(identities)]
+    roots = [note['id'] for note in selected if is_branch_source(store, note)]
+    branch = note_branch(store, owner, roots, exclude=exclude) if roots else NoteBranch([], set())
+    members = {note['id']: note for note in [*branch.notes, *selected] if note['id'] != exclude}
+    return NoteBranch(sorted(members.values(), key=lambda n: (n['created_at'], n['id'])), branch.conversations)
 
 
 def note_branch(store, owner, identities, *, exclude=None):

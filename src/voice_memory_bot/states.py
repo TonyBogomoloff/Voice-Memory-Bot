@@ -11,6 +11,7 @@ class DeliveryState(StrEnum):
     SENDING = 'sending'
     SENT = 'sent'
     UNKNOWN = 'unknown'
+    CANCELLED = 'cancelled'
 
 
 class NoteState(StrEnum):

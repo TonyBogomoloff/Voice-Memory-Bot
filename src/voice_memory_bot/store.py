@@ -495,7 +495,12 @@ class Store:
             self.db.execute("UPDATE ai_note_context SET content='',title='Удалённая запись' WHERE note_id=?",
                             (identity,))
             self.db.execute("DELETE FROM ai_steps WHERE note_id=?", (identity,))
-            self.db.execute("UPDATE ai_requests SET state='deleted',response=NULL,input_text=NULL,error=NULL WHERE note_id=?", (identity,))
+            self.db.execute("UPDATE ai_requests SET state='deleted',response=NULL,input_text=NULL,"
+                            "reply_context=NULL,error=NULL WHERE note_id=?", (identity,))
+            # Keep the result ID as a tombstone so archive_replies cannot recreate it.
+            # The original user request survives when only its AI answer is deleted.
+            self.db.execute("UPDATE ai_requests SET response=NULL,delivery='cancelled' WHERE owner=? AND result_note_id=?",
+                            (owner, identity))
 
     def edit_source(self, owner, message):
         """Apply source text/caption edits without replaying commands or AI requests."""
