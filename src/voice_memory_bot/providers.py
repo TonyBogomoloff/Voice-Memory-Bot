@@ -18,6 +18,15 @@ from .video_cache import VideoFileCache
 
 silent_delivery = ContextVar("silent_delivery", default=False)
 
+# Bot API methods that can produce a notification when delivering a message.
+_SILENT_METHODS = frozenset({
+    "sendMessage", "sendPhoto", "sendAudio", "sendDocument", "sendVideo", "sendAnimation",
+    "sendVoice", "sendVideoNote", "sendMediaGroup", "sendPaidMedia", "sendLivePhoto",
+    "sendLocation", "sendVenue", "sendContact", "sendPoll", "sendChecklist", "sendDice",
+    "sendSticker", "sendInvoice", "sendGame", "sendRichMessage", "copyMessage", "copyMessages",
+    "forwardMessage", "forwardMessages", "pinChatMessage",
+})
+
 
 
 
@@ -81,9 +90,16 @@ class Telegram:
         self.remember_result(result, payload.get("chat_id"), payload.get("message_thread_id"))
         return result
 
+    async def _post(self, method, **kwargs):
+        # Enforce silence at the HTTP boundary for uploads, cached sends and retries.
+        if method in _SILENT_METHODS:
+            field = "json" if "json" in kwargs else "data"
+            kwargs[field] = {**kwargs[field], "disable_notification": True if field == "json" else "true"}
+        return await self.client.post(self._base + method, **kwargs)
+
     async def _request(self, method, payload):
         try:
-            response = await self.client.post(self._base + method, json=payload)
+            response = await self._post(method, json=payload)
             body = response.json()
         except (httpx.HTTPError, ValueError):
             raise ProviderError("telegram_transport_unknown") from None
@@ -119,7 +135,7 @@ class Telegram:
         for attempt in range(2):
             try:
                 with path.open("rb") as handle:
-                    response = await self.client.post(self._base + "sendDocument", data=themed,
+                    response = await self._post("sendDocument", data=themed,
                         files={"document": (path.name, handle)},
                         timeout=httpx.Timeout(1800 if self.local else 120, connect=10))
                 body = response.json()
@@ -166,7 +182,7 @@ class Telegram:
                     for k, v in payload.items()}
             try:
                 with path.open("rb") as handle:
-                    response = await self.client.post(self._base + method, data=data,
+                    response = await self._post(method, data=data,
                         files={"photo": (path.name, handle)}, timeout=httpx.Timeout(120, connect=10))
                 body = response.json()
             except (httpx.HTTPError, ValueError):
@@ -219,7 +235,7 @@ class Telegram:
                     files = {"video": (path.name, files_context.enter_context(path.open("rb")), "video/mp4")}
                     if cover is not None:
                         files["cover"] = (cover.name, files_context.enter_context(cover.open("rb")), "image/jpeg")
-                    response = await self.client.post(self._base + "sendVideo", data=data,
+                    response = await self._post("sendVideo", data=data,
                         files=files, timeout=httpx.Timeout(120, connect=10))
                 body = response.json()
             except (httpx.HTTPError, ValueError):
@@ -280,7 +296,7 @@ class Telegram:
                     for k, v in payload.items() if v is not None}
             try:
                 with path.open("rb") as handle:
-                    response = await self.client.post(self._base + method, data=data,
+                    response = await self._post(method, data=data,
                         files={"asset": (path.name, handle)}, timeout=httpx.Timeout(120, connect=10))
                 body = response.json()
             except (httpx.HTTPError, ValueError):
